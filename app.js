@@ -3220,7 +3220,7 @@ function renderDashboard() {
   drawLineChart(
     dom.dashboardChart,
     series.map((point) => point.date),
-    series.map((point) => point.value),
+    series.map((point) => point.marketValue),
     { color: "#0e7a64" }
   );
 
@@ -4253,13 +4253,21 @@ function buildSeries(portfolioId) {
     return {
       date,
       value: metrics.netWorth,
+      marketValue: metrics.marketValue,
+      netWorth: metrics.netWorth,
       pl: metrics.totalPL
     };
   });
   const today = todayIso();
   const current = computeMetrics(portfolioId, { useCurrentPrices: true });
   if (!series.length || series[series.length - 1].date !== today) {
-    series.push({ date: today, value: current.netWorth, pl: current.totalPL });
+    series.push({
+      date: today,
+      value: current.netWorth,
+      marketValue: current.marketValue,
+      netWorth: current.netWorth,
+      pl: current.totalPL
+    });
   }
   return series;
 }
