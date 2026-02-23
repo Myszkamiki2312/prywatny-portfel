@@ -733,6 +733,18 @@
             <div class="chart-wrap">
               <canvas id="candlesChart" width="1200" height="300"></canvas>
             </div>
+            <div class="actions-inline">
+              <label class="control inline">
+                <span>Zoom (liczba świec)</span>
+                <input id="candlesWindowInput" type="range" min="20" max="300" step="1" value="120" />
+              </label>
+              <label class="control inline">
+                <span>Przesunięcie</span>
+                <input id="candlesOffsetInput" type="range" min="0" max="0" step="1" value="0" />
+              </label>
+              <button id="candlesResetZoomBtn" class="btn secondary">Reset zoomu</button>
+            </div>
+            <div id="candlesRangeInfo" class="hint"></div>
             <div id="candlesTable" class="table-wrap"></div>
           </article>
 

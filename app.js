@@ -166,7 +166,16 @@ const backendSync = {
   suspendPush: false,
   reportRequestSeq: 0,
   metricsTimer: 0,
-  metricsRequestSeq: 0
+  metricsRequestSeq: 0,
+  healthProbe: null
+};
+const candlesView = {
+  all: [],
+  start: 0,
+  end: 0,
+  ticker: "",
+  signal: "",
+  indicators: {}
 };
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -281,6 +290,10 @@ function cacheDom() {
   dom.openTradingviewBtn = document.getElementById("openTradingviewBtn");
   dom.candlesInfo = document.getElementById("candlesInfo");
   dom.candlesChart = document.getElementById("candlesChart");
+  dom.candlesWindowInput = document.getElementById("candlesWindowInput");
+  dom.candlesOffsetInput = document.getElementById("candlesOffsetInput");
+  dom.candlesResetZoomBtn = document.getElementById("candlesResetZoomBtn");
+  dom.candlesRangeInfo = document.getElementById("candlesRangeInfo");
   dom.candlesTable = document.getElementById("candlesTable");
   dom.refreshCatalystBtn = document.getElementById("refreshCatalystBtn");
   dom.refreshFundsRankingBtn = document.getElementById("refreshFundsRankingBtn");
@@ -418,6 +431,24 @@ function bindEvents() {
     event.preventDefault();
     void openTradingview();
   });
+  dom.candlesWindowInput.addEventListener("input", () => {
+    applyCandlesWindowFromInput();
+  });
+  dom.candlesOffsetInput.addEventListener("input", () => {
+    applyCandlesOffsetFromInput();
+  });
+  dom.candlesResetZoomBtn.addEventListener("click", (event) => {
+    event.preventDefault();
+    resetCandlesViewport();
+    renderCandlesViewport();
+  });
+  dom.candlesChart.addEventListener(
+    "wheel",
+    (event) => {
+      onCandlesChartWheel(event);
+    },
+    { passive: false }
+  );
   dom.refreshCatalystBtn.addEventListener("click", (event) => {
     event.preventDefault();
     void refreshCatalyst();
@@ -702,6 +733,33 @@ function updateBackendStatus() {
   dom.backendStatus.className = "badge ok";
 }
 
+async function ensureBackendAvailable(options = {}) {
+  if (backendSync.available) {
+    return true;
+  }
+  if (backendSync.healthProbe) {
+    return backendSync.healthProbe;
+  }
+  const timeoutMs = Math.max(400, Math.round(toNum(options.timeoutMs) || 1800));
+  backendSync.healthProbe = (async () => {
+    try {
+      await apiRequest("/health", { timeoutMs });
+      backendSync.available = true;
+      backendSync.checked = true;
+      updateBackendStatus();
+      return true;
+    } catch (error) {
+      backendSync.available = false;
+      backendSync.checked = true;
+      updateBackendStatus();
+      return false;
+    } finally {
+      backendSync.healthProbe = null;
+    }
+  })();
+  return backendSync.healthProbe;
+}
+
 function scheduleMetricsRefresh(portfolioId) {
   if (!backendSync.available) {
     return;
@@ -752,6 +810,9 @@ async function refreshExpertTools(options = {}) {
   const force = Boolean(options.force);
   if (!force && !isViewActive("toolsView")) {
     return;
+  }
+  if (!backendSync.available) {
+    await ensureBackendAvailable({ timeoutMs: 1800 });
   }
   await refreshRealtimeStatus({ silent: true });
   await refreshNotificationConfig({ silent: true });
@@ -1362,15 +1423,137 @@ function candlesFormValues() {
   };
 }
 
+function candlesVisibleRows() {
+  if (!candlesView.all.length) {
+    return [];
+  }
+  const start = Math.max(0, Math.min(candlesView.start, candlesView.all.length - 1));
+  const end = Math.max(start + 1, Math.min(candlesView.end, candlesView.all.length));
+  return candlesView.all.slice(start, end);
+}
+
+function updateCandlesControls() {
+  const allLen = candlesView.all.length;
+  const hasData = allLen > 0;
+  if (!dom.candlesWindowInput || !dom.candlesOffsetInput || !dom.candlesResetZoomBtn) {
+    return;
+  }
+  dom.candlesWindowInput.disabled = !hasData;
+  dom.candlesOffsetInput.disabled = !hasData;
+  dom.candlesResetZoomBtn.disabled = !hasData;
+  if (!hasData) {
+    dom.candlesWindowInput.min = "1";
+    dom.candlesWindowInput.max = "1";
+    dom.candlesWindowInput.value = "1";
+    dom.candlesOffsetInput.min = "0";
+    dom.candlesOffsetInput.max = "0";
+    dom.candlesOffsetInput.value = "0";
+    if (dom.candlesRangeInfo) {
+      dom.candlesRangeInfo.textContent = "";
+    }
+    return;
+  }
+
+  const windowSize = Math.max(1, candlesView.end - candlesView.start);
+  const minWindow = Math.min(20, allLen);
+  dom.candlesWindowInput.min = String(minWindow);
+  dom.candlesWindowInput.max = String(allLen);
+  dom.candlesWindowInput.value = String(windowSize);
+
+  const maxOffset = Math.max(0, allLen - windowSize);
+  dom.candlesOffsetInput.min = "0";
+  dom.candlesOffsetInput.max = String(maxOffset);
+  dom.candlesOffsetInput.value = String(Math.min(candlesView.start, maxOffset));
+
+  const visible = candlesVisibleRows();
+  if (dom.candlesRangeInfo && visible.length) {
+    dom.candlesRangeInfo.textContent = `Zakres: ${visible[0].date} -> ${
+      visible[visible.length - 1].date
+    } | widoczne ${visible.length}/${allLen} świec`;
+  }
+}
+
+function resetCandlesViewport() {
+  const allLen = candlesView.all.length;
+  if (!allLen) {
+    candlesView.start = 0;
+    candlesView.end = 0;
+    updateCandlesControls();
+    return;
+  }
+  const windowSize = Math.min(120, allLen);
+  candlesView.end = allLen;
+  candlesView.start = allLen - windowSize;
+  updateCandlesControls();
+}
+
+function renderCandlesViewport() {
+  const visible = candlesVisibleRows();
+  renderCandlesRows(visible);
+  drawCandlestickChart(dom.candlesChart, visible);
+  updateCandlesControls();
+}
+
+function applyCandlesWindowFromInput() {
+  if (!candlesView.all.length || !dom.candlesWindowInput) {
+    return;
+  }
+  const allLen = candlesView.all.length;
+  const minWindow = Math.min(20, allLen);
+  const requested = Math.max(minWindow, Math.min(allLen, Math.round(toNum(dom.candlesWindowInput.value) || minWindow)));
+  const maxStart = Math.max(0, allLen - requested);
+  let start = Math.min(candlesView.start, maxStart);
+  if (start < 0) {
+    start = 0;
+  }
+  candlesView.start = start;
+  candlesView.end = start + requested;
+  renderCandlesViewport();
+}
+
+function applyCandlesOffsetFromInput() {
+  if (!candlesView.all.length || !dom.candlesOffsetInput) {
+    return;
+  }
+  const allLen = candlesView.all.length;
+  const windowSize = Math.max(1, candlesView.end - candlesView.start);
+  const maxStart = Math.max(0, allLen - windowSize);
+  const start = Math.max(0, Math.min(maxStart, Math.round(toNum(dom.candlesOffsetInput.value) || 0)));
+  candlesView.start = start;
+  candlesView.end = start + windowSize;
+  renderCandlesViewport();
+}
+
+function onCandlesChartWheel(event) {
+  if (!candlesView.all.length || !dom.candlesWindowInput) {
+    return;
+  }
+  event.preventDefault();
+  const direction = event.deltaY > 0 ? 1 : -1;
+  const current = Math.round(toNum(dom.candlesWindowInput.value) || 120);
+  const step = Math.max(2, Math.round(current * 0.08));
+  const next = current + direction * step;
+  dom.candlesWindowInput.value = String(next);
+  applyCandlesWindowFromInput();
+}
+
 async function refreshCandles(options = {}) {
   const silent = Boolean(options.silent);
   const values = candlesFormValues();
   if (dom.candlesTickerInput && !dom.candlesTickerInput.value.trim()) {
     dom.candlesTickerInput.value = values.ticker;
   }
-  if (!backendSync.available) {
+  const backendReady = backendSync.available || (await ensureBackendAvailable({ timeoutMs: 2200 }));
+  if (!backendReady) {
     renderTable(dom.candlesTable, ["Data", "Open", "High", "Low", "Close", "Volume"], []);
     drawCandlestickChart(dom.candlesChart, []);
+    candlesView.all = [];
+    candlesView.start = 0;
+    candlesView.end = 0;
+    candlesView.ticker = values.ticker;
+    candlesView.signal = "";
+    candlesView.indicators = {};
+    updateCandlesControls();
     if (dom.candlesInfo) {
       dom.candlesInfo.textContent = "Świece wymagają backendu (Stooq).";
     }
@@ -1383,15 +1566,24 @@ async function refreshCandles(options = {}) {
     const query = `?ticker=${encodeURIComponent(values.ticker)}&limit=${values.limit}`;
     const payload = await apiRequest(`/tools/charts/candles${query}`, { timeoutMs: 15000 });
     const candles = Array.isArray(payload.candles) ? payload.candles : [];
-    renderCandlesRows(candles);
-    drawCandlestickChart(dom.candlesChart, candles);
-    const indicators = payload.indicators || {};
+    candlesView.all = candles;
+    candlesView.ticker = payload.ticker || values.ticker;
+    candlesView.signal = payload.signal || "-";
+    candlesView.indicators = payload.indicators || {};
+    resetCandlesViewport();
+    renderCandlesViewport();
+    const indicators = candlesView.indicators || {};
+    const visible = candlesVisibleRows();
     if (dom.candlesInfo) {
       dom.candlesInfo.textContent =
-        `${payload.ticker || values.ticker}: ${candles.length} świec, sygnał ${payload.signal || "-"}, ` +
+        `${candlesView.ticker}: ${candles.length} świec (widok: ${visible.length}), sygnał ${candlesView.signal}, ` +
         `SMA20 ${formatFloat(toNum(indicators.sma20))}, RSI14 ${formatFloat(toNum(indicators.rsi14))}, MACD hist ${formatFloat(toNum(indicators.macdHist))}`;
     }
   } catch (error) {
+    candlesView.all = [];
+    candlesView.start = 0;
+    candlesView.end = 0;
+    updateCandlesControls();
     if (dom.candlesInfo) {
       dom.candlesInfo.textContent = `Błąd świec: ${error.message}`;
     }
@@ -1929,7 +2121,7 @@ function renderCandlesRows(candles) {
   const rows = (candles || [])
     .slice()
     .reverse()
-    .slice(0, 80)
+    .slice(0, 200)
     .map((item) => [
       escapeHtml(item.date || ""),
       formatFloat(toNum(item.open)),
@@ -4430,7 +4622,7 @@ function drawCandlestickChart(canvas, candles) {
     return;
   }
 
-  const sample = candles.slice(-Math.min(120, candles.length));
+  const sample = candles.slice();
   const highs = sample.map((item) => toNum(item.high));
   const lows = sample.map((item) => toNum(item.low));
   const minVal = Math.min(...lows);
