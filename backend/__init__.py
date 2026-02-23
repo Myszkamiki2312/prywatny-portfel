@@ -1,0 +1,2 @@
+"""MyFund Solo backend package."""
+

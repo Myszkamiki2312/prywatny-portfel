@@ -1,0 +1,1059 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MyFund Solo</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="backdrop" aria-hidden="true"></div>
+    <header class="topbar">
+      <div class="brand">
+        <p class="eyebrow">Lokalna aplikacja inwestycyjna</p>
+        <h1>MyFund Solo</h1>
+      </div>
+      <div class="topbar-actions">
+        <label class="control">
+          <span>Abonament</span>
+          <select id="planSelect"></select>
+        </label>
+        <label class="control">
+          <span>Waluta bazowa</span>
+          <select id="baseCurrencySelect">
+            <option value="PLN">PLN</option>
+            <option value="EUR">EUR</option>
+            <option value="USD">USD</option>
+            <option value="GBP">GBP</option>
+            <option value="CHF">CHF</option>
+          </select>
+        </label>
+        <button id="exportBackupBtn" class="btn secondary">Eksport kopii</button>
+        <label class="btn secondary file-btn">
+          Import kopii
+          <input id="importBackupInput" type="file" accept="application/json" />
+        </label>
+        <button id="refreshQuotesBtn" class="btn secondary">Odśwież notowania</button>
+        <span id="backendStatus" class="badge off">Backend: offline</span>
+      </div>
+    </header>
+
+    <nav class="tabs" id="tabs">
+      <button class="tab active" data-view="dashboardView">Kokpit</button>
+      <button class="tab" data-view="portfoliosView">Portfele</button>
+      <button class="tab" data-view="accountsView">Konta i walory</button>
+      <button class="tab" data-view="operationsView">Operacje</button>
+      <button class="tab" data-view="reportsView">Raporty</button>
+      <button class="tab" data-view="toolsView">Narzędzia</button>
+      <button class="tab" data-view="featuresView">Matryca funkcji</button>
+    </nav>
+
+    <main class="container">
+      <section id="dashboardView" class="view active">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Kokpit inwestora</h2>
+            <label class="control inline">
+              <span>Portfel</span>
+              <select id="dashboardPortfolioSelect"></select>
+            </label>
+          </div>
+          <div class="stats-grid">
+            <article class="stat-card">
+              <p>Wartość rynkowa</p>
+              <strong id="statMarketValue">0,00 PLN</strong>
+            </article>
+            <article class="stat-card">
+              <p>Gotówka</p>
+              <strong id="statCash">0,00 PLN</strong>
+            </article>
+            <article class="stat-card">
+              <p>Wartość majątku (netto)</p>
+              <strong id="statNetWorth">0,00 PLN</strong>
+            </article>
+            <article class="stat-card">
+              <p>Całkowity zysk/strata</p>
+              <strong id="statTotalPl">0,00 PLN</strong>
+            </article>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="dashboardChart" width="1200" height="280"></canvas>
+          </div>
+          <div id="dashboardDetails" class="table-wrap"></div>
+        </div>
+      </section>
+
+      <section id="portfoliosView" class="view">
+        <div class="grid-two">
+          <article class="panel">
+            <h2>Dodaj portfel</h2>
+            <form id="portfolioForm" class="form-grid">
+              <label class="control">
+                <span>Nazwa</span>
+                <input name="name" required />
+              </label>
+              <label class="control">
+                <span>Waluta</span>
+                <select name="currency">
+                  <option value="PLN">PLN</option>
+                  <option value="EUR">EUR</option>
+                  <option value="USD">USD</option>
+                  <option value="GBP">GBP</option>
+                  <option value="CHF">CHF</option>
+                </select>
+              </label>
+              <label class="control">
+                <span>Benchmark</span>
+                <input name="benchmark" placeholder="np. WIG20, S&P500" />
+              </label>
+              <label class="control">
+                <span>Cel inwestycyjny</span>
+                <input name="goal" placeholder="np. emerytura 2045" />
+              </label>
+              <label class="control">
+                <span>Portfel nadrzędny (sub-portfel)</span>
+                <select name="parentId" id="portfolioParentSelect">
+                  <option value="">Brak</option>
+                </select>
+              </label>
+              <label class="control">
+                <span>Bliźniaczy portfel</span>
+                <select name="twinOf" id="portfolioTwinSelect">
+                  <option value="">Brak</option>
+                </select>
+              </label>
+              <label class="control">
+                <span>Nazwa grupy</span>
+                <input name="groupName" placeholder="np. Portfele rodzinne" />
+              </label>
+              <label class="control switch">
+                <span>Portfel publiczny</span>
+                <input name="isPublic" type="checkbox" />
+              </label>
+              <button type="submit" class="btn">Dodaj portfel</button>
+            </form>
+          </article>
+          <article class="panel">
+            <h2>Lista portfeli</h2>
+            <div id="portfolioList" class="table-wrap"></div>
+          </article>
+        </div>
+      </section>
+
+      <section id="accountsView" class="view">
+        <div class="grid-two">
+          <article class="panel">
+            <h2>Dodaj konto inwestycyjne</h2>
+            <form id="accountForm" class="form-grid">
+              <label class="control">
+                <span>Nazwa konta</span>
+                <input name="name" required />
+              </label>
+              <label class="control">
+                <span>Typ</span>
+                <select name="type">
+                  <option>Broker</option>
+                  <option>Bank</option>
+                  <option>IKE</option>
+                  <option>IKZE</option>
+                  <option>PPK</option>
+                  <option>Krypto</option>
+                  <option>Gotówkowe</option>
+                </select>
+              </label>
+              <label class="control">
+                <span>Waluta</span>
+                <select name="currency">
+                  <option value="PLN">PLN</option>
+                  <option value="EUR">EUR</option>
+                  <option value="USD">USD</option>
+                  <option value="GBP">GBP</option>
+                  <option value="CHF">CHF</option>
+                </select>
+              </label>
+              <button type="submit" class="btn">Dodaj konto</button>
+            </form>
+          </article>
+          <article class="panel">
+            <h2>Dodaj walor</h2>
+            <form id="assetForm" class="form-grid">
+              <label class="control">
+                <span>Ticker</span>
+                <input name="ticker" required />
+              </label>
+              <label class="control">
+                <span>Nazwa</span>
+                <input name="name" required />
+              </label>
+              <label class="control">
+                <span>Typ waloru</span>
+                <select name="type">
+                  <option>Akcja</option>
+                  <option>ETF</option>
+                  <option>Obligacja</option>
+                  <option>Fundusz</option>
+                  <option>Krypto</option>
+                  <option>Lokata</option>
+                  <option>Pożyczka społecznościowa</option>
+                  <option>Inny</option>
+                </select>
+              </label>
+              <label class="control">
+                <span>Waluta</span>
+                <select name="currency">
+                  <option value="PLN">PLN</option>
+                  <option value="EUR">EUR</option>
+                  <option value="USD">USD</option>
+                  <option value="GBP">GBP</option>
+                  <option value="CHF">CHF</option>
+                </select>
+              </label>
+              <label class="control">
+                <span>Cena bieżąca</span>
+                <input name="currentPrice" type="number" step="0.0001" min="0" value="0" />
+              </label>
+              <label class="control">
+                <span>Ryzyko (1-10)</span>
+                <input name="risk" type="number" min="1" max="10" value="5" />
+              </label>
+              <label class="control">
+                <span>Sektor</span>
+                <input name="sector" placeholder="np. Finanse" />
+              </label>
+              <label class="control">
+                <span>Branża</span>
+                <input name="industry" placeholder="np. Bankowość" />
+              </label>
+              <label class="control">
+                <span>Tagi (po przecinku)</span>
+                <input name="tags" placeholder="np. dywidenda, growth" />
+              </label>
+              <label class="control">
+                <span>Benchmark waloru</span>
+                <input name="benchmark" placeholder="np. mWIG40" />
+              </label>
+              <button type="submit" class="btn">Dodaj walor</button>
+            </form>
+          </article>
+        </div>
+
+        <div class="grid-two">
+          <article class="panel">
+            <h2>Konta inwestycyjne</h2>
+            <div id="accountList" class="table-wrap"></div>
+          </article>
+          <article class="panel">
+            <h2>Walory</h2>
+            <div id="assetList" class="table-wrap"></div>
+          </article>
+        </div>
+      </section>
+
+      <section id="operationsView" class="view">
+        <div class="grid-two">
+          <article class="panel">
+            <h2>Dodaj operację</h2>
+            <form id="operationForm" class="form-grid">
+              <label class="control">
+                <span>Data</span>
+                <input type="date" name="date" required />
+              </label>
+              <label class="control">
+                <span>Typ operacji</span>
+                <select name="type" id="operationTypeSelect"></select>
+              </label>
+              <label class="control">
+                <span>Portfel</span>
+                <select name="portfolioId" id="operationPortfolioSelect"></select>
+              </label>
+              <label class="control">
+                <span>Konto</span>
+                <select name="accountId" id="operationAccountSelect"></select>
+              </label>
+              <label class="control">
+                <span>Walor (źródło)</span>
+                <select name="assetId" id="operationAssetSelect">
+                  <option value="">Brak</option>
+                </select>
+              </label>
+              <label class="control">
+                <span>Walor docelowy (konwersja)</span>
+                <select name="targetAssetId" id="operationTargetAssetSelect">
+                  <option value="">Brak</option>
+                </select>
+              </label>
+              <label class="control">
+                <span>Ilość</span>
+                <input type="number" name="quantity" step="0.00000001" />
+              </label>
+              <label class="control">
+                <span>Ilość docelowa</span>
+                <input type="number" name="targetQuantity" step="0.00000001" />
+              </label>
+              <label class="control">
+                <span>Cena</span>
+                <input type="number" name="price" step="0.0001" />
+              </label>
+              <label class="control">
+                <span>Kwota gotówkowa</span>
+                <input type="number" name="amount" step="0.01" />
+              </label>
+              <label class="control">
+                <span>Prowizja</span>
+                <input type="number" name="fee" step="0.01" />
+              </label>
+              <label class="control">
+                <span>Waluta</span>
+                <select name="currency">
+                  <option value="PLN">PLN</option>
+                  <option value="EUR">EUR</option>
+                  <option value="USD">USD</option>
+                  <option value="GBP">GBP</option>
+                  <option value="CHF">CHF</option>
+                </select>
+              </label>
+              <label class="control">
+                <span>Tagi (po przecinku)</span>
+                <input name="tags" />
+              </label>
+              <label class="control full">
+                <span>Notatka</span>
+                <textarea name="note" rows="2"></textarea>
+              </label>
+              <button type="submit" class="btn">Dodaj operację</button>
+            </form>
+          </article>
+
+          <article class="panel">
+            <h2>Import operacji</h2>
+            <p class="muted">
+              Obsługiwane nagłówki: date,type,portfolio,account,asset,targetAsset,quantity,targetQuantity,price,amount,fee,currency,tags,note
+            </p>
+            <label class="btn secondary file-btn">
+              Import CSV
+              <input id="csvImportInput" type="file" accept=".csv,text/csv" />
+            </label>
+            <h3>Import brokera (backend)</h3>
+            <div class="actions-inline">
+              <label class="control inline">
+                <span>Broker</span>
+                <select id="brokerSelect">
+                  <option value="generic">Generic</option>
+                  <option value="xtb">XTB</option>
+                  <option value="mbank">mBank</option>
+                </select>
+              </label>
+              <label class="btn secondary file-btn">
+                CSV brokera
+                <input id="brokerCsvInput" type="file" accept=".csv,text/csv" />
+              </label>
+            </div>
+            <div id="brokerImportInfo" class="hint"></div>
+            <h3>Import operacji z maila</h3>
+            <textarea
+              id="mailImportText"
+              rows="8"
+              placeholder="Wklej treść maila z tabelą CSV lub liniami w formacie: date;type;amount;..."
+            ></textarea>
+            <button id="mailImportBtn" class="btn secondary">Importuj z treści</button>
+            <hr />
+            <h3>Operacje cykliczne</h3>
+            <form id="recurringForm" class="form-grid">
+              <label class="control">
+                <span>Nazwa</span>
+                <input name="name" required />
+              </label>
+              <label class="control">
+                <span>Typ</span>
+                <select name="type" id="recurringTypeSelect"></select>
+              </label>
+              <label class="control">
+                <span>Częstotliwość</span>
+                <select name="frequency">
+                  <option value="monthly">Miesięcznie</option>
+                  <option value="weekly">Co tydzień</option>
+                  <option value="quarterly">Kwartalnie</option>
+                </select>
+              </label>
+              <label class="control">
+                <span>Start</span>
+                <input type="date" name="startDate" required />
+              </label>
+              <label class="control">
+                <span>Kwota</span>
+                <input type="number" name="amount" step="0.01" required />
+              </label>
+              <label class="control">
+                <span>Portfel</span>
+                <select name="portfolioId" id="recurringPortfolioSelect"></select>
+              </label>
+              <label class="control">
+                <span>Konto</span>
+                <select name="accountId" id="recurringAccountSelect"></select>
+              </label>
+              <label class="control">
+                <span>Walor</span>
+                <select name="assetId" id="recurringAssetSelect">
+                  <option value="">Brak</option>
+                </select>
+              </label>
+              <button type="submit" class="btn">Dodaj cykliczną</button>
+            </form>
+            <div class="stack">
+              <button id="runRecurringBtn" class="btn">Wygeneruj zaległe operacje</button>
+              <div id="recurringList" class="table-wrap"></div>
+            </div>
+          </article>
+        </div>
+
+        <article class="panel">
+          <h2>Historia operacji</h2>
+          <div id="operationList" class="table-wrap"></div>
+        </article>
+      </section>
+
+      <section id="reportsView" class="view">
+        <article class="panel">
+          <div class="panel-head">
+            <h2>Raporty</h2>
+            <div class="actions-inline">
+              <label class="control inline">
+                <span>Portfel</span>
+                <select id="reportPortfolioSelect"></select>
+              </label>
+              <label class="control inline">
+                <span>Raport</span>
+                <select id="reportSelect"></select>
+              </label>
+              <button id="generateReportBtn" class="btn">Generuj</button>
+            </div>
+          </div>
+          <div id="reportInfo" class="hint"></div>
+          <div class="chart-wrap">
+            <canvas id="reportChart" width="1200" height="300"></canvas>
+          </div>
+          <div id="reportOutput" class="table-wrap"></div>
+        </article>
+      </section>
+
+      <section id="toolsView" class="view">
+        <div class="grid-two">
+          <article class="panel">
+            <h2>Alerty</h2>
+            <form id="alertForm" class="form-grid">
+              <label class="control">
+                <span>Walor</span>
+                <select name="assetId" id="alertAssetSelect"></select>
+              </label>
+              <label class="control">
+                <span>Warunek</span>
+                <select name="direction">
+                  <option value="gte">Cena >=</option>
+                  <option value="lte">Cena <=</option>
+                </select>
+              </label>
+              <label class="control">
+                <span>Poziom ceny</span>
+                <input type="number" name="targetPrice" step="0.0001" required />
+              </label>
+              <button type="submit" class="btn">Dodaj alert</button>
+            </form>
+            <div class="stack">
+              <button id="checkAlertsBtn" class="btn secondary">Sprawdź alerty</button>
+              <div id="alertList" class="table-wrap"></div>
+            </div>
+          </article>
+
+          <article class="panel">
+            <h2>Notatki i strategie</h2>
+            <form id="noteForm" class="form-grid">
+              <label class="control full">
+                <span>Notatka użytkownika</span>
+                <textarea name="content" rows="3" required></textarea>
+              </label>
+              <button type="submit" class="btn">Dodaj notatkę</button>
+            </form>
+            <form id="strategyForm" class="form-grid">
+              <label class="control">
+                <span>Nazwa strategii</span>
+                <input name="name" required />
+              </label>
+              <label class="control full">
+                <span>Opis strategii</span>
+                <textarea name="description" rows="3" required></textarea>
+              </label>
+              <button type="submit" class="btn">Dodaj strategię</button>
+            </form>
+            <div id="notesList" class="table-wrap"></div>
+            <div id="strategyList" class="table-wrap"></div>
+          </article>
+        </div>
+
+        <div class="grid-two">
+          <article class="panel">
+            <div class="panel-head">
+              <h2>Skaner i sygnały</h2>
+              <label class="control inline">
+                <span>Portfel</span>
+                <select id="toolsPortfolioSelect"></select>
+              </label>
+            </div>
+            <form id="scannerForm" class="form-grid">
+              <label class="control">
+                <span>Min score</span>
+                <input name="minScore" type="number" step="0.01" value="0" />
+              </label>
+              <label class="control">
+                <span>Max ryzyko (1-10)</span>
+                <input name="maxRisk" type="number" step="0.01" min="1" max="10" value="10" />
+              </label>
+              <label class="control">
+                <span>Sektor</span>
+                <input name="sector" placeholder="np. Tech" />
+              </label>
+              <label class="control">
+                <span>Min cena</span>
+                <input name="minPrice" type="number" step="0.0001" value="0" />
+              </label>
+              <button type="submit" class="btn">Uruchom skaner</button>
+            </form>
+            <div id="scannerInfo" class="hint"></div>
+            <div id="scannerList" class="table-wrap"></div>
+            <hr />
+            <div class="panel-head">
+              <h3>Sygnały AT</h3>
+              <button id="refreshSignalsBtn" class="btn secondary">Odśwież sygnały</button>
+            </div>
+            <div id="signalsInfo" class="hint"></div>
+            <div id="signalsList" class="table-wrap"></div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head">
+              <h2>Kalendarium i rekomendacje</h2>
+              <button id="refreshRecommendationsBtn" class="btn secondary">Rekomendacje</button>
+            </div>
+            <form id="calendarForm" class="form-grid">
+              <label class="control">
+                <span>Horyzont (dni)</span>
+                <input name="days" type="number" min="1" max="365" value="60" />
+              </label>
+              <button type="submit" class="btn">Pobierz kalendarium</button>
+            </form>
+            <div id="calendarInfo" class="hint"></div>
+            <div id="calendarList" class="table-wrap"></div>
+            <hr />
+            <div id="recommendationsInfo" class="hint"></div>
+            <div id="recommendationsList" class="table-wrap"></div>
+            <hr />
+            <div class="panel-head">
+              <h3>Workflow alertów</h3>
+              <button id="runAlertWorkflowBtn" class="btn">Uruchom workflow</button>
+            </div>
+            <div id="alertWorkflowInfo" class="hint"></div>
+            <div id="alertWorkflowList" class="table-wrap"></div>
+            <hr />
+            <h3>Realtime (cron + webhook)</h3>
+            <form id="realtimeConfigForm" class="form-grid">
+              <label class="control switch">
+                <span>Cron aktywny</span>
+                <input name="enabled" type="checkbox" />
+              </label>
+              <label class="control switch">
+                <span>Auto-refresh notowań</span>
+                <input name="autoRefreshQuotes" type="checkbox" checked />
+              </label>
+              <label class="control">
+                <span>Interwał (min)</span>
+                <input name="intervalMinutes" type="number" min="1" max="1440" value="15" />
+              </label>
+              <label class="control">
+                <span>Sekret webhook</span>
+                <input name="webhookSecret" placeholder="np. moje-haslo-webhook" />
+              </label>
+              <button type="submit" class="btn">Zapisz realtime</button>
+            </form>
+            <div class="actions-inline">
+              <button id="runRealtimeNowBtn" class="btn secondary">Uruchom teraz</button>
+              <button id="startRealtimeBtn" class="btn secondary">Start cron</button>
+              <button id="stopRealtimeBtn" class="btn secondary">Stop cron</button>
+            </div>
+            <div id="realtimeInfo" class="hint"></div>
+            <code id="webhookUrl" class="hint"></code>
+            <hr />
+            <h3>Powiadomienia</h3>
+            <form id="notificationConfigForm" class="form-grid">
+              <label class="control switch">
+                <span>Powiadomienia aktywne</span>
+                <input name="enabled" type="checkbox" />
+              </label>
+              <label class="control">
+                <span>Cooldown (min)</span>
+                <input name="cooldownMinutes" type="number" min="1" max="10080" value="60" />
+              </label>
+              <label class="control switch">
+                <span>Email aktywny</span>
+                <input name="emailEnabled" type="checkbox" />
+              </label>
+              <label class="control">
+                <span>SMTP host</span>
+                <input name="smtpHost" placeholder="smtp.gmail.com" />
+              </label>
+              <label class="control">
+                <span>SMTP port</span>
+                <input name="smtpPort" type="number" value="587" />
+              </label>
+              <label class="control">
+                <span>Email user</span>
+                <input name="smtpUsername" />
+              </label>
+              <label class="control">
+                <span>Email hasło</span>
+                <input name="smtpPassword" type="password" />
+              </label>
+              <label class="control">
+                <span>Email from</span>
+                <input name="smtpFrom" />
+              </label>
+              <label class="control">
+                <span>Email to</span>
+                <input name="smtpTo" />
+              </label>
+              <label class="control switch">
+                <span>SMTP STARTTLS</span>
+                <input name="smtpUseTls" type="checkbox" checked />
+              </label>
+              <label class="control switch">
+                <span>Telegram aktywny</span>
+                <input name="telegramEnabled" type="checkbox" />
+              </label>
+              <label class="control">
+                <span>Telegram bot token</span>
+                <input name="telegramBotToken" type="password" />
+              </label>
+              <label class="control">
+                <span>Telegram chat ID</span>
+                <input name="telegramChatId" />
+              </label>
+              <button type="submit" class="btn">Zapisz powiadomienia</button>
+            </form>
+            <div class="actions-inline">
+              <button id="testNotificationBtn" class="btn secondary">Test powiadomienia</button>
+            </div>
+            <div id="notificationInfo" class="hint"></div>
+            <div id="notificationHistoryList" class="table-wrap"></div>
+          </article>
+        </div>
+
+        <div class="grid-two">
+          <article class="panel">
+            <h2>Zobowiązania</h2>
+            <form id="liabilityForm" class="form-grid">
+              <label class="control">
+                <span>Nazwa</span>
+                <input name="name" required />
+              </label>
+              <label class="control">
+                <span>Kwota</span>
+                <input type="number" name="amount" step="0.01" required />
+              </label>
+              <label class="control">
+                <span>Waluta</span>
+                <select name="currency">
+                  <option value="PLN">PLN</option>
+                  <option value="EUR">EUR</option>
+                  <option value="USD">USD</option>
+                  <option value="GBP">GBP</option>
+                  <option value="CHF">CHF</option>
+                </select>
+              </label>
+              <label class="control">
+                <span>Oprocentowanie roczne (%)</span>
+                <input type="number" name="rate" step="0.01" />
+              </label>
+              <label class="control">
+                <span>Termin</span>
+                <input type="date" name="dueDate" />
+              </label>
+              <button type="submit" class="btn">Dodaj zobowiązanie</button>
+            </form>
+            <div id="liabilityList" class="table-wrap"></div>
+          </article>
+
+          <article class="panel">
+            <h2>Podatki</h2>
+            <form id="taxForm" class="form-grid">
+              <label class="control">
+                <span>Zrealizowany zysk</span>
+                <input type="number" name="realized" step="0.01" required />
+              </label>
+              <label class="control">
+                <span>Dywidendy</span>
+                <input type="number" name="dividends" step="0.01" value="0" />
+              </label>
+              <label class="control">
+                <span>Koszty (prowizje)</span>
+                <input type="number" name="costs" step="0.01" value="0" />
+              </label>
+              <label class="control">
+                <span>Stawka podatku (%)</span>
+                <input type="number" name="rate" step="0.01" value="19" />
+              </label>
+              <button type="submit" class="btn">Oblicz podatek</button>
+            </form>
+            <div id="taxOutput" class="hint"></div>
+            <div id="toolCatalog" class="table-wrap"></div>
+          </article>
+        </div>
+
+        <div class="grid-two">
+          <article class="panel">
+            <h2>Wykresy świecowe i TradingView</h2>
+            <form id="candlesForm" class="form-grid">
+              <label class="control">
+                <span>Ticker</span>
+                <input name="ticker" id="candlesTickerInput" placeholder="np. PKO.PL, AAPL.US" required />
+              </label>
+              <label class="control">
+                <span>Liczba świec</span>
+                <input name="limit" type="number" min="20" max="3000" value="180" />
+              </label>
+              <button type="submit" class="btn">Pobierz świece</button>
+            </form>
+            <div class="actions-inline">
+              <button id="openTradingviewBtn" class="btn secondary">Otwórz TradingView</button>
+            </div>
+            <div id="candlesInfo" class="hint"></div>
+            <div class="chart-wrap">
+              <canvas id="candlesChart" width="1200" height="300"></canvas>
+            </div>
+            <div id="candlesTable" class="table-wrap"></div>
+          </article>
+
+          <article class="panel">
+            <h2>Catalyst, fundusze, ESPI</h2>
+            <div class="actions-inline">
+              <button id="refreshCatalystBtn" class="btn">Analiza obligacji Catalyst</button>
+              <button id="refreshFundsRankingBtn" class="btn secondary">Ranking funduszy</button>
+            </div>
+            <div id="catalystInfo" class="hint"></div>
+            <div id="catalystTable" class="table-wrap"></div>
+            <hr />
+            <div id="fundsRankingInfo" class="hint"></div>
+            <div id="fundsRankingTable" class="table-wrap"></div>
+            <hr />
+            <form id="espiForm" class="form-grid">
+              <label class="control">
+                <span>Szukaj ESPI/EBI</span>
+                <input name="query" placeholder="np. PKO, dywidenda, buyback" />
+              </label>
+              <label class="control">
+                <span>Limit</span>
+                <input name="limit" type="number" min="5" max="200" value="40" />
+              </label>
+              <button type="submit" class="btn">Pobierz komunikaty ESPI</button>
+            </form>
+            <div id="espiInfo" class="hint"></div>
+            <div id="espiTable" class="table-wrap"></div>
+          </article>
+        </div>
+
+        <div class="grid-two">
+          <article class="panel">
+            <h2>Podatki specjalistyczne</h2>
+            <h3>Optymalizuj podatek</h3>
+            <form id="taxOptimizeForm" class="form-grid">
+              <label class="control">
+                <span>Zysk zrealizowany</span>
+                <input name="realizedGain" type="number" step="0.01" value="0" />
+              </label>
+              <label class="control">
+                <span>Strata zrealizowana</span>
+                <input name="realizedLoss" type="number" step="0.01" value="0" />
+              </label>
+              <label class="control">
+                <span>Dywidendy</span>
+                <input name="dividends" type="number" step="0.01" value="0" />
+              </label>
+              <label class="control">
+                <span>Koszty</span>
+                <input name="costs" type="number" step="0.01" value="0" />
+              </label>
+              <label class="control">
+                <span>Stawka (%)</span>
+                <input name="taxRatePct" type="number" step="0.01" value="19" />
+              </label>
+              <button type="submit" class="btn">Policz optymalizację</button>
+            </form>
+            <div id="taxOptimizeOutput" class="hint"></div>
+            <hr />
+            <h3>Podatek od dywidend zagranicznych</h3>
+            <form id="foreignDividendTaxForm" class="form-grid">
+              <label class="control">
+                <span>Dywidenda brutto</span>
+                <input name="grossDividend" type="number" step="0.01" value="0" />
+              </label>
+              <label class="control">
+                <span>Podatek za granicą (%)</span>
+                <input name="foreignWithholdingPct" type="number" step="0.01" value="15" />
+              </label>
+              <label class="control">
+                <span>Polska stawka (%)</span>
+                <input name="localTaxPct" type="number" step="0.01" value="19" />
+              </label>
+              <label class="control">
+                <span>Limit kredytu umowy (%)</span>
+                <input name="treatyCreditCapPct" type="number" step="0.01" value="15" />
+              </label>
+              <button type="submit" class="btn">Policz dywidendy zagraniczne</button>
+            </form>
+            <div id="foreignDividendTaxOutput" class="hint"></div>
+            <hr />
+            <h3>Podatek od kryptowalut</h3>
+            <form id="cryptoTaxForm" class="form-grid">
+              <label class="control">
+                <span>Przychód</span>
+                <input name="proceeds" type="number" step="0.01" value="0" />
+              </label>
+              <label class="control">
+                <span>Koszt nabycia</span>
+                <input name="acquisitionCost" type="number" step="0.01" value="0" />
+              </label>
+              <label class="control">
+                <span>Koszty transakcyjne</span>
+                <input name="transactionCosts" type="number" step="0.01" value="0" />
+              </label>
+              <label class="control">
+                <span>Strata z lat ubiegłych</span>
+                <input name="carryForwardLoss" type="number" step="0.01" value="0" />
+              </label>
+              <button type="submit" class="btn">Policz podatek krypto</button>
+            </form>
+            <div id="cryptoTaxOutput" class="hint"></div>
+            <hr />
+            <h3>Podatek od odsetek zagranicznych</h3>
+            <form id="foreignInterestTaxForm" class="form-grid">
+              <label class="control">
+                <span>Odsetki brutto</span>
+                <input name="grossInterest" type="number" step="0.01" value="0" />
+              </label>
+              <label class="control">
+                <span>Podatek za granicą (%)</span>
+                <input name="foreignWithholdingPct" type="number" step="0.01" value="0" />
+              </label>
+              <label class="control">
+                <span>Polska stawka (%)</span>
+                <input name="localTaxPct" type="number" step="0.01" value="19" />
+              </label>
+              <label class="control">
+                <span>Limit kredytu umowy (%)</span>
+                <input name="treatyCreditCapPct" type="number" step="0.01" value="15" />
+              </label>
+              <button type="submit" class="btn">Policz odsetki zagraniczne</button>
+            </form>
+            <div id="foreignInterestTaxOutput" class="hint"></div>
+            <hr />
+            <h3>Podatek od odsetek obligacji</h3>
+            <form id="bondInterestTaxForm" class="form-grid">
+              <label class="control">
+                <span>Odsetki kuponowe</span>
+                <input name="couponInterest" type="number" step="0.01" value="0" />
+              </label>
+              <label class="control">
+                <span>Zysk dyskontowy</span>
+                <input name="discountGain" type="number" step="0.01" value="0" />
+              </label>
+              <label class="control">
+                <span>Koszty</span>
+                <input name="costs" type="number" step="0.01" value="0" />
+              </label>
+              <label class="control">
+                <span>Stawka (%)</span>
+                <input name="taxRatePct" type="number" step="0.01" value="19" />
+              </label>
+              <button type="submit" class="btn">Policz odsetki obligacji</button>
+            </form>
+            <div id="bondInterestTaxOutput" class="hint"></div>
+          </article>
+
+          <article class="panel">
+            <h2>Forum spółek</h2>
+            <form id="forumForm" class="form-grid">
+              <label class="control">
+                <span>Ticker</span>
+                <input name="ticker" placeholder="np. PKO" />
+              </label>
+              <label class="control">
+                <span>Autor</span>
+                <input name="author" placeholder="np. Ja" />
+              </label>
+              <label class="control full">
+                <span>Treść wpisu</span>
+                <textarea name="content" rows="3" required></textarea>
+              </label>
+              <button type="submit" class="btn">Dodaj wpis</button>
+            </form>
+            <form id="forumFilterForm" class="form-grid">
+              <label class="control">
+                <span>Filtr ticker</span>
+                <input name="ticker" id="forumFilterTicker" placeholder="wszystkie" />
+              </label>
+              <button type="submit" class="btn secondary">Odśwież forum</button>
+            </form>
+            <div id="forumInfo" class="hint"></div>
+            <div id="forumList" class="table-wrap"></div>
+          </article>
+        </div>
+
+        <div class="grid-two">
+          <article class="panel">
+            <h2>Exercise price i opcje</h2>
+            <form id="optionCalcForm" class="form-grid">
+              <label class="control">
+                <span>Ticker</span>
+                <input name="ticker" placeholder="np. PKO" />
+              </label>
+              <label class="control">
+                <span>Typ opcji</span>
+                <select name="optionType">
+                  <option value="call">CALL</option>
+                  <option value="put">PUT</option>
+                </select>
+              </label>
+              <label class="control">
+                <span>Strike</span>
+                <input name="strike" type="number" step="0.0001" value="0" />
+              </label>
+              <label class="control">
+                <span>Premia</span>
+                <input name="premium" type="number" step="0.0001" value="0" />
+              </label>
+              <label class="control">
+                <span>Spot</span>
+                <input name="spotPrice" type="number" step="0.0001" value="0" />
+              </label>
+              <label class="control">
+                <span>Kontrakty</span>
+                <input name="contracts" type="number" step="1" value="1" />
+              </label>
+              <label class="control">
+                <span>Mnożnik</span>
+                <input name="multiplier" type="number" step="1" value="100" />
+              </label>
+              <button type="submit" class="btn">Oblicz exercise price</button>
+            </form>
+            <div id="optionCalcOutput" class="hint"></div>
+            <hr />
+            <h3>Pozycje opcyjne</h3>
+            <form id="optionPositionForm" class="form-grid">
+              <label class="control">
+                <span>Ticker</span>
+                <input name="ticker" required />
+              </label>
+              <label class="control">
+                <span>Typ</span>
+                <select name="optionType">
+                  <option value="call">CALL</option>
+                  <option value="put">PUT</option>
+                </select>
+              </label>
+              <label class="control">
+                <span>Strike</span>
+                <input name="strike" type="number" step="0.0001" required />
+              </label>
+              <label class="control">
+                <span>Premia</span>
+                <input name="premium" type="number" step="0.0001" required />
+              </label>
+              <label class="control">
+                <span>Data wygaśnięcia</span>
+                <input name="expiryDate" type="date" />
+              </label>
+              <label class="control">
+                <span>Kontrakty</span>
+                <input name="contracts" type="number" step="1" value="1" />
+              </label>
+              <label class="control">
+                <span>Mnożnik</span>
+                <input name="multiplier" type="number" step="1" value="100" />
+              </label>
+              <label class="control">
+                <span>Cena instrumentu bazowego</span>
+                <input name="underlyingPrice" type="number" step="0.0001" value="0" />
+              </label>
+              <button type="submit" class="btn">Dodaj pozycję opcyjną</button>
+            </form>
+            <div class="actions-inline">
+              <button id="refreshOptionPositionsBtn" class="btn secondary">Odśwież pozycje opcyjne</button>
+            </div>
+            <div id="optionPositionsInfo" class="hint"></div>
+            <div id="optionPositionsList" class="table-wrap"></div>
+          </article>
+
+          <article class="panel">
+            <h2>Portfel wzorcowy i portfele publiczne</h2>
+            <form id="modelPortfolioForm" class="form-grid">
+              <label class="control">
+                <span>Nazwa portfela wzorcowego</span>
+                <input name="name" value="Portfel wzorcowy" />
+              </label>
+              <label class="control full">
+                <span>Wagi (ticker:waga%)</span>
+                <textarea
+                  id="modelPortfolioWeightsInput"
+                  name="weightsText"
+                  rows="6"
+                  placeholder="PKO:25&#10;CDR:20&#10;SPY.US:30&#10;BOND.PL:25"
+                ></textarea>
+              </label>
+              <button type="submit" class="btn">Zapisz portfel wzorcowy</button>
+            </form>
+            <div class="actions-inline">
+              <button id="compareModelPortfolioBtn" class="btn secondary">Porównaj z moim portfelem</button>
+            </div>
+            <div id="modelPortfolioInfo" class="hint"></div>
+            <div id="modelPortfolioTable" class="table-wrap"></div>
+            <hr />
+            <div class="actions-inline">
+              <button id="refreshPublicPortfoliosBtn" class="btn secondary">Odśwież portfele publiczne</button>
+            </div>
+            <div id="publicPortfoliosInfo" class="hint"></div>
+            <div id="publicPortfoliosTable" class="table-wrap"></div>
+          </article>
+        </div>
+      </section>
+
+      <section id="featuresView" class="view">
+        <article class="panel">
+          <h2>Pełna matryca funkcji</h2>
+          <p class="muted">
+            Wersja Solo jest ustawiona pod Ciebie. Możesz przełączać plan, aby sprawdzać limity i widoczność funkcji.
+          </p>
+          <div id="featureMatrix" class="table-wrap"></div>
+        </article>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>
+        Dane trzymane lokalnie w przeglądarce. Wykonuj regularny eksport kopii.
+      </p>
+      <button id="resetStateBtn" class="btn danger">Wyczyść wszystkie dane</button>
+    </footer>
+
+    <template id="tableTemplate">
+      <table>
+        <thead></thead>
+        <tbody></tbody>
+      </table>
+    </template>
+
+    <script src="app.js"></script>
+  </body>
+</html>
