@@ -1501,7 +1501,7 @@ async function refreshEspi(options = {}) {
     const limit = Math.max(5, Math.min(200, Math.round(toNum(data.limit) || 40)));
     const payload = await apiRequest(
       `/tools/espi?query=${encodeURIComponent(query)}&limit=${limit}`,
-      { timeoutMs: 20000 }
+      { timeoutMs: 45000 }
     );
     const items = Array.isArray(payload.items) ? payload.items : [];
     renderEspiRows(items);
@@ -2404,12 +2404,20 @@ async function apiRequest(path, options = {}) {
     body = typeof options.body === "string" ? options.body : JSON.stringify(options.body);
   }
   try {
-    const response = await fetch(`${API_BASE}${path}`, {
-      method,
-      headers,
-      body,
-      signal: controller.signal
-    });
+    let response;
+    try {
+      response = await fetch(`${API_BASE}${path}`, {
+        method,
+        headers,
+        body,
+        signal: controller.signal
+      });
+    } catch (error) {
+      if (error && error.name === "AbortError") {
+        throw new Error(`Przekroczono czas oczekiwania (${Math.round(timeoutMs / 1000)}s) dla ${path}.`);
+      }
+      throw error;
+    }
     const text = await response.text();
     let payload = {};
     if (text) {

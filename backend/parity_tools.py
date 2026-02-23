@@ -395,13 +395,13 @@ class ParityToolsService:
         return {"rows": rows, "generatedAt": now_iso()}
 
     def espi_messages(self, *, query: str = "", limit: int = 40) -> Dict[str, Any]:
-        raw = self._fetch_text("https://www.gpw.pl/espi-ebi-reports")
+        raw = self._fetch_text("https://www.gpw.pl/espi-ebi-reports", timeout=6)
         items = self._parse_espi_from_html(raw)
         if not items:
-            rss_raw = self._fetch_text("https://www.gpw.pl/rss-communiques")
+            rss_raw = self._fetch_text("https://www.gpw.pl/rss-communiques", timeout=6)
             items = self._parse_rss_communiques(rss_raw)
         if not items:
-            bankier_raw = self._fetch_text("https://www.bankier.pl/rss/wiadomosci.xml")
+            bankier_raw = self._fetch_text("https://www.bankier.pl/rss/wiadomosci.xml", timeout=8)
             items = self._parse_bankier_rss(bankier_raw)
         token = _norm(query)
         if token:
