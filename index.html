@@ -94,6 +94,7 @@
           <article class="panel">
             <h2>Dodaj portfel</h2>
             <form id="portfolioForm" class="form-grid">
+              <input type="hidden" name="editId" id="portfolioEditId" value="" />
               <label class="control">
                 <span>Nazwa</span>
                 <input name="name" required />
@@ -136,7 +137,10 @@
                 <span>Portfel publiczny</span>
                 <input name="isPublic" type="checkbox" />
               </label>
-              <button type="submit" class="btn">Dodaj portfel</button>
+              <div class="actions-inline full">
+                <button id="portfolioSubmitBtn" type="submit" class="btn">Dodaj portfel</button>
+                <button id="portfolioCancelEditBtn" type="button" class="btn secondary" hidden>Anuluj edycję</button>
+              </div>
             </form>
           </article>
           <article class="panel">
@@ -151,6 +155,7 @@
           <article class="panel">
             <h2>Dodaj konto inwestycyjne</h2>
             <form id="accountForm" class="form-grid">
+              <input type="hidden" name="editId" id="accountEditId" value="" />
               <label class="control">
                 <span>Nazwa konta</span>
                 <input name="name" required />
@@ -177,12 +182,16 @@
                   <option value="CHF">CHF</option>
                 </select>
               </label>
-              <button type="submit" class="btn">Dodaj konto</button>
+              <div class="actions-inline full">
+                <button id="accountSubmitBtn" type="submit" class="btn">Dodaj konto</button>
+                <button id="accountCancelEditBtn" type="button" class="btn secondary" hidden>Anuluj edycję</button>
+              </div>
             </form>
           </article>
           <article class="panel">
             <h2>Dodaj walor</h2>
             <form id="assetForm" class="form-grid">
+              <input type="hidden" name="editId" id="assetEditId" value="" />
               <label class="control">
                 <span>Ticker</span>
                 <input name="ticker" required />
@@ -238,7 +247,10 @@
                 <span>Benchmark waloru</span>
                 <input name="benchmark" placeholder="np. mWIG40" />
               </label>
-              <button type="submit" class="btn">Dodaj walor</button>
+              <div class="actions-inline full">
+                <button id="assetSubmitBtn" type="submit" class="btn">Dodaj walor</button>
+                <button id="assetCancelEditBtn" type="button" class="btn secondary" hidden>Anuluj edycję</button>
+              </div>
             </form>
           </article>
         </div>
@@ -260,6 +272,7 @@
           <article class="panel">
             <h2>Dodaj operację</h2>
             <form id="operationForm" class="form-grid">
+              <input type="hidden" name="editId" id="operationEditId" value="" />
               <label class="control">
                 <span>Data</span>
                 <input type="date" name="date" required />
@@ -326,7 +339,10 @@
                 <span>Notatka</span>
                 <textarea name="note" rows="2"></textarea>
               </label>
-              <button type="submit" class="btn">Dodaj operację</button>
+              <div class="actions-inline full">
+                <button id="operationSubmitBtn" type="submit" class="btn">Dodaj operację</button>
+                <button id="operationCancelEditBtn" type="button" class="btn secondary" hidden>Anuluj edycję</button>
+              </div>
             </form>
           </article>
 

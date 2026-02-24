@@ -177,6 +177,12 @@ const candlesView = {
   signal: "",
   indicators: {}
 };
+const editingState = {
+  portfolioId: "",
+  accountId: "",
+  assetId: "",
+  operationId: ""
+};
 
 document.addEventListener("DOMContentLoaded", () => {
   void init();
@@ -186,6 +192,7 @@ async function init() {
   cacheDom();
   seedStaticSelects();
   bindEvents();
+  resetOperationForm();
   await hydrateFromBackend();
   renderAll();
 }
@@ -209,16 +216,28 @@ function cacheDom() {
   dom.dashboardDetails = document.getElementById("dashboardDetails");
 
   dom.portfolioForm = document.getElementById("portfolioForm");
+  dom.portfolioEditId = document.getElementById("portfolioEditId");
+  dom.portfolioSubmitBtn = document.getElementById("portfolioSubmitBtn");
+  dom.portfolioCancelEditBtn = document.getElementById("portfolioCancelEditBtn");
   dom.portfolioParentSelect = document.getElementById("portfolioParentSelect");
   dom.portfolioTwinSelect = document.getElementById("portfolioTwinSelect");
   dom.portfolioList = document.getElementById("portfolioList");
 
   dom.accountForm = document.getElementById("accountForm");
+  dom.accountEditId = document.getElementById("accountEditId");
+  dom.accountSubmitBtn = document.getElementById("accountSubmitBtn");
+  dom.accountCancelEditBtn = document.getElementById("accountCancelEditBtn");
   dom.assetForm = document.getElementById("assetForm");
+  dom.assetEditId = document.getElementById("assetEditId");
+  dom.assetSubmitBtn = document.getElementById("assetSubmitBtn");
+  dom.assetCancelEditBtn = document.getElementById("assetCancelEditBtn");
   dom.accountList = document.getElementById("accountList");
   dom.assetList = document.getElementById("assetList");
 
   dom.operationForm = document.getElementById("operationForm");
+  dom.operationEditId = document.getElementById("operationEditId");
+  dom.operationSubmitBtn = document.getElementById("operationSubmitBtn");
+  dom.operationCancelEditBtn = document.getElementById("operationCancelEditBtn");
   dom.operationTypeSelect = document.getElementById("operationTypeSelect");
   dom.operationPortfolioSelect = document.getElementById("operationPortfolioSelect");
   dom.operationAccountSelect = document.getElementById("operationAccountSelect");
@@ -358,9 +377,21 @@ function bindEvents() {
   dom.reportPortfolioSelect.addEventListener("change", renderReportCurrent);
 
   dom.portfolioForm.addEventListener("submit", onPortfolioSubmit);
+  dom.portfolioCancelEditBtn.addEventListener("click", () => {
+    resetPortfolioForm();
+  });
   dom.accountForm.addEventListener("submit", onAccountSubmit);
+  dom.accountCancelEditBtn.addEventListener("click", () => {
+    resetAccountForm();
+  });
   dom.assetForm.addEventListener("submit", onAssetSubmit);
+  dom.assetCancelEditBtn.addEventListener("click", () => {
+    resetAssetForm();
+  });
   dom.operationForm.addEventListener("submit", onOperationSubmit);
+  dom.operationCancelEditBtn.addEventListener("click", () => {
+    resetOperationForm();
+  });
   dom.recurringForm.addEventListener("submit", onRecurringSubmit);
   dom.runRecurringBtn.addEventListener("click", onRunRecurring);
   dom.mailImportBtn.addEventListener("click", onMailImport);
@@ -2683,56 +2714,287 @@ function onBaseCurrencyChange() {
   void renderReportCurrent();
 }
 
+function resetPortfolioForm() {
+  editingState.portfolioId = "";
+  if (dom.portfolioEditId) {
+    dom.portfolioEditId.value = "";
+  }
+  if (dom.portfolioSubmitBtn) {
+    dom.portfolioSubmitBtn.textContent = "Dodaj portfel";
+  }
+  if (dom.portfolioCancelEditBtn) {
+    dom.portfolioCancelEditBtn.hidden = true;
+  }
+  if (dom.portfolioForm) {
+    dom.portfolioForm.reset();
+  }
+}
+
+function startPortfolioEdit(portfolioId) {
+  const portfolio = findById(state.portfolios, portfolioId);
+  if (!portfolio || !dom.portfolioForm) {
+    return;
+  }
+  editingState.portfolioId = portfolio.id;
+  if (dom.portfolioEditId) {
+    dom.portfolioEditId.value = portfolio.id;
+  }
+  if (dom.portfolioSubmitBtn) {
+    dom.portfolioSubmitBtn.textContent = "Zapisz portfel";
+  }
+  if (dom.portfolioCancelEditBtn) {
+    dom.portfolioCancelEditBtn.hidden = false;
+  }
+
+  const form = dom.portfolioForm;
+  const nameInput = form.querySelector('[name="name"]');
+  const currencyInput = form.querySelector('[name="currency"]');
+  const benchmarkInput = form.querySelector('[name="benchmark"]');
+  const goalInput = form.querySelector('[name="goal"]');
+  const parentSelect = form.querySelector('[name="parentId"]');
+  const twinSelect = form.querySelector('[name="twinOf"]');
+  const groupInput = form.querySelector('[name="groupName"]');
+  const publicInput = form.querySelector('[name="isPublic"]');
+  if (nameInput) {
+    nameInput.value = portfolio.name || "";
+  }
+  if (currencyInput) {
+    currencyInput.value = portfolio.currency || state.meta.baseCurrency;
+  }
+  if (benchmarkInput) {
+    benchmarkInput.value = portfolio.benchmark || "";
+  }
+  if (goalInput) {
+    goalInput.value = portfolio.goal || "";
+  }
+  if (parentSelect) {
+    parentSelect.value = portfolio.parentId || "";
+  }
+  if (twinSelect) {
+    twinSelect.value = portfolio.twinOf || "";
+  }
+  if (groupInput) {
+    groupInput.value = portfolio.groupName || "";
+  }
+  if (publicInput) {
+    publicInput.checked = Boolean(portfolio.isPublic);
+  }
+  form.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 function onPortfolioSubmit(event) {
   event.preventDefault();
-  if (!canAddPortfolio()) {
+  const form = event.currentTarget;
+  const data = formToObject(form);
+  const editId = editingState.portfolioId && data.editId === editingState.portfolioId ? editingState.portfolioId : "";
+
+  if (!editId && !canAddPortfolio()) {
     window.alert(
       `Plan ${state.meta.activePlan} pozwala na maksymalnie ${currentPlanLimit().portfolios} portfeli.`
     );
     return;
   }
-  const form = event.currentTarget;
-  const data = formToObject(form);
-  const portfolio = {
-    id: makeId("ptf"),
+
+  const candidateParentId = data.parentId || "";
+  const candidateTwinId = data.twinOf || "";
+  if (editId && (candidateParentId === editId || candidateTwinId === editId)) {
+    window.alert("Portfel nie może wskazywać samego siebie jako nadrzędny ani bliźniaczy.");
+    return;
+  }
+
+  const normalizedParentId = findById(state.portfolios, candidateParentId) ? candidateParentId : "";
+  const normalizedTwinId = findById(state.portfolios, candidateTwinId) ? candidateTwinId : "";
+  const nextPayload = {
     name: textOrFallback(data.name, `Portfel ${state.portfolios.length + 1}`),
     currency: textOrFallback(data.currency, state.meta.baseCurrency),
     benchmark: data.benchmark || "",
     goal: data.goal || "",
-    parentId: data.parentId || "",
-    twinOf: data.twinOf || "",
+    parentId: normalizedParentId,
+    twinOf: normalizedTwinId,
     groupName: data.groupName || "",
-    isPublic: Boolean(data.isPublic),
-    createdAt: nowIso()
+    isPublic: Boolean(data.isPublic)
   };
-  state.portfolios.push(portfolio);
+
+  if (editId) {
+    const existing = findById(state.portfolios, editId);
+    if (!existing) {
+      resetPortfolioForm();
+      window.alert("Nie znaleziono portfela do edycji.");
+      return;
+    }
+    Object.assign(existing, nextPayload);
+  } else {
+    state.portfolios.push({
+      id: makeId("ptf"),
+      ...nextPayload,
+      createdAt: nowIso()
+    });
+  }
+
   saveState();
-  form.reset();
+  resetPortfolioForm();
   renderAll();
+}
+
+function resetAccountForm() {
+  editingState.accountId = "";
+  if (dom.accountEditId) {
+    dom.accountEditId.value = "";
+  }
+  if (dom.accountSubmitBtn) {
+    dom.accountSubmitBtn.textContent = "Dodaj konto";
+  }
+  if (dom.accountCancelEditBtn) {
+    dom.accountCancelEditBtn.hidden = true;
+  }
+  if (dom.accountForm) {
+    dom.accountForm.reset();
+  }
+}
+
+function startAccountEdit(accountId) {
+  const account = findById(state.accounts, accountId);
+  if (!account || !dom.accountForm) {
+    return;
+  }
+  editingState.accountId = account.id;
+  if (dom.accountEditId) {
+    dom.accountEditId.value = account.id;
+  }
+  if (dom.accountSubmitBtn) {
+    dom.accountSubmitBtn.textContent = "Zapisz konto";
+  }
+  if (dom.accountCancelEditBtn) {
+    dom.accountCancelEditBtn.hidden = false;
+  }
+
+  const form = dom.accountForm;
+  const nameInput = form.querySelector('[name="name"]');
+  const typeInput = form.querySelector('[name="type"]');
+  const currencyInput = form.querySelector('[name="currency"]');
+  if (nameInput) {
+    nameInput.value = account.name || "";
+  }
+  if (typeInput) {
+    typeInput.value = account.type || "Broker";
+  }
+  if (currencyInput) {
+    currencyInput.value = account.currency || state.meta.baseCurrency;
+  }
+  form.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function onAccountSubmit(event) {
   event.preventDefault();
   const form = event.currentTarget;
   const data = formToObject(form);
-  state.accounts.push({
-    id: makeId("acc"),
-    name: textOrFallback(data.name, `Konto ${state.accounts.length + 1}`),
-    type: textOrFallback(data.type, "Broker"),
-    currency: textOrFallback(data.currency, state.meta.baseCurrency),
-    createdAt: nowIso()
-  });
+  const editId = editingState.accountId && data.editId === editingState.accountId ? editingState.accountId : "";
+  if (editId) {
+    const existing = findById(state.accounts, editId);
+    if (!existing) {
+      resetAccountForm();
+      window.alert("Nie znaleziono konta do edycji.");
+      return;
+    }
+    existing.name = textOrFallback(data.name, existing.name || "Konto");
+    existing.type = textOrFallback(data.type, existing.type || "Broker");
+    existing.currency = textOrFallback(data.currency, state.meta.baseCurrency);
+  } else {
+    state.accounts.push({
+      id: makeId("acc"),
+      name: textOrFallback(data.name, `Konto ${state.accounts.length + 1}`),
+      type: textOrFallback(data.type, "Broker"),
+      currency: textOrFallback(data.currency, state.meta.baseCurrency),
+      createdAt: nowIso()
+    });
+  }
   saveState();
-  form.reset();
+  resetAccountForm();
   renderAll();
+}
+
+function resetAssetForm() {
+  editingState.assetId = "";
+  if (dom.assetEditId) {
+    dom.assetEditId.value = "";
+  }
+  if (dom.assetSubmitBtn) {
+    dom.assetSubmitBtn.textContent = "Dodaj walor";
+  }
+  if (dom.assetCancelEditBtn) {
+    dom.assetCancelEditBtn.hidden = true;
+  }
+  if (dom.assetForm) {
+    dom.assetForm.reset();
+  }
+}
+
+function startAssetEdit(assetId) {
+  const asset = findById(state.assets, assetId);
+  if (!asset || !dom.assetForm) {
+    return;
+  }
+  editingState.assetId = asset.id;
+  if (dom.assetEditId) {
+    dom.assetEditId.value = asset.id;
+  }
+  if (dom.assetSubmitBtn) {
+    dom.assetSubmitBtn.textContent = "Zapisz walor";
+  }
+  if (dom.assetCancelEditBtn) {
+    dom.assetCancelEditBtn.hidden = false;
+  }
+
+  const form = dom.assetForm;
+  const tickerInput = form.querySelector('[name="ticker"]');
+  const nameInput = form.querySelector('[name="name"]');
+  const typeInput = form.querySelector('[name="type"]');
+  const currencyInput = form.querySelector('[name="currency"]');
+  const currentPriceInput = form.querySelector('[name="currentPrice"]');
+  const riskInput = form.querySelector('[name="risk"]');
+  const sectorInput = form.querySelector('[name="sector"]');
+  const industryInput = form.querySelector('[name="industry"]');
+  const tagsInput = form.querySelector('[name="tags"]');
+  const benchmarkInput = form.querySelector('[name="benchmark"]');
+  if (tickerInput) {
+    tickerInput.value = asset.ticker || "";
+  }
+  if (nameInput) {
+    nameInput.value = asset.name || "";
+  }
+  if (typeInput) {
+    typeInput.value = asset.type || "Inny";
+  }
+  if (currencyInput) {
+    currencyInput.value = asset.currency || state.meta.baseCurrency;
+  }
+  if (currentPriceInput) {
+    currentPriceInput.value = String(toNum(asset.currentPrice));
+  }
+  if (riskInput) {
+    riskInput.value = String(clamp(toNum(asset.risk), 1, 10));
+  }
+  if (sectorInput) {
+    sectorInput.value = asset.sector || "";
+  }
+  if (industryInput) {
+    industryInput.value = asset.industry || "";
+  }
+  if (tagsInput) {
+    tagsInput.value = Array.isArray(asset.tags) ? asset.tags.join(", ") : "";
+  }
+  if (benchmarkInput) {
+    benchmarkInput.value = asset.benchmark || "";
+  }
+  form.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function onAssetSubmit(event) {
   event.preventDefault();
   const form = event.currentTarget;
   const data = formToObject(form);
-  state.assets.push({
-    id: makeId("ast"),
+  const editId = editingState.assetId && data.editId === editingState.assetId ? editingState.assetId : "";
+  const payload = {
     ticker: (data.ticker || "").toUpperCase(),
     name: textOrFallback(data.name, "Bez nazwy"),
     type: textOrFallback(data.type, "Inny"),
@@ -2742,12 +3004,127 @@ function onAssetSubmit(event) {
     sector: data.sector || "",
     industry: data.industry || "",
     tags: toTags(data.tags),
-    benchmark: data.benchmark || "",
-    createdAt: nowIso()
-  });
+    benchmark: data.benchmark || ""
+  };
+  if (editId) {
+    const existing = findById(state.assets, editId);
+    if (!existing) {
+      resetAssetForm();
+      window.alert("Nie znaleziono waloru do edycji.");
+      return;
+    }
+    Object.assign(existing, payload);
+  } else {
+    state.assets.push({
+      id: makeId("ast"),
+      ...payload,
+      createdAt: nowIso()
+    });
+  }
   saveState();
-  form.reset();
+  resetAssetForm();
   renderAll();
+}
+
+function resetOperationForm() {
+  editingState.operationId = "";
+  if (dom.operationEditId) {
+    dom.operationEditId.value = "";
+  }
+  if (dom.operationSubmitBtn) {
+    dom.operationSubmitBtn.textContent = "Dodaj operację";
+  }
+  if (dom.operationCancelEditBtn) {
+    dom.operationCancelEditBtn.hidden = true;
+  }
+  if (dom.operationForm) {
+    dom.operationForm.reset();
+    const dateInput = dom.operationForm.querySelector('input[name="date"]');
+    if (dateInput) {
+      dateInput.value = todayIso();
+    }
+    const currencyInput = dom.operationForm.querySelector('[name="currency"]');
+    if (currencyInput) {
+      currencyInput.value = state.meta.baseCurrency;
+    }
+  }
+}
+
+function startOperationEdit(operationId) {
+  const operation = findById(state.operations, operationId);
+  if (!operation || !dom.operationForm) {
+    return;
+  }
+  editingState.operationId = operation.id;
+  if (dom.operationEditId) {
+    dom.operationEditId.value = operation.id;
+  }
+  if (dom.operationSubmitBtn) {
+    dom.operationSubmitBtn.textContent = "Zapisz operację";
+  }
+  if (dom.operationCancelEditBtn) {
+    dom.operationCancelEditBtn.hidden = false;
+  }
+
+  const form = dom.operationForm;
+  const dateInput = form.querySelector('[name="date"]');
+  const typeInput = form.querySelector('[name="type"]');
+  const portfolioInput = form.querySelector('[name="portfolioId"]');
+  const accountInput = form.querySelector('[name="accountId"]');
+  const assetInput = form.querySelector('[name="assetId"]');
+  const targetAssetInput = form.querySelector('[name="targetAssetId"]');
+  const quantityInput = form.querySelector('[name="quantity"]');
+  const targetQuantityInput = form.querySelector('[name="targetQuantity"]');
+  const priceInput = form.querySelector('[name="price"]');
+  const amountInput = form.querySelector('[name="amount"]');
+  const feeInput = form.querySelector('[name="fee"]');
+  const currencyInput = form.querySelector('[name="currency"]');
+  const tagsInput = form.querySelector('[name="tags"]');
+  const noteInput = form.querySelector('[name="note"]');
+
+  if (dateInput) {
+    dateInput.value = operation.date || todayIso();
+  }
+  if (typeInput) {
+    typeInput.value = operation.type || "Operacja gotówkowa";
+  }
+  if (portfolioInput) {
+    portfolioInput.value = operation.portfolioId || "";
+  }
+  if (accountInput) {
+    accountInput.value = operation.accountId || "";
+  }
+  if (assetInput) {
+    assetInput.value = operation.assetId || "";
+  }
+  if (targetAssetInput) {
+    targetAssetInput.value = operation.targetAssetId || "";
+  }
+  if (quantityInput) {
+    quantityInput.value = String(toNum(operation.quantity));
+  }
+  if (targetQuantityInput) {
+    targetQuantityInput.value = String(toNum(operation.targetQuantity));
+  }
+  if (priceInput) {
+    priceInput.value = String(toNum(operation.price));
+  }
+  if (amountInput) {
+    amountInput.value = String(toNum(operation.amount));
+  }
+  if (feeInput) {
+    feeInput.value = String(toNum(operation.fee));
+  }
+  if (currencyInput) {
+    currencyInput.value = operation.currency || state.meta.baseCurrency;
+  }
+  if (tagsInput) {
+    tagsInput.value = Array.isArray(operation.tags) ? operation.tags.join(", ") : "";
+  }
+  if (noteInput) {
+    noteInput.value = operation.note || "";
+  }
+  form.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function onOperationSubmit(event) {
@@ -2758,16 +3135,20 @@ function onOperationSubmit(event) {
   }
   const form = event.currentTarget;
   const data = formToObject(form);
-  const portfolioId = data.portfolioId || state.portfolios[0].id;
-  const accountId = data.accountId || (state.accounts[0] ? state.accounts[0].id : "");
-  const operation = {
-    id: makeId("op"),
+  const editId = editingState.operationId && data.editId === editingState.operationId ? editingState.operationId : "";
+  const fallbackPortfolioId = state.portfolios[0] ? state.portfolios[0].id : "";
+  const fallbackAccountId = state.accounts[0] ? state.accounts[0].id : "";
+  const portfolioId = findById(state.portfolios, data.portfolioId || "") ? data.portfolioId : fallbackPortfolioId;
+  const accountId = findById(state.accounts, data.accountId || "") ? data.accountId : fallbackAccountId;
+  const assetId = findById(state.assets, data.assetId || "") ? data.assetId : "";
+  const targetAssetId = findById(state.assets, data.targetAssetId || "") ? data.targetAssetId : "";
+  const payload = {
     date: data.date || todayIso(),
     type: textOrFallback(data.type, "Operacja gotówkowa"),
     portfolioId,
     accountId,
-    assetId: data.assetId || "",
-    targetAssetId: data.targetAssetId || "",
+    assetId,
+    targetAssetId,
     quantity: toNum(data.quantity),
     targetQuantity: toNum(data.targetQuantity),
     price: toNum(data.price),
@@ -2775,16 +3156,25 @@ function onOperationSubmit(event) {
     fee: toNum(data.fee),
     currency: textOrFallback(data.currency, state.meta.baseCurrency),
     tags: toTags(data.tags),
-    note: data.note || "",
-    createdAt: nowIso()
+    note: data.note || ""
   };
-  state.operations.push(operation);
-  saveState();
-  form.reset();
-  const dateInput = form.querySelector('input[name="date"]');
-  if (dateInput) {
-    dateInput.value = todayIso();
+  if (editId) {
+    const existing = findById(state.operations, editId);
+    if (!existing) {
+      resetOperationForm();
+      window.alert("Nie znaleziono operacji do edycji.");
+      return;
+    }
+    Object.assign(existing, payload);
+  } else {
+    state.operations.push({
+      id: makeId("op"),
+      ...payload,
+      createdAt: nowIso()
+    });
   }
+  saveState();
+  resetOperationForm();
   renderAll();
 }
 
@@ -3070,6 +3460,10 @@ function onActionClick(event) {
     removePortfolio(id);
     return;
   }
+  if (action === "edit-portfolio") {
+    startPortfolioEdit(id);
+    return;
+  }
   if (action === "copy-portfolio") {
     copyPortfolio(id);
     return;
@@ -3079,13 +3473,41 @@ function onActionClick(event) {
     return;
   }
   if (action === "delete-account") {
+    if (editingState.accountId === id) {
+      resetAccountForm();
+    }
+    if (
+      editingState.operationId &&
+      state.operations.some((item) => item.id === editingState.operationId && item.accountId === id)
+    ) {
+      resetOperationForm();
+    }
     state.accounts = state.accounts.filter((item) => item.id !== id);
     state.operations = state.operations.filter((item) => item.accountId !== id);
     saveState();
     renderAll();
     return;
   }
+  if (action === "edit-account") {
+    startAccountEdit(id);
+    return;
+  }
+  if (action === "edit-asset") {
+    startAssetEdit(id);
+    return;
+  }
   if (action === "delete-asset") {
+    if (editingState.assetId === id) {
+      resetAssetForm();
+    }
+    if (
+      editingState.operationId &&
+      state.operations.some(
+        (item) => item.id === editingState.operationId && (item.assetId === id || item.targetAssetId === id)
+      )
+    ) {
+      resetOperationForm();
+    }
     state.assets = state.assets.filter((item) => item.id !== id);
     state.operations = state.operations.filter(
       (item) => item.assetId !== id && item.targetAssetId !== id
@@ -3124,9 +3546,16 @@ function onActionClick(event) {
     return;
   }
   if (action === "delete-operation") {
+    if (editingState.operationId === id) {
+      resetOperationForm();
+    }
     state.operations = state.operations.filter((item) => item.id !== id);
     saveState();
     renderAll();
+    return;
+  }
+  if (action === "edit-operation") {
+    startOperationEdit(id);
     return;
   }
   if (action === "delete-recurring") {
@@ -3202,8 +3631,24 @@ function onActionClick(event) {
   }
 }
 
+function syncEditingForms() {
+  if (editingState.portfolioId && !findById(state.portfolios, editingState.portfolioId)) {
+    resetPortfolioForm();
+  }
+  if (editingState.accountId && !findById(state.accounts, editingState.accountId)) {
+    resetAccountForm();
+  }
+  if (editingState.assetId && !findById(state.assets, editingState.assetId)) {
+    resetAssetForm();
+  }
+  if (editingState.operationId && !findById(state.operations, editingState.operationId)) {
+    resetOperationForm();
+  }
+}
+
 function renderAll() {
   state = normalizeState(state);
+  syncEditingForms();
   saveState();
 
   dom.planSelect.value = state.meta.activePlan;
@@ -3296,6 +3741,7 @@ function renderPortfolioList() {
       escapeHtml(twin),
       portfolio.isPublic ? '<span class="badge ok">Tak</span>' : '<span class="badge off">Nie</span>',
       [
+        `<button class="btn secondary" data-action="edit-portfolio" data-id="${portfolio.id}">Edytuj</button>`,
         `<button class="btn secondary" data-action="copy-portfolio" data-id="${portfolio.id}">Kopiuj</button>`,
         `<button class="btn secondary" data-action="export-portfolio" data-id="${portfolio.id}">Eksport</button>`,
         `<button class="btn danger" data-action="delete-portfolio" data-id="${portfolio.id}">Usuń</button>`
@@ -3310,7 +3756,10 @@ function renderAccounts() {
     escapeHtml(account.name),
     escapeHtml(account.type),
     escapeHtml(account.currency),
-    `<button class="btn danger" data-action="delete-account" data-id="${account.id}">Usuń</button>`
+    [
+      `<button class="btn secondary" data-action="edit-account" data-id="${account.id}">Edytuj</button>`,
+      `<button class="btn danger" data-action="delete-account" data-id="${account.id}">Usuń</button>`
+    ].join(" ")
   ]);
   renderTable(dom.accountList, ["Nazwa", "Typ", "Waluta", "Akcje"], rows);
 }
@@ -3329,6 +3778,7 @@ function renderAssets() {
       `<button class="btn secondary" data-action="toggle-favorite" data-id="${asset.id}">${
         state.favorites.includes(asset.id) ? "Usuń z ulubionych" : "Dodaj do ulubionych"
       }</button>`,
+      `<button class="btn secondary" data-action="edit-asset" data-id="${asset.id}">Edytuj</button>`,
       `<button class="btn secondary" data-action="update-asset-price" data-id="${asset.id}">Cena</button>`,
       `<button class="btn danger" data-action="delete-asset" data-id="${asset.id}">Usuń</button>`
     ].join(" ")
@@ -3354,7 +3804,10 @@ function renderOperations() {
       formatMoney(operation.fee, operation.currency || state.meta.baseCurrency),
       escapeHtml(operation.tags.join(", ") || "-"),
       escapeHtml(operation.note || "-"),
-      `<button class="btn danger" data-action="delete-operation" data-id="${operation.id}">Usuń</button>`
+      [
+        `<button class="btn secondary" data-action="edit-operation" data-id="${operation.id}">Edytuj</button>`,
+        `<button class="btn danger" data-action="delete-operation" data-id="${operation.id}">Usuń</button>`
+      ].join(" ")
     ]);
   renderTable(
     dom.operationList,
@@ -4895,7 +5348,24 @@ function removePortfolio(portfolioId) {
   if (!yes) {
     return;
   }
+  if (editingState.portfolioId === portfolioId) {
+    resetPortfolioForm();
+  }
+  if (
+    editingState.operationId &&
+    state.operations.some((operation) => operation.id === editingState.operationId && operation.portfolioId === portfolioId)
+  ) {
+    resetOperationForm();
+  }
   state.portfolios = state.portfolios.filter((portfolio) => portfolio.id !== portfolioId);
+  state.portfolios.forEach((portfolio) => {
+    if (portfolio.parentId === portfolioId) {
+      portfolio.parentId = "";
+    }
+    if (portfolio.twinOf === portfolioId) {
+      portfolio.twinOf = "";
+    }
+  });
   state.operations = state.operations.filter((operation) => operation.portfolioId !== portfolioId);
   state.recurringOps = state.recurringOps.filter((item) => item.portfolioId !== portfolioId);
   saveState();
