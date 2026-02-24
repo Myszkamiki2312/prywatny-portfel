@@ -56,8 +56,8 @@ node --test frontend_tests/*.test.js
   - `/api/tools/public-portfolios/clone`
 - realtime API: `/api/tools/realtime/*` + webhook `/api/tools/alerts/webhook?token=...`,
 - powiadomienia API: `/api/tools/notifications/config`, `/api/tools/notifications/test`, `/api/tools/notifications/history`,
-- notowania rynkowe z Yahoo (fallback Stooq) i synchronizacja cen walorów,
-- import brokerów `generic`, `xtb`, `mbank` (CSV) z logami importu,
+- notowania rynkowe z Yahoo (fallback Stooq), synchronizacja cen walorów oraz dzienne serie benchmarków dla raportu porównawczego,
+- import brokerów `generic`, `xtb`, `mbank`, `degiro` (CSV) z logami importu,
 - backup danych (eksport/import JSON),
 - tryb hybrydowy: lokalne `localStorage` + automatyczna synchronizacja z backendem, gdy serwer jest online.
 
