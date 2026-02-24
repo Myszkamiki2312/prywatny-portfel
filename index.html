@@ -381,6 +381,7 @@
             <hr />
             <h3>Operacje cykliczne</h3>
             <form id="recurringForm" class="form-grid">
+              <input type="hidden" name="editId" id="recurringEditId" value="" />
               <label class="control">
                 <span>Nazwa</span>
                 <input name="name" required />
@@ -419,7 +420,10 @@
                   <option value="">Brak</option>
                 </select>
               </label>
-              <button type="submit" class="btn">Dodaj cykliczną</button>
+              <div class="actions-inline full">
+                <button id="recurringSubmitBtn" type="submit" class="btn">Dodaj cykliczną</button>
+                <button id="recurringCancelEditBtn" type="button" class="btn secondary" hidden>Anuluj edycję</button>
+              </div>
             </form>
             <div class="stack">
               <button id="runRecurringBtn" class="btn">Wygeneruj zaległe operacje</button>
@@ -463,6 +467,7 @@
           <article class="panel">
             <h2>Alerty</h2>
             <form id="alertForm" class="form-grid">
+              <input type="hidden" name="editId" id="alertEditId" value="" />
               <label class="control">
                 <span>Walor</span>
                 <select name="assetId" id="alertAssetSelect"></select>
@@ -478,7 +483,10 @@
                 <span>Poziom ceny</span>
                 <input type="number" name="targetPrice" step="0.0001" required />
               </label>
-              <button type="submit" class="btn">Dodaj alert</button>
+              <div class="actions-inline full">
+                <button id="alertSubmitBtn" type="submit" class="btn">Dodaj alert</button>
+                <button id="alertCancelEditBtn" type="button" class="btn secondary" hidden>Anuluj edycję</button>
+              </div>
             </form>
             <div class="stack">
               <button id="checkAlertsBtn" class="btn secondary">Sprawdź alerty</button>
@@ -671,6 +679,7 @@
           <article class="panel">
             <h2>Zobowiązania</h2>
             <form id="liabilityForm" class="form-grid">
+              <input type="hidden" name="editId" id="liabilityEditId" value="" />
               <label class="control">
                 <span>Nazwa</span>
                 <input name="name" required />
@@ -697,7 +706,10 @@
                 <span>Termin</span>
                 <input type="date" name="dueDate" />
               </label>
-              <button type="submit" class="btn">Dodaj zobowiązanie</button>
+              <div class="actions-inline full">
+                <button id="liabilitySubmitBtn" type="submit" class="btn">Dodaj zobowiązanie</button>
+                <button id="liabilityCancelEditBtn" type="button" class="btn secondary" hidden>Anuluj edycję</button>
+              </div>
             </form>
             <div id="liabilityList" class="table-wrap"></div>
           </article>

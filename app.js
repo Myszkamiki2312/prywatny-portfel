@@ -181,7 +181,10 @@ const editingState = {
   portfolioId: "",
   accountId: "",
   assetId: "",
-  operationId: ""
+  operationId: "",
+  recurringId: "",
+  alertId: "",
+  liabilityId: ""
 };
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -250,6 +253,9 @@ function cacheDom() {
   dom.mailImportText = document.getElementById("mailImportText");
   dom.mailImportBtn = document.getElementById("mailImportBtn");
   dom.recurringForm = document.getElementById("recurringForm");
+  dom.recurringEditId = document.getElementById("recurringEditId");
+  dom.recurringSubmitBtn = document.getElementById("recurringSubmitBtn");
+  dom.recurringCancelEditBtn = document.getElementById("recurringCancelEditBtn");
   dom.recurringTypeSelect = document.getElementById("recurringTypeSelect");
   dom.recurringPortfolioSelect = document.getElementById("recurringPortfolioSelect");
   dom.recurringAccountSelect = document.getElementById("recurringAccountSelect");
@@ -266,6 +272,9 @@ function cacheDom() {
   dom.reportChart = document.getElementById("reportChart");
 
   dom.alertForm = document.getElementById("alertForm");
+  dom.alertEditId = document.getElementById("alertEditId");
+  dom.alertSubmitBtn = document.getElementById("alertSubmitBtn");
+  dom.alertCancelEditBtn = document.getElementById("alertCancelEditBtn");
   dom.alertAssetSelect = document.getElementById("alertAssetSelect");
   dom.checkAlertsBtn = document.getElementById("checkAlertsBtn");
   dom.alertList = document.getElementById("alertList");
@@ -300,6 +309,9 @@ function cacheDom() {
   dom.testNotificationBtn = document.getElementById("testNotificationBtn");
   dom.notificationHistoryList = document.getElementById("notificationHistoryList");
   dom.liabilityForm = document.getElementById("liabilityForm");
+  dom.liabilityEditId = document.getElementById("liabilityEditId");
+  dom.liabilitySubmitBtn = document.getElementById("liabilitySubmitBtn");
+  dom.liabilityCancelEditBtn = document.getElementById("liabilityCancelEditBtn");
   dom.liabilityList = document.getElementById("liabilityList");
   dom.taxForm = document.getElementById("taxForm");
   dom.taxOutput = document.getElementById("taxOutput");
@@ -393,6 +405,9 @@ function bindEvents() {
     resetOperationForm();
   });
   dom.recurringForm.addEventListener("submit", onRecurringSubmit);
+  dom.recurringCancelEditBtn.addEventListener("click", () => {
+    resetRecurringForm();
+  });
   dom.runRecurringBtn.addEventListener("click", onRunRecurring);
   dom.mailImportBtn.addEventListener("click", onMailImport);
   dom.generateReportBtn.addEventListener("click", (event) => {
@@ -400,6 +415,9 @@ function bindEvents() {
     void renderReportCurrent({ force: true });
   });
   dom.alertForm.addEventListener("submit", onAlertSubmit);
+  dom.alertCancelEditBtn.addEventListener("click", () => {
+    resetAlertForm();
+  });
   dom.checkAlertsBtn.addEventListener("click", onCheckAlerts);
   dom.noteForm.addEventListener("submit", onNoteSubmit);
   dom.strategyForm.addEventListener("submit", onStrategySubmit);
@@ -453,6 +471,9 @@ function bindEvents() {
     void sendTestNotification();
   });
   dom.liabilityForm.addEventListener("submit", onLiabilitySubmit);
+  dom.liabilityCancelEditBtn.addEventListener("click", () => {
+    resetLiabilityForm();
+  });
   dom.taxForm.addEventListener("submit", onTaxSubmit);
   dom.candlesForm.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -3178,25 +3199,112 @@ function onOperationSubmit(event) {
   renderAll();
 }
 
+function resetRecurringForm() {
+  editingState.recurringId = "";
+  if (dom.recurringEditId) {
+    dom.recurringEditId.value = "";
+  }
+  if (dom.recurringSubmitBtn) {
+    dom.recurringSubmitBtn.textContent = "Dodaj cykliczną";
+  }
+  if (dom.recurringCancelEditBtn) {
+    dom.recurringCancelEditBtn.hidden = true;
+  }
+  if (dom.recurringForm) {
+    dom.recurringForm.reset();
+  }
+}
+
+function startRecurringEdit(recurringId) {
+  const recurring = findById(state.recurringOps, recurringId);
+  if (!recurring || !dom.recurringForm) {
+    return;
+  }
+  editingState.recurringId = recurring.id;
+  if (dom.recurringEditId) {
+    dom.recurringEditId.value = recurring.id;
+  }
+  if (dom.recurringSubmitBtn) {
+    dom.recurringSubmitBtn.textContent = "Zapisz cykliczną";
+  }
+  if (dom.recurringCancelEditBtn) {
+    dom.recurringCancelEditBtn.hidden = false;
+  }
+
+  const form = dom.recurringForm;
+  const nameInput = form.querySelector('[name="name"]');
+  const typeInput = form.querySelector('[name="type"]');
+  const frequencyInput = form.querySelector('[name="frequency"]');
+  const startDateInput = form.querySelector('[name="startDate"]');
+  const amountInput = form.querySelector('[name="amount"]');
+  const portfolioInput = form.querySelector('[name="portfolioId"]');
+  const accountInput = form.querySelector('[name="accountId"]');
+  const assetInput = form.querySelector('[name="assetId"]');
+  if (nameInput) {
+    nameInput.value = recurring.name || "";
+  }
+  if (typeInput) {
+    typeInput.value = recurring.type || "Operacja gotówkowa";
+  }
+  if (frequencyInput) {
+    frequencyInput.value = recurring.frequency || "monthly";
+  }
+  if (startDateInput) {
+    startDateInput.value = recurring.startDate || todayIso();
+  }
+  if (amountInput) {
+    amountInput.value = String(toNum(recurring.amount));
+  }
+  if (portfolioInput) {
+    portfolioInput.value = recurring.portfolioId || "";
+  }
+  if (accountInput) {
+    accountInput.value = recurring.accountId || "";
+  }
+  if (assetInput) {
+    assetInput.value = recurring.assetId || "";
+  }
+  form.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 function onRecurringSubmit(event) {
   event.preventDefault();
   const data = formToObject(event.currentTarget);
-  state.recurringOps.push({
-    id: makeId("rec"),
+  const editId = editingState.recurringId && data.editId === editingState.recurringId ? editingState.recurringId : "";
+  const fallbackPortfolioId = state.portfolios[0] ? state.portfolios[0].id : "";
+  const fallbackAccountId = state.accounts[0] ? state.accounts[0].id : "";
+  const portfolioId = findById(state.portfolios, data.portfolioId || "") ? data.portfolioId : fallbackPortfolioId;
+  const accountId = findById(state.accounts, data.accountId || "") ? data.accountId : fallbackAccountId;
+  const assetId = findById(state.assets, data.assetId || "") ? data.assetId : "";
+  const payload = {
     name: textOrFallback(data.name, `Cykliczna ${state.recurringOps.length + 1}`),
     type: textOrFallback(data.type, "Operacja gotówkowa"),
     frequency: textOrFallback(data.frequency, "monthly"),
     startDate: data.startDate || todayIso(),
     amount: toNum(data.amount),
-    portfolioId: data.portfolioId || (state.portfolios[0] ? state.portfolios[0].id : ""),
-    accountId: data.accountId || (state.accounts[0] ? state.accounts[0].id : ""),
-    assetId: data.assetId || "",
-    currency: state.meta.baseCurrency,
-    lastGeneratedDate: "",
-    createdAt: nowIso()
-  });
+    portfolioId,
+    accountId,
+    assetId,
+    currency: state.meta.baseCurrency
+  };
+  if (editId) {
+    const existing = findById(state.recurringOps, editId);
+    if (!existing) {
+      resetRecurringForm();
+      window.alert("Nie znaleziono operacji cyklicznej do edycji.");
+      return;
+    }
+    Object.assign(existing, payload);
+  } else {
+    state.recurringOps.push({
+      id: makeId("rec"),
+      ...payload,
+      lastGeneratedDate: "",
+      createdAt: nowIso()
+    });
+  }
   saveState();
-  event.currentTarget.reset();
+  resetRecurringForm();
   renderAll();
 }
 
@@ -3296,23 +3404,85 @@ function onMailImport() {
   window.alert(`Zaimportowano ${count} operacji z treści.`);
 }
 
+function resetAlertForm() {
+  editingState.alertId = "";
+  if (dom.alertEditId) {
+    dom.alertEditId.value = "";
+  }
+  if (dom.alertSubmitBtn) {
+    dom.alertSubmitBtn.textContent = "Dodaj alert";
+  }
+  if (dom.alertCancelEditBtn) {
+    dom.alertCancelEditBtn.hidden = true;
+  }
+  if (dom.alertForm) {
+    dom.alertForm.reset();
+  }
+}
+
+function startAlertEdit(alertId) {
+  const alert = findById(state.alerts, alertId);
+  if (!alert || !dom.alertForm) {
+    return;
+  }
+  editingState.alertId = alert.id;
+  if (dom.alertEditId) {
+    dom.alertEditId.value = alert.id;
+  }
+  if (dom.alertSubmitBtn) {
+    dom.alertSubmitBtn.textContent = "Zapisz alert";
+  }
+  if (dom.alertCancelEditBtn) {
+    dom.alertCancelEditBtn.hidden = false;
+  }
+  const form = dom.alertForm;
+  const assetInput = form.querySelector('[name="assetId"]');
+  const directionInput = form.querySelector('[name="direction"]');
+  const targetPriceInput = form.querySelector('[name="targetPrice"]');
+  if (assetInput) {
+    assetInput.value = alert.assetId || "";
+  }
+  if (directionInput) {
+    directionInput.value = alert.direction || "gte";
+  }
+  if (targetPriceInput) {
+    targetPriceInput.value = String(toNum(alert.targetPrice));
+  }
+  form.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 function onAlertSubmit(event) {
   event.preventDefault();
   const data = formToObject(event.currentTarget);
-  if (!data.assetId) {
+  const editId = editingState.alertId && data.editId === editingState.alertId ? editingState.alertId : "";
+  const assetId = findById(state.assets, data.assetId || "") ? data.assetId : "";
+  if (!assetId) {
     window.alert("Wybierz walor dla alertu.");
     return;
   }
-  state.alerts.push({
-    id: makeId("alt"),
-    assetId: data.assetId,
+  const payload = {
+    assetId,
     direction: data.direction || "gte",
-    targetPrice: toNum(data.targetPrice),
-    createdAt: nowIso(),
-    lastTriggerAt: ""
-  });
+    targetPrice: toNum(data.targetPrice)
+  };
+  if (editId) {
+    const existing = findById(state.alerts, editId);
+    if (!existing) {
+      resetAlertForm();
+      window.alert("Nie znaleziono alertu do edycji.");
+      return;
+    }
+    Object.assign(existing, payload);
+  } else {
+    state.alerts.push({
+      id: makeId("alt"),
+      ...payload,
+      createdAt: nowIso(),
+      lastTriggerAt: ""
+    });
+  }
   saveState();
-  event.currentTarget.reset();
+  resetAlertForm();
   renderAlerts();
 }
 
@@ -3355,20 +3525,89 @@ function onStrategySubmit(event) {
   renderStrategies();
 }
 
+function resetLiabilityForm() {
+  editingState.liabilityId = "";
+  if (dom.liabilityEditId) {
+    dom.liabilityEditId.value = "";
+  }
+  if (dom.liabilitySubmitBtn) {
+    dom.liabilitySubmitBtn.textContent = "Dodaj zobowiązanie";
+  }
+  if (dom.liabilityCancelEditBtn) {
+    dom.liabilityCancelEditBtn.hidden = true;
+  }
+  if (dom.liabilityForm) {
+    dom.liabilityForm.reset();
+  }
+}
+
+function startLiabilityEdit(liabilityId) {
+  const liability = findById(state.liabilities, liabilityId);
+  if (!liability || !dom.liabilityForm) {
+    return;
+  }
+  editingState.liabilityId = liability.id;
+  if (dom.liabilityEditId) {
+    dom.liabilityEditId.value = liability.id;
+  }
+  if (dom.liabilitySubmitBtn) {
+    dom.liabilitySubmitBtn.textContent = "Zapisz zobowiązanie";
+  }
+  if (dom.liabilityCancelEditBtn) {
+    dom.liabilityCancelEditBtn.hidden = false;
+  }
+  const form = dom.liabilityForm;
+  const nameInput = form.querySelector('[name="name"]');
+  const amountInput = form.querySelector('[name="amount"]');
+  const currencyInput = form.querySelector('[name="currency"]');
+  const rateInput = form.querySelector('[name="rate"]');
+  const dueDateInput = form.querySelector('[name="dueDate"]');
+  if (nameInput) {
+    nameInput.value = liability.name || "";
+  }
+  if (amountInput) {
+    amountInput.value = String(toNum(liability.amount));
+  }
+  if (currencyInput) {
+    currencyInput.value = liability.currency || state.meta.baseCurrency;
+  }
+  if (rateInput) {
+    rateInput.value = String(toNum(liability.rate));
+  }
+  if (dueDateInput) {
+    dueDateInput.value = liability.dueDate || "";
+  }
+  form.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 function onLiabilitySubmit(event) {
   event.preventDefault();
   const data = formToObject(event.currentTarget);
-  state.liabilities.push({
-    id: makeId("liab"),
+  const editId = editingState.liabilityId && data.editId === editingState.liabilityId ? editingState.liabilityId : "";
+  const payload = {
     name: textOrFallback(data.name, "Zobowiązanie"),
     amount: toNum(data.amount),
     currency: textOrFallback(data.currency, state.meta.baseCurrency),
     rate: toNum(data.rate),
-    dueDate: data.dueDate || "",
-    createdAt: nowIso()
-  });
+    dueDate: data.dueDate || ""
+  };
+  if (editId) {
+    const existing = findById(state.liabilities, editId);
+    if (!existing) {
+      resetLiabilityForm();
+      window.alert("Nie znaleziono zobowiązania do edycji.");
+      return;
+    }
+    Object.assign(existing, payload);
+  } else {
+    state.liabilities.push({
+      id: makeId("liab"),
+      ...payload,
+      createdAt: nowIso()
+    });
+  }
   saveState();
-  event.currentTarget.reset();
+  resetLiabilityForm();
   renderLiabilities();
   renderDashboard();
 }
@@ -3477,6 +3716,12 @@ function onActionClick(event) {
       resetAccountForm();
     }
     if (
+      editingState.recurringId &&
+      state.recurringOps.some((item) => item.id === editingState.recurringId && item.accountId === id)
+    ) {
+      resetRecurringForm();
+    }
+    if (
       editingState.operationId &&
       state.operations.some((item) => item.id === editingState.operationId && item.accountId === id)
     ) {
@@ -3499,6 +3744,18 @@ function onActionClick(event) {
   if (action === "delete-asset") {
     if (editingState.assetId === id) {
       resetAssetForm();
+    }
+    if (
+      editingState.alertId &&
+      state.alerts.some((item) => item.id === editingState.alertId && item.assetId === id)
+    ) {
+      resetAlertForm();
+    }
+    if (
+      editingState.recurringId &&
+      state.recurringOps.some((item) => item.id === editingState.recurringId && item.assetId === id)
+    ) {
+      resetRecurringForm();
     }
     if (
       editingState.operationId &&
@@ -3559,15 +3816,29 @@ function onActionClick(event) {
     return;
   }
   if (action === "delete-recurring") {
+    if (editingState.recurringId === id) {
+      resetRecurringForm();
+    }
     state.recurringOps = state.recurringOps.filter((item) => item.id !== id);
     saveState();
     renderRecurring();
     return;
   }
+  if (action === "edit-recurring") {
+    startRecurringEdit(id);
+    return;
+  }
   if (action === "delete-alert") {
+    if (editingState.alertId === id) {
+      resetAlertForm();
+    }
     state.alerts = state.alerts.filter((item) => item.id !== id);
     saveState();
     renderAlerts();
+    return;
+  }
+  if (action === "edit-alert") {
+    startAlertEdit(id);
     return;
   }
   if (action === "delete-note") {
@@ -3583,10 +3854,17 @@ function onActionClick(event) {
     return;
   }
   if (action === "delete-liability") {
+    if (editingState.liabilityId === id) {
+      resetLiabilityForm();
+    }
     state.liabilities = state.liabilities.filter((item) => item.id !== id);
     saveState();
     renderLiabilities();
     renderDashboard();
+    return;
+  }
+  if (action === "edit-liability") {
+    startLiabilityEdit(id);
     return;
   }
   if (action === "delete-forum-post") {
@@ -3643,6 +3921,15 @@ function syncEditingForms() {
   }
   if (editingState.operationId && !findById(state.operations, editingState.operationId)) {
     resetOperationForm();
+  }
+  if (editingState.recurringId && !findById(state.recurringOps, editingState.recurringId)) {
+    resetRecurringForm();
+  }
+  if (editingState.alertId && !findById(state.alerts, editingState.alertId)) {
+    resetAlertForm();
+  }
+  if (editingState.liabilityId && !findById(state.liabilities, editingState.liabilityId)) {
+    resetLiabilityForm();
   }
 }
 
@@ -3842,7 +4129,10 @@ function renderRecurring() {
     escapeHtml(lookupName(state.accounts, item.accountId)),
     escapeHtml(lookupAssetLabel(item.assetId)),
     escapeHtml(item.lastGeneratedDate || "-"),
-    `<button class="btn danger" data-action="delete-recurring" data-id="${item.id}">Usuń</button>`
+    [
+      `<button class="btn secondary" data-action="edit-recurring" data-id="${item.id}">Edytuj</button>`,
+      `<button class="btn danger" data-action="delete-recurring" data-id="${item.id}">Usuń</button>`
+    ].join(" ")
   ]);
   renderTable(
     dom.recurringList,
@@ -4006,7 +4296,10 @@ function renderAlerts() {
       formatMoney(current, asset ? asset.currency : state.meta.baseCurrency),
       triggered ? '<span class="badge ok">Tak</span>' : '<span class="badge off">Nie</span>',
       escapeHtml(formatDateTime(alert.lastTriggerAt) || "-"),
-      `<button class="btn danger" data-action="delete-alert" data-id="${alert.id}">Usuń</button>`
+      [
+        `<button class="btn secondary" data-action="edit-alert" data-id="${alert.id}">Edytuj</button>`,
+        `<button class="btn danger" data-action="delete-alert" data-id="${alert.id}">Usuń</button>`
+      ].join(" ")
     ];
   });
   renderTable(dom.alertList, ["Walor", "Warunek", "Poziom", "Cena", "Aktywny", "Ostatnie trafienie", "Akcje"], rows);
@@ -4037,7 +4330,10 @@ function renderLiabilities() {
     formatMoney(liability.amount, liability.currency),
     `${formatFloat(liability.rate)}%`,
     escapeHtml(liability.dueDate || "-"),
-    `<button class="btn danger" data-action="delete-liability" data-id="${liability.id}">Usuń</button>`
+    [
+      `<button class="btn secondary" data-action="edit-liability" data-id="${liability.id}">Edytuj</button>`,
+      `<button class="btn danger" data-action="delete-liability" data-id="${liability.id}">Usuń</button>`
+    ].join(" ")
   ]);
   renderTable(dom.liabilityList, ["Nazwa", "Kwota", "Oprocentowanie", "Termin", "Akcje"], rows);
 }
@@ -5350,6 +5646,12 @@ function removePortfolio(portfolioId) {
   }
   if (editingState.portfolioId === portfolioId) {
     resetPortfolioForm();
+  }
+  if (
+    editingState.recurringId &&
+    state.recurringOps.some((item) => item.id === editingState.recurringId && item.portfolioId === portfolioId)
+  ) {
+    resetRecurringForm();
   }
   if (
     editingState.operationId &&
