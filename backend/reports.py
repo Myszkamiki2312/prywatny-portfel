@@ -507,8 +507,13 @@ class AnalyticsEngine:
 
 
 class ReportService:
-    def __init__(self, state_provider: Callable[[], Dict[str, Any]]):
+    def __init__(
+        self,
+        state_provider: Callable[[], Dict[str, Any]],
+        benchmark_history_provider: Optional[Callable[[str, int], List[Dict[str, Any]]]] = None,
+    ):
         self.state_provider = state_provider
+        self.benchmark_history_provider = benchmark_history_provider
 
     def catalog(self) -> List[Dict[str, Any]]:
         return [{"name": name} for name in REPORT_FEATURES]
@@ -1312,18 +1317,74 @@ class ReportService:
                 if row.get("id") == portfolio_id:
                     benchmark_name = str(row.get("benchmark") or "")
                     break
+        benchmark_rows: List[Dict[str, float]] = []
+        benchmark_source = "proxy"
+        if benchmark_name and callable(self.benchmark_history_provider):
+            try:
+                history = self.benchmark_history_provider(benchmark_name, max(240, len(series) * 8))
+            except Exception:  # noqa: BLE001
+                history = []
+            benchmark_rows = self._benchmark_returns_for_series(series, history)
+            if benchmark_rows:
+                benchmark_source = "market-data"
+        if not benchmark_rows:
+            benchmark_rows = [{"date": row["date"], "value": row["value"] * 0.75} for row in returns]
         rows = []
+        benchmark_by_date = {str(item["date"]): _to_num(item["value"]) for item in benchmark_rows}
         for row in returns:
-            benchmark_proxy = row["value"] * 0.75
-            rows.append([row["date"], _format_percent(row["value"]), _format_percent(benchmark_proxy)])
+            rows.append(
+                [
+                    row["date"],
+                    _format_percent(row["value"]),
+                    _format_percent(benchmark_by_date.get(str(row["date"]), 0.0)),
+                ]
+            )
         bench_label = benchmark_name or "benchmark-proxy"
         return {
             "reportName": report_name,
-            "info": info + f" | Benchmark: {bench_label}",
+            "info": info + f" | Benchmark: {bench_label} ({benchmark_source})",
             "headers": ["Data", "Stopa zwrotu %", "Benchmark %"],
             "rows": rows,
             "chart": self._chart([row["date"] for row in returns], [row["value"] for row in returns], "#0d6f5d"),
         }
+
+    def _benchmark_returns_for_series(
+        self,
+        series: List[Dict[str, float]],
+        history: List[Dict[str, Any]],
+    ) -> List[Dict[str, float]]:
+        if not series or not history:
+            return []
+        normalized_history = []
+        for item in history:
+            date_text = str(item.get("date") or "").strip()[:10]
+            close_val = _to_num(item.get("close"))
+            if not date_text or close_val <= 0:
+                continue
+            normalized_history.append({"date": date_text, "close": close_val})
+        if len(normalized_history) < 2:
+            return []
+        normalized_history.sort(key=lambda row: row["date"])
+
+        aligned = []
+        idx = 0
+        last_close = 0.0
+        for point in series:
+            point_date = str(point.get("date") or "").strip()[:10]
+            while idx < len(normalized_history) and normalized_history[idx]["date"] <= point_date:
+                last_close = normalized_history[idx]["close"]
+                idx += 1
+            if point_date and last_close > 0:
+                aligned.append({"date": point_date, "close": last_close})
+        if len(aligned) < 2:
+            return []
+        output = []
+        for row_idx in range(1, len(aligned)):
+            prev = _to_num(aligned[row_idx - 1].get("close"))
+            cur = _to_num(aligned[row_idx].get("close"))
+            pct = _safe_div(cur - prev, prev) * 100.0 if prev else 0.0
+            output.append({"date": aligned[row_idx]["date"], "value": pct})
+        return output
 
     def _report_returns_by_period(self, report_name: str, info: str, series: List[Dict[str, float]]) -> Dict[str, Any]:
         returns = self._period_returns(series, value_key="netWorth")
@@ -1518,4 +1579,3 @@ class ReportService:
         avg = fmean(values)
         variance = fmean((value - avg) ** 2 for value in values)
         return math.sqrt(variance)
-

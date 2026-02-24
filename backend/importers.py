@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 from typing import Any, Dict, List
 import unicodedata
 
@@ -26,6 +27,11 @@ SUPPORTED_BROKERS: Dict[str, Dict[str, Any]] = {
         "name": "mBank",
         "description": "Import historii rachunku maklerskiego mBank (CSV).",
         "requiredHeaders": ["data", "rodzaj", "instrument"],
+    },
+    "degiro": {
+        "name": "DEGIRO",
+        "description": "Import historii transakcji DEGIRO (CSV).",
+        "requiredHeaders": ["date", "product", "quantity"],
     },
 }
 
@@ -146,6 +152,8 @@ def _pick_mapper(broker_id: str):
         return _map_xtb_row
     if broker_id == "mbank":
         return _map_mbank_row
+    if broker_id == "degiro":
+        return _map_degiro_row
     return _map_generic_row
 
 
@@ -340,6 +348,104 @@ def _map_mbank_row(
     }
 
 
+def _map_degiro_row(
+    row: Dict[str, str],
+    *,
+    state: Dict[str, Any],
+    created: Dict[str, int],
+    default_portfolio_id: str,
+    default_account_id: str,
+) -> Dict[str, Any] | None:
+    action_raw = row_value(row, "action", "side", "transactiontype", "type", "description")
+    action = _simplify_text(action_raw)
+    raw_quantity = to_num(row_value(row, "quantity", "ilosc", "qty", "size"))
+    quantity = abs(raw_quantity)
+    price = to_num(row_value(row, "price", "cena", "executionprice"))
+    amount = to_num(
+        row_value(
+            row,
+            "total",
+            "amount",
+            "value",
+            "localvalue",
+            "kwota",
+            "change",
+            "wartosc",
+        )
+    )
+    fee = abs(to_num(row_value(row, "fee", "commission", "transactionandorthird", "costs")))
+    currency = text_or_fallback(row_value(row, "currency", "waluta"), state["meta"]["baseCurrency"])
+
+    portfolio_id = _ensure_portfolio(
+        state,
+        preferred_name=row_value(row, "portfolio", "portfel"),
+        preferred_id=row_value(row, "portfolioid"),
+        created=created,
+        fallback_id=default_portfolio_id,
+    )
+    account_id = _ensure_account(
+        state,
+        preferred_name=row_value(row, "account", "konto"),
+        preferred_id=row_value(row, "accountid"),
+        created=created,
+        fallback_id=default_account_id,
+    )
+
+    product = row_value(row, "product", "instrument", "security", "nazwa")
+    isin = row_value(row, "isin")
+    symbol = row_value(row, "symbol", "ticker") or _extract_degiro_ticker(product, isin)
+    asset_id = _ensure_asset(state, token=symbol, created=created) if symbol else ""
+
+    buy_markers = ("buy", "koop", "kupno", "purchase", "kauf")
+    sell_markers = ("sell", "sprzedaz", "verkoop", "vente")
+    dividend_markers = ("dividend",)
+    deposit_markers = ("deposit", "wplata", "storting")
+    withdraw_markers = ("withdraw", "withdrawal", "wyplata", "transfer out")
+
+    op_type = _normalize_operation_type(action_raw)
+    if any(marker in action for marker in buy_markers):
+        op_type = "Kupno waloru"
+    elif any(marker in action for marker in sell_markers):
+        op_type = "Sprzedaż waloru"
+    elif any(marker in action for marker in dividend_markers):
+        op_type = "Dywidenda"
+    elif any(marker in action for marker in deposit_markers):
+        op_type = "Operacja gotówkowa"
+    elif any(marker in action for marker in withdraw_markers):
+        op_type = "Przelew gotówkowy"
+    elif asset_id and raw_quantity > 0:
+        op_type = "Kupno waloru"
+    elif asset_id and raw_quantity < 0:
+        op_type = "Sprzedaż waloru"
+
+    if op_type in ("Kupno waloru", "Sprzedaż waloru"):
+        if quantity <= 0 and price > 0 and amount != 0:
+            quantity = abs(amount / price) if price else 0.0
+        if amount == 0 and quantity > 0 and price > 0:
+            amount = quantity * price
+        else:
+            amount = abs(amount)
+
+    return {
+        "id": make_id("op"),
+        "date": normalize_date(row_value(row, "date", "data", "time", "executiondate", "tradedate")),
+        "type": op_type,
+        "portfolioId": portfolio_id,
+        "accountId": account_id,
+        "assetId": asset_id,
+        "targetAssetId": "",
+        "quantity": quantity,
+        "targetQuantity": 0.0,
+        "price": price,
+        "amount": amount,
+        "fee": fee,
+        "currency": currency,
+        "tags": ["degiro"],
+        "note": row_value(row, "comment", "description", "notatka"),
+        "createdAt": now_iso(),
+    }
+
+
 def _ensure_portfolio(
     state: Dict[str, Any],
     *,
@@ -471,6 +577,42 @@ def _normalize_operation_type(raw: str) -> str:
     if any(word in text for word in ["odset"]):
         return "Odsetki"
     return "Import operacji"
+
+
+def _extract_degiro_ticker(product: str, isin: str) -> str:
+    source = str(product or "").strip()
+    if not source:
+        return str(isin or "").strip().upper()
+    match = re.search(r"\(([A-Za-z0-9._-]{1,12})\)", source)
+    if match:
+        candidate = match.group(1).upper().strip()
+        if candidate:
+            return candidate
+
+    separators = re.compile(r"[\s,;:/\\|+\-]+")
+    stop_words = {
+        "INC",
+        "PLC",
+        "ETF",
+        "SA",
+        "NV",
+        "CORP",
+        "CLASS",
+        "SHARES",
+        "COMMON",
+        "USD",
+        "EUR",
+        "PLN",
+    }
+    for token in separators.split(source.upper()):
+        token = token.strip()
+        if not token or any(ch.isdigit() for ch in token):
+            continue
+        if token in stop_words:
+            continue
+        if 1 <= len(token) <= 8:
+            return token
+    return str(isin or "").strip().upper()
 
 
 def _pick_delimiter(text: str) -> str:

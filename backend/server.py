@@ -522,7 +522,10 @@ def main() -> None:
         database=database,
         quote_service=quote_service,
         importer=BrokerImporter(database),
-        reports=ReportService(database.get_state),
+        reports=ReportService(
+            database.get_state,
+            benchmark_history_provider=quote_service.fetch_daily_history,
+        ),
         expert_tools=expert_tools,
         parity_tools=parity_tools,
         notifications=notifications,

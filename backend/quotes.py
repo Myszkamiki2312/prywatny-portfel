@@ -38,6 +38,16 @@ class QuoteService:
         # Keep stable order for response payload.
         return [found[ticker] for ticker in requested if ticker in found]
 
+    def fetch_daily_history(self, ticker: str, limit: int = 400) -> List[Dict[str, object]]:
+        symbol = str(ticker or "").strip()
+        if not symbol:
+            return []
+        rows = self._fetch_stooq_history(symbol)
+        safe_limit = max(1, int(limit or 400))
+        if safe_limit > 0:
+            rows = rows[-safe_limit:]
+        return rows
+
     def _fetch_yahoo(self, tickers: List[str]) -> List[Dict[str, object]]:
         symbols = ",".join(tickers)
         query = urllib.parse.urlencode({"symbols": symbols})
@@ -81,6 +91,22 @@ class QuoteService:
             if row:
                 output.append(row)
         return output
+
+    def _fetch_stooq_history(self, ticker: str) -> List[Dict[str, object]]:
+        for candidate in _stooq_history_candidates(ticker):
+            url = "https://stooq.com/q/d/l/?" + urllib.parse.urlencode({"s": candidate, "i": "d"})
+            request = urllib.request.Request(
+                url,
+                headers={"User-Agent": "MyFundSolo/1.0", "Accept": "text/csv"},
+            )
+            try:
+                text = self._urlopen_bytes(request).decode("utf-8", errors="ignore")
+            except (urllib.error.URLError, TimeoutError, ssl.SSLError):
+                continue
+            rows = _parse_stooq_history_csv(text)
+            if rows:
+                return rows
+        return []
 
     def _fetch_single_stooq(self, ticker: str) -> Dict[str, object] | None:
         candidates = _stooq_candidates(ticker)
@@ -147,6 +173,24 @@ def _normalize_tickers(tickers: Iterable[str]) -> List[str]:
     return output
 
 
+def _parse_stooq_history_csv(text: str) -> List[Dict[str, object]]:
+    stream = io.StringIO(text)
+    reader = csv.DictReader(stream)
+    output: List[Dict[str, object]] = []
+    for row in reader:
+        date_text = str(row.get("Date") or "").strip()
+        close_text = str(row.get("Close") or "").strip()
+        if not date_text or not close_text or close_text == "N/D":
+            continue
+        try:
+            close_value = float(close_text)
+        except ValueError:
+            continue
+        output.append({"date": date_text[:10], "close": close_value})
+    output.sort(key=lambda item: str(item.get("date") or ""))
+    return output
+
+
 def _stooq_candidates(ticker: str) -> List[str]:
     base = ticker.lower().strip()
     if not base:
@@ -154,6 +198,51 @@ def _stooq_candidates(ticker: str) -> List[str]:
     candidates = [base]
     if "." not in base:
         candidates.extend([f"{base}.us", f"{base}.pl"])
+    return candidates
+
+
+def _stooq_history_candidates(ticker: str) -> List[str]:
+    raw = str(ticker or "").strip()
+    if not raw:
+        return []
+    alias_map = {
+        "WIG20": "wig20",
+        "WIG": "wig",
+        "MWIG40": "mwig40",
+        "SWIG80": "swig80",
+        "SP500": "spx",
+        "S&P500": "spx",
+        "GSPC": "spx",
+        "^GSPC": "spx",
+        "NASDAQ100": "ndq",
+        "NASDAQ-100": "ndq",
+        "NDX": "ndq",
+        "DAX": "dax",
+        "CAC40": "cac",
+        "FTSE100": "uk100",
+    }
+    normalized = (
+        raw.upper()
+        .replace(" ", "")
+        .replace("-", "")
+        .replace("_", "")
+    )
+    candidates: List[str] = []
+    alias = alias_map.get(raw.upper()) or alias_map.get(normalized)
+    if alias:
+        candidates.append(alias)
+    base = raw.lower()
+    if base not in candidates:
+        candidates.append(base)
+    if "." in base:
+        root = base.split(".", 1)[0]
+        if root not in candidates:
+            candidates.append(root)
+    else:
+        for suffix in (".pl", ".us"):
+            candidate = f"{base}{suffix}"
+            if candidate not in candidates:
+                candidates.append(candidate)
     return candidates
 
 
