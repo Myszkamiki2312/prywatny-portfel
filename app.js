@@ -6211,3 +6211,35 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
 }
+
+if (typeof globalThis !== "undefined" && globalThis.__MYFUND_ENABLE_TEST_HOOKS__) {
+  globalThis.__MYFUND_TEST__ = {
+    setState(nextState) {
+      state = normalizeState(nextState);
+    },
+    getState() {
+      return state;
+    },
+    setDom(partialDom) {
+      Object.assign(dom, partialDom || {});
+    },
+    getEditingState() {
+      return { ...editingState };
+    },
+    disableRendering() {
+      renderAll = () => {};
+      renderRecurring = () => {};
+      renderAlerts = () => {};
+      renderLiabilities = () => {};
+      renderDashboard = () => {};
+    },
+    startRecurringEdit,
+    startAlertEdit,
+    startLiabilityEdit,
+    onRecurringSubmit,
+    onAlertSubmit,
+    onLiabilitySubmit,
+    onActionClick,
+    syncEditingForms
+  };
+}

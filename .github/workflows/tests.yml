@@ -16,5 +16,13 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Run backend unit tests
         run: python -m unittest discover -s tests -p "test_*.py" -v
+
+      - name: Run frontend edit-flow tests
+        run: node --test frontend_tests/*.test.js

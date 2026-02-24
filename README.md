@@ -13,10 +13,16 @@ Lokalna aplikacja inwestycyjna dla 1 użytkownika, inspirowana zakresem funkcji 
 
 ## Testy
 
-Uruchom wszystkie testy jednostkowe backendu:
+Uruchom testy backendu:
 
 ```bash
 python3 -m unittest discover -s tests -p "test_*.py" -v
+```
+
+Uruchom testy frontendowe (flow edycji CRUD):
+
+```bash
+node --test frontend_tests/*.test.js
 ```
 
 ## Co zawiera aplikacja
