@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.6.3 - 2026-02-24
+
+### Added
+- Testy end-to-end workflow API:
+  - `/Users/bartlomiejprzybycien/Documents/New project/tests/test_e2e_workflows.py`
+- Pokryte scenariusze:
+  - import brokera `IBKR` -> odświeżenie notowań -> raport + metryki,
+  - import brokera `BOSSA` -> log importu -> raport historii operacji.
+
+### Stability
+- Zweryfikowane lokalnie:
+  - `python3 -m unittest discover -s /Users/bartlomiejprzybycien/Documents/New project/tests -p "test_*.py" -v`
+  - `node --test /Users/bartlomiejprzybycien/Documents/New project/frontend_tests/*.test.js`
+
 ## v0.6.2 - 2026-02-24
 
 ### Added
