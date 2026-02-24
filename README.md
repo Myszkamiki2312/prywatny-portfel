@@ -1,6 +1,6 @@
 # MyFund Solo
 
-Lokalna aplikacja inwestycyjna dla 1 użytkownika, inspirowana zakresem funkcji myfund.pl.
+Lokalna aplikacja inwestycyjna dla uzytkownika
 
 ## Uruchomienie
 
