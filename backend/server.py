@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import json
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List
+import time
 from urllib.parse import parse_qs, urlparse
 
 from .database import Database
@@ -146,19 +148,42 @@ class AppHandler(SimpleHTTPRequestHandler):
 
         if method == "GET" and path == "/api/quotes":
             tickers = _query_tickers(query)
-            return {"quotes": self.context.database.get_quotes(tickers or None)}
+            rows = self.context.database.get_quotes(tickers or None)
+            quotes = [_api_quote_row(row, default_source="db") for row in rows]
+            return {"quotes": quotes}
 
         if method == "POST" and path == "/api/quotes/refresh":
             tickers = _payload_tickers(payload)
             if not tickers:
                 state = self.context.database.get_state()
                 tickers = [asset["ticker"] for asset in state["assets"] if str(asset.get("ticker") or "").strip()]
-            quotes = self.context.quote_service.refresh(tickers)
-            self.context.database.upsert_quotes(quotes)
+            refreshed_quotes = self.context.quote_service.refresh(tickers)
+            quote_map = {
+                str(row.get("ticker") or "").upper(): _api_quote_row(row, default_source="market-data")
+                for row in refreshed_quotes
+                if str(row.get("ticker") or "").strip()
+            }
+
+            fresh_quotes = [row for row in quote_map.values() if not bool(row.get("stale"))]
+            if fresh_quotes:
+                self.context.database.upsert_quotes([_quote_upsert_row(row) for row in fresh_quotes])
+
+            missing_or_stale = [
+                ticker
+                for ticker in tickers
+                if ticker not in quote_map or bool(quote_map[ticker].get("stale"))
+            ]
+            if missing_or_stale:
+                for db_row in self.context.database.get_quotes(missing_or_stale):
+                    mapped = _api_quote_row(db_row, default_source="db-cache")
+                    existing = quote_map.get(mapped["ticker"])
+                    if not existing or (bool(existing.get("stale")) and not bool(mapped.get("stale"))):
+                        quote_map[mapped["ticker"]] = mapped
+
+            quotes = [quote_map[ticker] for ticker in tickers if ticker in quote_map]
 
             # Mirror latest prices to asset list so frontend state stays in sync.
             if quotes:
-                quote_map = {str(row["ticker"]).upper(): row for row in quotes}
                 state = self.context.database.get_state()
                 updated = False
                 for asset in state["assets"]:
@@ -170,7 +195,14 @@ class AppHandler(SimpleHTTPRequestHandler):
                 if updated:
                     self.context.database.replace_state(state)
 
-            return {"quotes": quotes, "requested": len(tickers), "updated": len(quotes)}
+            return {
+                "quotes": quotes,
+                "requested": len(tickers),
+                "resolved": len(quotes),
+                "updated": len(fresh_quotes),
+                "fallbackUsed": len([row for row in quotes if bool(row.get("stale"))]),
+                "missing": max(0, len(tickers) - len(quotes)),
+            }
 
         if method == "GET" and path == "/api/reports/catalog":
             return {"reports": self.context.reports.catalog()}
@@ -465,6 +497,48 @@ def _to_int(value: Any, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _quote_upsert_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "ticker": str(row.get("ticker") or "").upper(),
+        "price": float(row.get("price") or 0),
+        "currency": str(row.get("currency") or "PLN"),
+        "provider": str(row.get("provider") or "unknown"),
+        "fetched_at": str(row.get("fetched_at") or row.get("fetchedAt") or now_iso()),
+    }
+
+
+def _api_quote_row(row: Dict[str, Any], *, default_source: str) -> Dict[str, Any]:
+    ticker = str(row.get("ticker") or "").upper().strip()
+    fetched_at = str(row.get("fetched_at") or row.get("fetchedAt") or now_iso())
+    age_seconds = _age_seconds_from_iso(fetched_at)
+    stale = bool(row.get("stale")) if row.get("stale") is not None else age_seconds > 15 * 60
+    source = str(row.get("source") or default_source or "unknown")
+    return {
+        "ticker": ticker,
+        "price": float(row.get("price") or 0),
+        "currency": str(row.get("currency") or "PLN"),
+        "provider": str(row.get("provider") or "unknown"),
+        "fetchedAt": fetched_at,
+        "fetched_at": fetched_at,
+        "ageSeconds": age_seconds,
+        "stale": stale,
+        "source": source,
+    }
+
+
+def _age_seconds_from_iso(value: str) -> int:
+    text = str(value or "").strip()
+    if not text:
+        return 0
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return 0
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return max(0, int(time.time() - parsed.timestamp()))
 
 
 def _build_scanner_payload(database: Database) -> List[Dict[str, Any]]:

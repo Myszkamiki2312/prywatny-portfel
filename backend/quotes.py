@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 import io
 import json
 import ssl
+import threading
+import time
 from typing import Dict, Iterable, List
 import urllib.error
 import urllib.parse
@@ -18,22 +20,79 @@ def now_iso() -> str:
 
 
 class QuoteService:
-    def __init__(self, *, timeout_seconds: int = 8):
+    def __init__(
+        self,
+        *,
+        timeout_seconds: int = 8,
+        quote_cache_ttl_seconds: int = 90,
+        history_cache_ttl_seconds: int = 6 * 60 * 60,
+        stale_fallback_max_age_seconds: int = 7 * 24 * 60 * 60,
+        max_retry_attempts: int = 2,
+        retry_backoff_seconds: float = 0.3,
+    ):
         self.timeout_seconds = timeout_seconds
+        self.quote_cache_ttl_seconds = max(0, int(quote_cache_ttl_seconds))
+        self.history_cache_ttl_seconds = max(0, int(history_cache_ttl_seconds))
+        self.stale_fallback_max_age_seconds = max(0, int(stale_fallback_max_age_seconds))
+        self.max_retry_attempts = max(0, int(max_retry_attempts))
+        self.retry_backoff_seconds = max(0.0, float(retry_backoff_seconds))
+        self._quote_cache: Dict[str, Dict[str, object]] = {}
+        self._history_cache: Dict[str, Dict[str, object]] = {}
+        self._lock = threading.RLock()
 
     def refresh(self, tickers: Iterable[str]) -> List[Dict[str, object]]:
         requested = _normalize_tickers(tickers)
         if not requested:
             return []
 
+        now_ts = time.time()
         found: Dict[str, Dict[str, object]] = {}
-        for row in self._fetch_yahoo(requested):
-            found[row["ticker"]] = row
+        missing: List[str] = []
 
-        missing = [ticker for ticker in requested if ticker not in found]
+        for ticker in requested:
+            cached = self._get_quote_cache(ticker)
+            if cached and _is_iso_fresh(str(cached.get("fetched_at") or ""), self.quote_cache_ttl_seconds, now_ts):
+                found[ticker] = self._quote_output(cached, now_ts=now_ts, source="memory-cache", stale=False)
+            else:
+                missing.append(ticker)
+
+        fetched: Dict[str, Dict[str, object]] = {}
         if missing:
-            for row in self._fetch_stooq(missing):
-                found[row["ticker"]] = row
+            for row in self._fetch_yahoo(missing):
+                normalized = self._normalize_quote_row(row)
+                if normalized:
+                    fetched[normalized["ticker"]] = normalized
+
+        unresolved = [ticker for ticker in missing if ticker not in fetched]
+        if unresolved:
+            for row in self._fetch_stooq(unresolved):
+                normalized = self._normalize_quote_row(row)
+                if normalized:
+                    fetched[normalized["ticker"]] = normalized
+
+        for ticker, row in fetched.items():
+            self._set_quote_cache(row)
+            found[ticker] = self._quote_output(
+                row,
+                now_ts=now_ts,
+                source=str(row.get("provider") or "market-data"),
+                stale=False,
+            )
+
+        unresolved = [ticker for ticker in missing if ticker not in fetched]
+        for ticker in unresolved:
+            stale_cached = self._get_quote_cache(ticker)
+            if not stale_cached:
+                continue
+            age_seconds = _age_seconds_from_iso(str(stale_cached.get("fetched_at") or ""), now_ts)
+            if self.stale_fallback_max_age_seconds > 0 and age_seconds > self.stale_fallback_max_age_seconds:
+                continue
+            found[ticker] = self._quote_output(
+                stale_cached,
+                now_ts=now_ts,
+                source="memory-cache-stale",
+                stale=True,
+            )
 
         # Keep stable order for response payload.
         return [found[ticker] for ticker in requested if ticker in found]
@@ -42,7 +101,19 @@ class QuoteService:
         symbol = str(ticker or "").strip()
         if not symbol:
             return []
-        rows = self._fetch_stooq_history(symbol)
+
+        now_ts = time.time()
+        cache_key = symbol.upper()
+        cached = self._get_history_cache(cache_key)
+        if cached and _is_iso_fresh(str(cached.get("fetched_at") or ""), self.history_cache_ttl_seconds, now_ts):
+            rows = [dict(item) for item in cached.get("rows", [])]
+        else:
+            rows = self._fetch_stooq_history(symbol)
+            if rows:
+                self._set_history_cache(cache_key, rows)
+            elif cached:
+                rows = [dict(item) for item in cached.get("rows", [])]
+
         safe_limit = max(1, int(limit or 400))
         if safe_limit > 0:
             rows = rows[-safe_limit:]
@@ -142,16 +213,124 @@ class QuoteService:
         return None
 
     def _urlopen_bytes(self, request: urllib.request.Request) -> bytes:
-        try:
+        attempts = self.max_retry_attempts + 1
+        last_error: Exception | None = None
+        for attempt in range(attempts):
+            try:
+                return self._urlopen_once(request, verify_ssl=True)
+            except urllib.error.URLError as error:
+                # Some self-hosted environments do not ship full CA chain.
+                if isinstance(error.reason, ssl.SSLError):
+                    try:
+                        return self._urlopen_once(request, verify_ssl=False)
+                    except Exception as secondary_error:  # noqa: BLE001
+                        last_error = secondary_error
+                else:
+                    last_error = error
+            except (TimeoutError, ssl.SSLError) as error:
+                last_error = error
+
+            if attempt < attempts - 1 and self.retry_backoff_seconds > 0:
+                time.sleep(self.retry_backoff_seconds * (2**attempt))
+
+        if last_error:
+            raise last_error
+        raise TimeoutError("Quote request failed without explicit error.")
+
+    def _urlopen_once(self, request: urllib.request.Request, *, verify_ssl: bool) -> bytes:
+        if verify_ssl:
             with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
                 return response.read()
-        except urllib.error.URLError as error:
-            # Some self-hosted environments do not ship full CA chain.
-            if isinstance(error.reason, ssl.SSLError):
-                context = ssl._create_unverified_context()  # noqa: S323
-                with urllib.request.urlopen(request, timeout=self.timeout_seconds, context=context) as response:
-                    return response.read()
-            raise
+        context = ssl._create_unverified_context()  # noqa: S323
+        with urllib.request.urlopen(request, timeout=self.timeout_seconds, context=context) as response:
+            return response.read()
+
+    def _normalize_quote_row(self, row: Dict[str, object]) -> Dict[str, object] | None:
+        ticker = str(row.get("ticker") or "").upper().strip()
+        price_raw = row.get("price")
+        if not ticker:
+            return None
+        if not isinstance(price_raw, (float, int)):
+            return None
+        price = float(price_raw)
+        if price <= 0:
+            return None
+        currency = str(row.get("currency") or _guess_currency_from_ticker(ticker)).upper().strip() or "USD"
+        provider = str(row.get("provider") or "unknown").strip() or "unknown"
+        fetched_at = _normalize_iso(str(row.get("fetched_at") or row.get("fetchedAt") or now_iso()))
+        return {
+            "ticker": ticker,
+            "price": price,
+            "currency": currency,
+            "provider": provider,
+            "fetched_at": fetched_at,
+        }
+
+    def _quote_output(
+        self,
+        row: Dict[str, object],
+        *,
+        now_ts: float,
+        source: str,
+        stale: bool,
+    ) -> Dict[str, object]:
+        fetched_at = _normalize_iso(str(row.get("fetched_at") or row.get("fetchedAt") or ""))
+        age_seconds = _age_seconds_from_iso(fetched_at, now_ts)
+        return {
+            "ticker": str(row.get("ticker") or "").upper(),
+            "price": float(row.get("price") or 0),
+            "currency": str(row.get("currency") or "USD"),
+            "provider": str(row.get("provider") or "unknown"),
+            "fetched_at": fetched_at,
+            "fetchedAt": fetched_at,
+            "stale": bool(stale),
+            "ageSeconds": age_seconds,
+            "source": source,
+        }
+
+    def _get_quote_cache(self, ticker: str) -> Dict[str, object] | None:
+        key = str(ticker or "").upper().strip()
+        if not key:
+            return None
+        with self._lock:
+            cached = self._quote_cache.get(key)
+            if not cached:
+                return None
+            return dict(cached)
+
+    def _set_quote_cache(self, row: Dict[str, object]) -> None:
+        key = str(row.get("ticker") or "").upper().strip()
+        if not key:
+            return
+        with self._lock:
+            self._quote_cache[key] = dict(row)
+            if len(self._quote_cache) > 5000:
+                self._quote_cache = dict(list(self._quote_cache.items())[-2500:])
+
+    def _get_history_cache(self, key: str) -> Dict[str, object] | None:
+        cache_key = str(key or "").upper().strip()
+        if not cache_key:
+            return None
+        with self._lock:
+            cached = self._history_cache.get(cache_key)
+            if not cached:
+                return None
+            return {
+                "fetched_at": str(cached.get("fetched_at") or ""),
+                "rows": [dict(item) for item in cached.get("rows", [])],
+            }
+
+    def _set_history_cache(self, key: str, rows: List[Dict[str, object]]) -> None:
+        cache_key = str(key or "").upper().strip()
+        if not cache_key:
+            return
+        with self._lock:
+            self._history_cache[cache_key] = {
+                "fetched_at": now_iso(),
+                "rows": [dict(item) for item in rows],
+            }
+            if len(self._history_cache) > 200:
+                self._history_cache = dict(list(self._history_cache.items())[-100:])
 
 
 def _parse_stooq_csv(text: str) -> Dict[str, str]:
@@ -257,3 +436,36 @@ def _guess_currency_from_ticker(ticker: str) -> str:
     if lower.endswith(".sw"):
         return "CHF"
     return "USD"
+
+
+def _normalize_iso(value: str) -> str:
+    ts = _timestamp_from_iso(value)
+    if ts is None:
+        return now_iso()
+    return datetime.fromtimestamp(ts, timezone.utc).isoformat()
+
+
+def _timestamp_from_iso(value: str) -> float | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
+
+
+def _age_seconds_from_iso(value: str, now_ts: float) -> int:
+    ts = _timestamp_from_iso(value)
+    if ts is None:
+        return 0
+    return max(0, int(now_ts - ts))
+
+
+def _is_iso_fresh(value: str, ttl_seconds: int, now_ts: float) -> bool:
+    if ttl_seconds <= 0:
+        return False
+    return _age_seconds_from_iso(value, now_ts) <= ttl_seconds

@@ -1,4 +1,5 @@
 import unittest
+from copy import deepcopy
 from types import SimpleNamespace
 
 from backend.parity_tools import ParityToolsService
@@ -105,6 +106,38 @@ class FakeHandler:
 
     def dispatch(self, method, path, query=None, payload=None):
         return AppHandler._dispatch(self, method, path, query or {}, payload or {})
+
+
+class QuoteDbMock:
+    def __init__(self, *, state, quotes):
+        self.state = deepcopy(state)
+        self.quotes = [dict(item) for item in quotes]
+        self.upserted = []
+
+    def get_state(self):
+        return deepcopy(self.state)
+
+    def replace_state(self, new_state):
+        self.state = deepcopy(new_state)
+        return self.state
+
+    def get_quotes(self, tickers=None):
+        rows = [dict(item) for item in self.quotes]
+        if not tickers:
+            return rows
+        wanted = {str(item).upper() for item in tickers}
+        return [row for row in rows if str(row.get("ticker") or "").upper() in wanted]
+
+    def upsert_quotes(self, quotes):
+        self.upserted.extend([dict(item) for item in quotes])
+
+
+class QuoteServiceMock:
+    def __init__(self, response):
+        self.response = [dict(item) for item in response]
+
+    def refresh(self, tickers):  # noqa: ARG002
+        return [dict(item) for item in self.response]
 
 
 class ApiEndpointTests(unittest.TestCase):
@@ -220,3 +253,44 @@ class ApiEndpointTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class QuoteEndpointTests(unittest.TestCase):
+    def setUp(self):
+        self.state = build_state()
+        self.database = QuoteDbMock(
+            state=self.state,
+            quotes=[
+                {
+                    "ticker": "CDR",
+                    "price": 150.0,
+                    "currency": "PLN",
+                    "provider": "db-seed",
+                    "fetchedAt": "2000-01-01T00:00:00+00:00",
+                }
+            ],
+        )
+        self.handler = FakeHandler(
+            SimpleNamespace(
+                database=self.database,
+                quote_service=QuoteServiceMock(response=[]),
+            )
+        )
+
+    def test_quotes_refresh_uses_db_fallback_when_provider_returns_nothing(self):
+        response = self.handler.dispatch(
+            "POST",
+            "/api/quotes/refresh",
+            payload={"tickers": ["CDR"]},
+        )
+
+        self.assertEqual(response["requested"], 1)
+        self.assertEqual(response["resolved"], 1)
+        self.assertEqual(response["updated"], 0)
+        self.assertEqual(response["fallbackUsed"], 1)
+        self.assertEqual(response["missing"], 0)
+        self.assertEqual(len(response["quotes"]), 1)
+        self.assertEqual(response["quotes"][0]["ticker"], "CDR")
+        self.assertEqual(response["quotes"][0]["source"], "db-cache")
+        self.assertEqual(response["quotes"][0]["stale"], True)
+        self.assertEqual(len(self.database.upserted), 0)
