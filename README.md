@@ -11,6 +11,14 @@ Lokalna aplikacja inwestycyjna dla 1 użytkownika, inspirowana zakresem funkcji 
 3. Otwórz w przeglądarce:
    - `http://localhost:8080`
 
+## Testy
+
+Uruchom wszystkie testy jednostkowe backendu:
+
+```bash
+python3 -m unittest discover -s tests -p "test_*.py" -v
+```
+
 ## Co zawiera aplikacja
 
 - pełną matrycę funkcji (operacje, raporty, narzędzia, portfele) z widokiem planów `Brak/Basic/Standard/Pro/Expert`,
