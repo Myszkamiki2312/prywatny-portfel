@@ -308,6 +308,15 @@ function cacheDom() {
   dom.notificationInfo = document.getElementById("notificationInfo");
   dom.testNotificationBtn = document.getElementById("testNotificationBtn");
   dom.notificationHistoryList = document.getElementById("notificationHistoryList");
+  dom.backupConfigForm = document.getElementById("backupConfigForm");
+  dom.runBackupNowBtn = document.getElementById("runBackupNowBtn");
+  dom.verifyBackupBtn = document.getElementById("verifyBackupBtn");
+  dom.refreshBackupRunsBtn = document.getElementById("refreshBackupRunsBtn");
+  dom.backupInfo = document.getElementById("backupInfo");
+  dom.backupRunsList = document.getElementById("backupRunsList");
+  dom.refreshMonitoringBtn = document.getElementById("refreshMonitoringBtn");
+  dom.monitoringInfo = document.getElementById("monitoringInfo");
+  dom.monitoringTable = document.getElementById("monitoringTable");
   dom.liabilityForm = document.getElementById("liabilityForm");
   dom.liabilityEditId = document.getElementById("liabilityEditId");
   dom.liabilitySubmitBtn = document.getElementById("liabilitySubmitBtn");
@@ -470,6 +479,26 @@ function bindEvents() {
     event.preventDefault();
     void sendTestNotification();
   });
+  dom.backupConfigForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void saveBackupConfigFromForm();
+  });
+  dom.runBackupNowBtn.addEventListener("click", (event) => {
+    event.preventDefault();
+    void runBackupNow();
+  });
+  dom.verifyBackupBtn.addEventListener("click", (event) => {
+    event.preventDefault();
+    void verifyBackupNow();
+  });
+  dom.refreshBackupRunsBtn.addEventListener("click", (event) => {
+    event.preventDefault();
+    void refreshBackupRuns();
+  });
+  dom.refreshMonitoringBtn.addEventListener("click", (event) => {
+    event.preventDefault();
+    void refreshMonitoringStatus();
+  });
   dom.liabilityForm.addEventListener("submit", onLiabilitySubmit);
   dom.liabilityCancelEditBtn.addEventListener("click", () => {
     resetLiabilityForm();
@@ -613,6 +642,13 @@ async function hydrateRealtimeAndNotifications() {
     const notificationPayload = await apiRequest("/tools/notifications/config", { timeoutMs: 5000 });
     applyNotificationConfig(notificationPayload.config || {});
     await refreshNotificationHistory({ silent: true });
+  } catch (error) {
+    // ignore
+  }
+  try {
+    await refreshBackupConfig({ silent: true });
+    await refreshBackupRuns({ silent: true });
+    await refreshMonitoringStatus({ silent: true });
   } catch (error) {
     // ignore
   }
@@ -911,6 +947,9 @@ async function refreshExpertTools(options = {}) {
   await refreshRecommendations({ silent: true });
   await refreshAlertHistory({ silent: true });
   await refreshNotificationHistory({ silent: true });
+  await refreshBackupConfig({ silent: true });
+  await refreshBackupRuns({ silent: true });
+  await refreshMonitoringStatus({ silent: true });
   await refreshCandles({ silent: true });
   await refreshCatalyst({ silent: true });
   await refreshFundsRanking({ silent: true });
@@ -1413,6 +1452,206 @@ async function refreshNotificationConfig(options = {}) {
       window.alert("Nie udało się pobrać konfiguracji powiadomień.");
     }
   }
+}
+
+function backupConfigFromForm() {
+  const data = formToObject(dom.backupConfigForm);
+  return {
+    enabled: Boolean(data.enabled),
+    intervalMinutes: Math.max(1, Math.min(43200, Math.round(toNum(data.intervalMinutes) || 720))),
+    keepLast: Math.max(1, Math.min(2000, Math.round(toNum(data.keepLast) || 30))),
+    verifyAfterBackup: Boolean(data.verifyAfterBackup),
+    includeStateJson: Boolean(data.includeStateJson),
+    includeDbCopy: Boolean(data.includeDbCopy)
+  };
+}
+
+function applyBackupConfig(config) {
+  if (!config || typeof config !== "object" || !dom.backupConfigForm) {
+    return;
+  }
+  setFormField(dom.backupConfigForm, "enabled", Boolean(config.enabled));
+  setFormField(dom.backupConfigForm, "intervalMinutes", config.intervalMinutes ?? 720);
+  setFormField(dom.backupConfigForm, "keepLast", config.keepLast ?? 30);
+  setFormField(dom.backupConfigForm, "verifyAfterBackup", Boolean(config.verifyAfterBackup));
+  setFormField(dom.backupConfigForm, "includeStateJson", Boolean(config.includeStateJson));
+  setFormField(dom.backupConfigForm, "includeDbCopy", Boolean(config.includeDbCopy));
+}
+
+async function saveBackupConfigFromForm() {
+  if (!backendSync.available) {
+    window.alert("Backend offline. Nie można zapisać backup config.");
+    return;
+  }
+  try {
+    const response = await apiRequest("/tools/backup/config", {
+      method: "PUT",
+      body: backupConfigFromForm(),
+      timeoutMs: 8000
+    });
+    applyBackupConfig(response.config || {});
+    if (dom.backupInfo) {
+      dom.backupInfo.textContent = "Backup config zapisany.";
+    }
+  } catch (error) {
+    window.alert(`Błąd zapisu backup config: ${error.message}`);
+  }
+}
+
+async function runBackupNow() {
+  if (!backendSync.available) {
+    window.alert("Backend offline. Backup niedostępny.");
+    return;
+  }
+  try {
+    const payload = await apiRequest("/tools/backup/run", {
+      method: "POST",
+      body: {},
+      timeoutMs: 30000
+    });
+    const row = payload.backup || {};
+    if (dom.backupInfo) {
+      dom.backupInfo.textContent = `Backup: ${row.status || "unknown"}, verify ${row.verified ? "ok" : "skip/error"}, ${formatDateTime(
+        row.createdAt || ""
+      ) || "-"}`;
+    }
+    await refreshBackupRuns({ silent: true });
+    await refreshMonitoringStatus({ silent: true });
+  } catch (error) {
+    window.alert(`Backup nieudany: ${error.message}`);
+  }
+}
+
+async function verifyBackupNow() {
+  if (!backendSync.available) {
+    window.alert("Backend offline. Verify backup niedostępny.");
+    return;
+  }
+  try {
+    const payload = await apiRequest("/tools/backup/verify", {
+      method: "POST",
+      body: {},
+      timeoutMs: 15000
+    });
+    const result = payload.verify || {};
+    if (dom.backupInfo) {
+      dom.backupInfo.textContent = `Restore-check: ${result.ok ? "OK" : "ERROR"} | ${
+        result.message || "brak opisu"
+      }`;
+    }
+    await refreshBackupRuns({ silent: true });
+  } catch (error) {
+    window.alert(`Verify backup nieudany: ${error.message}`);
+  }
+}
+
+async function refreshBackupConfig(options = {}) {
+  const silent = Boolean(options.silent);
+  if (!backendSync.available) {
+    return;
+  }
+  try {
+    const payload = await apiRequest("/tools/backup/config", { timeoutMs: 6000 });
+    applyBackupConfig(payload.config || {});
+  } catch (error) {
+    if (!silent) {
+      window.alert("Nie udało się pobrać konfiguracji backupu.");
+    }
+  }
+}
+
+async function refreshBackupRuns(options = {}) {
+  const silent = Boolean(options.silent);
+  if (!backendSync.available) {
+    return;
+  }
+  try {
+    const payload = await apiRequest("/tools/backup/runs?limit=60", { timeoutMs: 9000 });
+    const runs = Array.isArray(payload.runs) ? payload.runs : [];
+    renderBackupRunsRows(runs);
+  } catch (error) {
+    if (!silent) {
+      window.alert("Nie udało się pobrać historii backupów.");
+    }
+  }
+}
+
+async function refreshMonitoringStatus(options = {}) {
+  const silent = Boolean(options.silent);
+  if (!backendSync.available) {
+    return;
+  }
+  try {
+    const payload = await apiRequest("/tools/monitoring/status", { timeoutMs: 8000 });
+    renderMonitoringStatus(payload || {});
+  } catch (error) {
+    if (!silent) {
+      window.alert("Nie udało się pobrać statusu monitoringu.");
+    }
+  }
+}
+
+function renderBackupRunsRows(items) {
+  const rows = (items || []).map((item) => [
+    escapeHtml(formatDateTime(item.createdAt) || item.createdAt || "-"),
+    escapeHtml(item.trigger || "-"),
+    escapeHtml(item.status || "-"),
+    escapeHtml(item.verified ? "tak" : "nie"),
+    escapeHtml(item.stateFile ? shortPath(item.stateFile) : "-"),
+    escapeHtml(item.dbFile ? shortPath(item.dbFile) : "-"),
+    escapeHtml(item.message || "-")
+  ]);
+  renderTable(dom.backupRunsList, ["Czas", "Tryb", "Status", "Verify", "Plik JSON", "Plik DB", "Komunikat"], rows);
+}
+
+function renderMonitoringStatus(payload) {
+  if (!payload || typeof payload !== "object") {
+    renderTable(dom.monitoringTable, ["Miara", "Wartość"], []);
+    return;
+  }
+  const counts = payload.counts || {};
+  const quotes = payload.quotes || {};
+  const realtime = payload.realtime || {};
+  const backup = payload.backup || {};
+  const backupLast = backup.lastRun || {};
+  const backupCfg = backup.config || {};
+  const rows = [
+    ["Serwer UTC", escapeHtml(formatDateTime(payload.serverTime) || payload.serverTime || "-")],
+    ["Portfele", String(toNum(counts.portfolios))],
+    ["Konta", String(toNum(counts.accounts))],
+    ["Walory", String(toNum(counts.assets))],
+    ["Operacje", String(toNum(counts.operations))],
+    ["Alerty", String(toNum(counts.alerts))],
+    ["Zobowiązania", String(toNum(counts.liabilities))],
+    ["Notowania total", String(toNum(quotes.total))],
+    ["Notowania świeże", String(toNum(quotes.fresh))],
+    ["Notowania nieświeże", String(toNum(quotes.stale))],
+    ["Max wiek notowań (s)", String(toNum(quotes.maxAgeSeconds))],
+    ["Realtime cron", realtime.cronEnabled ? "aktywny" : "wyłączony"],
+    ["Realtime worker", realtime.running ? "on" : "off"],
+    ["Backup cron", backupCfg.enabled ? "aktywny" : "wyłączony"],
+    ["Backup interwał (min)", String(toNum(backupCfg.intervalMinutes))],
+    ["Backup ostatni status", escapeHtml(backupLast.status || "-")],
+    ["Backup ostatni czas", escapeHtml(formatDateTime(backupLast.createdAt) || backupLast.createdAt || "-")]
+  ];
+  renderTable(
+    dom.monitoringTable,
+    ["Miara", "Wartość"],
+    rows.map((row) => [row[0], row[1]])
+  );
+  if (dom.monitoringInfo) {
+    dom.monitoringInfo.textContent = `Monitoring: quotes fresh ${toNum(quotes.fresh)} / ${
+      toNum(quotes.total)
+    }, backup ${backupLast.status || "-"}`;
+  }
+}
+
+function shortPath(fullPath) {
+  const parts = String(fullPath || "").split(/[\\/]/).filter(Boolean);
+  if (!parts.length) {
+    return "";
+  }
+  return parts.length <= 2 ? parts.join("/") : `${parts[parts.length - 2]}/${parts[parts.length - 1]}`;
 }
 
 function renderNotificationHistoryRows(items) {

@@ -101,6 +101,13 @@ curl -X POST "http://localhost:8080/api/tools/alerts/webhook?token=YOUR_SECRET"
 
 ## Backup i monitoring
 
+Panel UI w zakładce `Narzędzia` umożliwia:
+- zapis konfiguracji backupu (interwał, retencja, verify),
+- ręczne uruchomienie backupu,
+- ręczny restore-check,
+- podgląd historii backupów,
+- podgląd statusu monitoringu (świeżość notowań, status realtime/backup).
+
 Konfiguracja backupu (np. co 12h, retencja, verify-after-backup):
 
 ```bash

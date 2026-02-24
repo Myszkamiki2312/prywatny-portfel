@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.6.5 - 2026-02-24
+
+### Added
+- Panel UI dla backupu i monitoringu w zakładce `Narzędzia`:
+  - formularz konfiguracji backupu,
+  - akcje `Backup teraz` i `Sprawdź restore`,
+  - tabela historii backupów,
+  - status monitoringu systemu.
+
+### Changed
+- Frontend automatycznie pobiera i odświeża:
+  - `/api/tools/backup/config`,
+  - `/api/tools/backup/runs`,
+  - `/api/tools/monitoring/status`.
+- Dokumentacja UI backup/monitoringu rozszerzona w `/Users/bartlomiejprzybycien/Documents/New project/README.md`.
+
+### Stability
+- Zweryfikowane lokalnie:
+  - `python3 -m unittest discover -s /Users/bartlomiejprzybycien/Documents/New project/tests -p "test_*.py" -v`
+  - `node --test /Users/bartlomiejprzybycien/Documents/New project/frontend_tests/*.test.js`
+
 ## v0.6.4 - 2026-02-24
 
 ### Added

@@ -675,6 +675,49 @@
             </div>
             <div id="notificationInfo" class="hint"></div>
             <div id="notificationHistoryList" class="table-wrap"></div>
+            <hr />
+            <h3>Backup i restore-check</h3>
+            <form id="backupConfigForm" class="form-grid">
+              <label class="control switch">
+                <span>Backup aktywny</span>
+                <input name="enabled" type="checkbox" />
+              </label>
+              <label class="control">
+                <span>Interwał (min)</span>
+                <input name="intervalMinutes" type="number" min="1" max="43200" value="720" />
+              </label>
+              <label class="control">
+                <span>Retencja (ile backupów)</span>
+                <input name="keepLast" type="number" min="1" max="2000" value="30" />
+              </label>
+              <label class="control switch">
+                <span>Verify po backupie</span>
+                <input name="verifyAfterBackup" type="checkbox" checked />
+              </label>
+              <label class="control switch">
+                <span>Zapisz JSON stanu</span>
+                <input name="includeStateJson" type="checkbox" checked />
+              </label>
+              <label class="control switch">
+                <span>Zapisz kopię SQLite</span>
+                <input name="includeDbCopy" type="checkbox" checked />
+              </label>
+              <button type="submit" class="btn">Zapisz backup config</button>
+            </form>
+            <div class="actions-inline">
+              <button id="runBackupNowBtn" class="btn secondary">Backup teraz</button>
+              <button id="verifyBackupBtn" class="btn secondary">Sprawdź restore</button>
+              <button id="refreshBackupRunsBtn" class="btn secondary">Historia backupów</button>
+            </div>
+            <div id="backupInfo" class="hint"></div>
+            <div id="backupRunsList" class="table-wrap"></div>
+            <hr />
+            <div class="panel-head">
+              <h3>Monitoring</h3>
+              <button id="refreshMonitoringBtn" class="btn secondary">Odśwież monitoring</button>
+            </div>
+            <div id="monitoringInfo" class="hint"></div>
+            <div id="monitoringTable" class="table-wrap"></div>
           </article>
         </div>
 
