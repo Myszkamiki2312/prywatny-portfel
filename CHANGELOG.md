@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.6.2 - 2026-02-24
+
+### Added
+- Nowe importery brokerów:
+  - `Interactive Brokers (IBKR)`
+  - `BOSSA`
+- Testy importerów:
+  - `/Users/bartlomiejprzybycien/Documents/New project/tests/test_importers_ibkr_bossa.py`
+
+### Changed
+- UI importu brokerów pobiera teraz listę brokerów z backendu (`/api/import/brokers`) i automatycznie aktualizuje `select`.
+- Statyczna lista fallback w UI rozszerzona o `DEGIRO`, `IBKR`, `BOSSA`.
+- Dokumentacja importów brokerów rozszerzona w `/Users/bartlomiejprzybycien/Documents/New project/README.md`.
+
+### Stability
+- Zweryfikowane lokalnie:
+  - `python3 -m unittest discover -s /Users/bartlomiejprzybycien/Documents/New project/tests -p "test_*.py" -v`
+  - `node --test /Users/bartlomiejprzybycien/Documents/New project/frontend_tests/*.test.js`
+
 ## v0.6.1 - 2026-02-24
 
 ### Added

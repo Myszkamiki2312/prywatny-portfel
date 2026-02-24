@@ -588,6 +588,7 @@ async function hydrateFromBackend() {
     }
     backendSync.available = true;
     await hydrateReportCatalog();
+    await hydrateBrokerCatalog();
     await hydrateRealtimeAndNotifications();
     await pullQuotesFromBackend();
   } catch (error) {
@@ -637,6 +638,42 @@ async function hydrateReportCatalog() {
     fillSelect(dom.reportSelect, options);
   } catch (error) {
     // keep built-in report list
+  }
+}
+
+async function hydrateBrokerCatalog() {
+  if (!backendSync.available || !dom.brokerSelect) {
+    return;
+  }
+  try {
+    const payload = await apiRequest("/import/brokers", { timeoutMs: 4000 });
+    const brokers = Array.isArray(payload.brokers) ? payload.brokers : [];
+    if (!brokers.length) {
+      return;
+    }
+    const selected = dom.brokerSelect.value || "generic";
+    const options = brokers
+      .map((item) => {
+        if (!item || typeof item !== "object") {
+          return null;
+        }
+        const id = String(item.id || "").trim();
+        const name = String(item.name || id).trim();
+        if (!id) {
+          return null;
+        }
+        return { value: id, label: name };
+      })
+      .filter(Boolean);
+    if (!options.length) {
+      return;
+    }
+    fillSelect(dom.brokerSelect, options);
+    if (options.some((option) => option.value === selected)) {
+      dom.brokerSelect.value = selected;
+    }
+  } catch (error) {
+    // keep static broker list when backend is unavailable
   }
 }
 
