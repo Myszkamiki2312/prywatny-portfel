@@ -206,6 +206,19 @@ class Database:
             underlying_price REAL NOT NULL,
             created_at TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS backup_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trigger TEXT NOT NULL,
+            status TEXT NOT NULL,
+            state_file TEXT NOT NULL,
+            db_file TEXT NOT NULL,
+            state_size INTEGER NOT NULL,
+            db_size INTEGER NOT NULL,
+            verified INTEGER NOT NULL,
+            message TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
         """
         with self._lock:
             self._conn.executescript(schema)
@@ -282,6 +295,40 @@ class Database:
             "webhookSecret": str(config.get("webhookSecret") or ""),
         }
         self.set_meta_json("realtimeConfig", payload)
+        return payload
+
+    def get_backup_config(self) -> Dict[str, Any]:
+        default = {
+            "enabled": False,
+            "intervalMinutes": 12 * 60,
+            "keepLast": 30,
+            "verifyAfterBackup": True,
+            "includeStateJson": True,
+            "includeDbCopy": True,
+        }
+        config = self.get_meta_json("backupConfig", default)
+        config["enabled"] = bool(config.get("enabled"))
+        config["intervalMinutes"] = max(1, min(30 * 24 * 60, _to_int(config.get("intervalMinutes"), default["intervalMinutes"])))
+        config["keepLast"] = max(1, min(2000, _to_int(config.get("keepLast"), default["keepLast"])))
+        config["verifyAfterBackup"] = bool(config.get("verifyAfterBackup", True))
+        config["includeStateJson"] = bool(config.get("includeStateJson", True))
+        config["includeDbCopy"] = bool(config.get("includeDbCopy", True))
+        return config
+
+    def set_backup_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        current = self.get_backup_config()
+        payload = {
+            "enabled": bool(config.get("enabled", current["enabled"])),
+            "intervalMinutes": max(
+                1,
+                min(30 * 24 * 60, _to_int(config.get("intervalMinutes"), current["intervalMinutes"])),
+            ),
+            "keepLast": max(1, min(2000, _to_int(config.get("keepLast"), current["keepLast"]))),
+            "verifyAfterBackup": bool(config.get("verifyAfterBackup", current["verifyAfterBackup"])),
+            "includeStateJson": bool(config.get("includeStateJson", current["includeStateJson"])),
+            "includeDbCopy": bool(config.get("includeDbCopy", current["includeDbCopy"])),
+        }
+        self.set_meta_json("backupConfig", payload)
         return payload
 
     def get_notification_config(self) -> Dict[str, Any]:
@@ -1059,6 +1106,116 @@ class Database:
             cursor = self._conn.execute("DELETE FROM option_positions WHERE id = ?", (position_id,))
             self._conn.commit()
         return cursor.rowcount > 0
+
+    def backup_to_file(self, target_path: Path) -> None:
+        destination = Path(target_path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with self._lock:
+            dest_conn = sqlite3.connect(str(destination))
+            try:
+                self._conn.backup(dest_conn)
+                dest_conn.commit()
+            finally:
+                dest_conn.close()
+
+    def log_backup_run(
+        self,
+        *,
+        trigger: str,
+        status: str,
+        state_file: str,
+        db_file: str,
+        state_size: int,
+        db_size: int,
+        verified: bool,
+        message: str,
+        created_at: str,
+    ) -> Dict[str, Any]:
+        with self._lock:
+            cursor = self._conn.execute(
+                """
+                INSERT INTO backup_runs
+                (trigger, status, state_file, db_file, state_size, db_size, verified, message, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(trigger or "manual"),
+                    str(status or "success"),
+                    str(state_file or ""),
+                    str(db_file or ""),
+                    max(0, _to_int(state_size, 0)),
+                    max(0, _to_int(db_size, 0)),
+                    1 if verified else 0,
+                    str(message or ""),
+                    str(created_at or ""),
+                ),
+            )
+            self._conn.commit()
+            row_id = cursor.lastrowid
+            row = self._conn.execute("SELECT * FROM backup_runs WHERE id = ?", (row_id,)).fetchone()
+        if row is None:
+            return {}
+        return {
+            "id": row["id"],
+            "trigger": row["trigger"],
+            "status": row["status"],
+            "stateFile": row["state_file"],
+            "dbFile": row["db_file"],
+            "stateSize": row["state_size"],
+            "dbSize": row["db_size"],
+            "verified": bool(row["verified"]),
+            "message": row["message"],
+            "createdAt": row["created_at"],
+        }
+
+    def list_backup_runs(self, limit: int = 50) -> List[Dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM backup_runs ORDER BY id DESC LIMIT ?",
+                (max(1, min(limit, 2000)),),
+            ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "trigger": row["trigger"],
+                "status": row["status"],
+                "stateFile": row["state_file"],
+                "dbFile": row["db_file"],
+                "stateSize": row["state_size"],
+                "dbSize": row["db_size"],
+                "verified": bool(row["verified"]),
+                "message": row["message"],
+                "createdAt": row["created_at"],
+            }
+            for row in rows
+        ]
+
+    def get_last_backup_run(self, *, status: str = "") -> Dict[str, Any]:
+        filter_status = str(status or "").strip().lower()
+        with self._lock:
+            if filter_status:
+                row = self._conn.execute(
+                    "SELECT * FROM backup_runs WHERE lower(status) = ? ORDER BY id DESC LIMIT 1",
+                    (filter_status,),
+                ).fetchone()
+            else:
+                row = self._conn.execute(
+                    "SELECT * FROM backup_runs ORDER BY id DESC LIMIT 1",
+                ).fetchone()
+        if row is None:
+            return {}
+        return {
+            "id": row["id"],
+            "trigger": row["trigger"],
+            "status": row["status"],
+            "stateFile": row["state_file"],
+            "dbFile": row["db_file"],
+            "stateSize": row["state_size"],
+            "dbSize": row["db_size"],
+            "verified": bool(row["verified"]),
+            "message": row["message"],
+            "createdAt": row["created_at"],
+        }
 
 
 def _json_loads_list(value: Any) -> List[Any]:

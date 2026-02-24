@@ -55,6 +55,12 @@ node --test frontend_tests/*.test.js
   - `/api/tools/public-portfolios`
   - `/api/tools/public-portfolios/clone`
 - realtime API: `/api/tools/realtime/*` + webhook `/api/tools/alerts/webhook?token=...`,
+- backup i monitoring API:
+  - `/api/tools/backup/config`
+  - `/api/tools/backup/run`
+  - `/api/tools/backup/verify`
+  - `/api/tools/backup/runs`
+  - `/api/tools/monitoring/status`
 - powiadomienia API: `/api/tools/notifications/config`, `/api/tools/notifications/test`, `/api/tools/notifications/history`,
 - notowania rynkowe z Yahoo (fallback Stooq), synchronizacja cen walorów oraz dzienne serie benchmarków dla raportu porównawczego,
 - warstwa jakości danych notowań: retry/backoff, cache TTL w pamięci procesu, fallback do cache DB przy awarii feedu oraz metadane świeżości (`stale`, `ageSeconds`, `source`) w API notowań,
@@ -91,6 +97,30 @@ Przykład webhook:
 
 ```bash
 curl -X POST "http://localhost:8080/api/tools/alerts/webhook?token=YOUR_SECRET"
+```
+
+## Backup i monitoring
+
+Konfiguracja backupu (np. co 12h, retencja, verify-after-backup):
+
+```bash
+curl -X PUT "http://localhost:8080/api/tools/backup/config" \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": true, "intervalMinutes": 720, "keepLast": 30, "verifyAfterBackup": true, "includeStateJson": true, "includeDbCopy": true}'
+```
+
+Ręczny backup:
+
+```bash
+curl -X POST "http://localhost:8080/api/tools/backup/run" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+Status monitoringu:
+
+```bash
+curl "http://localhost:8080/api/tools/monitoring/status"
 ```
 
 ## Uwagi

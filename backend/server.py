@@ -16,6 +16,7 @@ from typing import Any, Dict, List
 import time
 from urllib.parse import parse_qs, urlparse
 
+from .backup import BackupService
 from .database import Database
 from .expert_tools import ExpertToolsService
 from .importers import BrokerImporter
@@ -47,6 +48,7 @@ class AppContext:
     parity_tools: ParityToolsService
     notifications: NotificationService
     realtime: RealtimeRunner
+    backup_service: BackupService
     project_root: Path
 
 
@@ -124,6 +126,29 @@ class AppHandler(SimpleHTTPRequestHandler):
                     "accounts": len(state["accounts"]),
                     "assets": len(state["assets"]),
                     "operations": len(state["operations"]),
+                },
+            }
+
+        if method == "GET" and path == "/api/tools/monitoring/status":
+            state = self.context.database.get_state()
+            quotes = self.context.database.get_quotes()
+            quote_stats = _quote_freshness_stats(quotes)
+            return {
+                "status": "ok",
+                "serverTime": now_iso(),
+                "counts": {
+                    "portfolios": len(state["portfolios"]),
+                    "accounts": len(state["accounts"]),
+                    "assets": len(state["assets"]),
+                    "operations": len(state["operations"]),
+                    "alerts": len(state["alerts"]),
+                    "liabilities": len(state["liabilities"]),
+                },
+                "quotes": quote_stats,
+                "realtime": self.context.realtime.status(),
+                "backup": {
+                    "config": self.context.backup_service.get_config(),
+                    "lastRun": self.context.backup_service.last_run(),
                 },
             }
 
@@ -387,6 +412,28 @@ class AppHandler(SimpleHTTPRequestHandler):
             self.context.realtime.stop()
             return self.context.realtime.status()
 
+        if method == "GET" and path == "/api/tools/backup/config":
+            return {"config": self.context.backup_service.get_config()}
+
+        if method == "PUT" and path == "/api/tools/backup/config":
+            saved = self.context.backup_service.set_config(payload)
+            return {"config": saved}
+
+        if method == "POST" and path == "/api/tools/backup/run":
+            verify_after = payload.get("verifyAfter")
+            verify_flag = bool(verify_after) if verify_after is not None else None
+            result = self.context.backup_service.run_backup(trigger="manual", verify_after=verify_flag)
+            return {"backup": result}
+
+        if method == "POST" and path == "/api/tools/backup/verify":
+            state_file = str(payload.get("stateFile") or "").strip()
+            result = self.context.backup_service.verify_backup(state_file=state_file)
+            return {"verify": result}
+
+        if method == "GET" and path == "/api/tools/backup/runs":
+            limit = _to_int(query.get("limit", ["50"])[0], 50)
+            return {"runs": self.context.backup_service.list_runs(limit=limit)}
+
         if method == "GET" and path == "/api/tools/notifications/config":
             return {"config": self.context.notifications.get_config()}
 
@@ -541,6 +588,27 @@ def _age_seconds_from_iso(value: str) -> int:
     return max(0, int(time.time() - parsed.timestamp()))
 
 
+def _quote_freshness_stats(quotes: List[Dict[str, Any]]) -> Dict[str, Any]:
+    total = len(quotes)
+    fresh = 0
+    stale = 0
+    max_age = 0
+    for row in quotes:
+        fetched_at = str(row.get("fetchedAt") or row.get("fetched_at") or "")
+        age_seconds = _age_seconds_from_iso(fetched_at)
+        max_age = max(max_age, age_seconds)
+        if age_seconds <= 15 * 60:
+            fresh += 1
+        else:
+            stale += 1
+    return {
+        "total": total,
+        "fresh": fresh,
+        "stale": stale,
+        "maxAgeSeconds": max_age,
+    }
+
+
 def _build_scanner_payload(database: Database) -> List[Dict[str, Any]]:
     state = database.get_state()
     quotes = database.get_quotes([asset["ticker"] for asset in state["assets"]])
@@ -582,6 +650,7 @@ def main() -> None:
     args = parse_args()
     database = Database(Path(args.db))
     quote_service = QuoteService()
+    backup_service = BackupService(database=database, project_root=PROJECT_ROOT)
     expert_tools = ExpertToolsService(database)
     parity_tools = ParityToolsService(database, quote_service)
     notifications = NotificationService(database)
@@ -590,6 +659,7 @@ def main() -> None:
         expert_tools=expert_tools,
         notifications=notifications,
         quote_service=quote_service,
+        backup_service=backup_service,
     )
     realtime.start()
     context = AppContext(
@@ -604,6 +674,7 @@ def main() -> None:
         parity_tools=parity_tools,
         notifications=notifications,
         realtime=realtime,
+        backup_service=backup_service,
         project_root=PROJECT_ROOT,
     )
     AppHandler.context = context

@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.6.4 - 2026-02-24
+
+### Added
+- Moduł backupu i restore-check:
+  - `/Users/bartlomiejprzybycien/Documents/New project/backend/backup.py`
+- Endpointy API:
+  - `GET/PUT /api/tools/backup/config`
+  - `POST /api/tools/backup/run`
+  - `POST /api/tools/backup/verify`
+  - `GET /api/tools/backup/runs`
+  - `GET /api/tools/monitoring/status`
+- Nowe testy:
+  - `/Users/bartlomiejprzybycien/Documents/New project/tests/test_backup_monitoring.py`
+
+### Changed
+- `RealtimeRunner` wykonuje teraz backup automatyczny w tle, zgodnie z konfiguracją interwału.
+- `Database` ma konfigurację backupu i logi uruchomień backup/verify (`backup_runs`) oraz snapshot SQLite (`backup_to_file`).
+- Dokumentacja backupu/monitoringu rozszerzona w `/Users/bartlomiejprzybycien/Documents/New project/README.md`.
+
+### Stability
+- Zweryfikowane lokalnie:
+  - `python3 -m unittest discover -s /Users/bartlomiejprzybycien/Documents/New project/tests -p "test_*.py" -v`
+  - `node --test /Users/bartlomiejprzybycien/Documents/New project/frontend_tests/*.test.js`
+
 ## v0.6.3 - 2026-02-24
 
 ### Added

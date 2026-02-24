@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import threading
 from typing import Any, Dict
 
+from .backup import BackupService
 from .database import Database
 from .expert_tools import ExpertToolsService
 from .notifications import NotificationService
@@ -24,11 +25,13 @@ class RealtimeRunner:
         expert_tools: ExpertToolsService,
         notifications: NotificationService,
         quote_service: QuoteService,
+        backup_service: BackupService | None = None,
     ):
         self.database = database
         self.expert_tools = expert_tools
         self.notifications = notifications
         self.quote_service = quote_service
+        self.backup_service = backup_service
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._lock = threading.RLock()
@@ -114,6 +117,11 @@ class RealtimeRunner:
 
     def _loop(self) -> None:
         while not self._stop_event.is_set():
+            if self.backup_service is not None:
+                try:
+                    self.backup_service.run_scheduled_if_due()
+                except Exception:  # noqa: BLE001
+                    pass
             config = self.database.get_realtime_config()
             if config.get("enabled"):
                 self.run_once(source="cron")
