@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import threading
 from typing import Any, Dict
 
@@ -11,10 +10,7 @@ from .database import Database
 from .expert_tools import ExpertToolsService
 from .notifications import NotificationService
 from .quotes import QuoteService
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from .utils import now_iso as _now_iso
 
 
 class RealtimeRunner:

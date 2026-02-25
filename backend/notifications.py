@@ -12,20 +12,8 @@ import urllib.parse
 import urllib.request
 
 from .database import Database
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _to_num(value: Any) -> float:
-    if isinstance(value, (int, float)):
-        return float(value)
-    text = str(value or "").strip().replace(" ", "").replace(",", ".")
-    try:
-        return float(text)
-    except ValueError:
-        return 0.0
+from .utils import now_iso as _now_iso
+from .utils import to_num as _to_num
 
 
 def _parse_iso(value: str) -> Optional[datetime]:

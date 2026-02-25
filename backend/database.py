@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .state_model import default_state, normalize_state
+from .utils import to_int as _to_int
 
 
 class Database:
@@ -1230,9 +1231,3 @@ def _json_loads_list(value: Any) -> List[Any]:
     except json.JSONDecodeError:
         return []
 
-
-def _to_int(value: Any, default: int) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default

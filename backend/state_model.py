@@ -6,14 +6,10 @@ from datetime import datetime, timezone
 import random
 import string
 from typing import Any, Dict, Iterable, List
+from .utils import now_iso, parse_date, to_num
 
 
 PLAN_ORDER = ["Brak", "Basic", "Standard", "Pro", "Expert"]
-
-
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
 
 def today_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -22,19 +18,6 @@ def today_iso() -> str:
 def make_id(prefix: str) -> str:
     chars = "".join(random.choice(string.ascii_lowercase + string.digits) for _ in range(6))
     return f"{prefix}_{int(datetime.now(timezone.utc).timestamp() * 1000)}_{chars}"
-
-
-def to_num(value: Any) -> float:
-    if isinstance(value, (int, float)):
-        return float(value)
-    if value is None:
-        return 0.0
-    text = str(value).strip().replace(" ", "").replace(",", ".")
-    try:
-        return float(text)
-    except ValueError:
-        return 0.0
-
 
 def to_tags(value: Any) -> List[str]:
     if value is None:
@@ -56,22 +39,7 @@ def normalize_date(value: Any) -> str:
 
 
 def _parse_date(text: str) -> str:
-    candidates = [
-        "%Y-%m-%d",
-        "%Y/%m/%d",
-        "%d.%m.%Y",
-        "%d-%m-%Y",
-        "%d/%m/%Y",
-        "%Y-%m-%d %H:%M:%S",
-        "%d.%m.%Y %H:%M:%S",
-        "%Y/%m/%d %H:%M:%S",
-    ]
-    for fmt in candidates:
-        try:
-            return datetime.strptime(text, fmt).strftime("%Y-%m-%d")
-        except ValueError:
-            continue
-    return today_iso()
+    return parse_date(text).isoformat()
 
 
 def text_or_fallback(value: Any, fallback: str) -> str:

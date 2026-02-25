@@ -6,35 +6,10 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Tuple
-import unicodedata
 
 from .database import Database
 from .reports import AnalyticsEngine
-
-
-def _norm(value: Any) -> str:
-    raw = str(value or "").strip().lower()
-    cleaned = "".join(
-        char for char in unicodedata.normalize("NFKD", raw) if not unicodedata.combining(char)
-    )
-    return " ".join(cleaned.split())
-
-
-def _to_num(value: Any) -> float:
-    if isinstance(value, (int, float)):
-        return float(value)
-    text = str(value or "").strip().replace(" ", "").replace(",", ".")
-    try:
-        return float(text)
-    except ValueError:
-        return 0.0
-
-
-def _to_int(value: Any, default: int) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
+from .utils import norm, now_iso, parse_date, to_int, to_num
 
 
 def _today() -> date:
@@ -45,32 +20,10 @@ def _today_iso() -> str:
     return _today().isoformat()
 
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _parse_date(value: Any) -> date:
-    text = str(value or "").strip()
-    if not text:
-        return _today()
-    if len(text) >= 10 and text[4:5] == "-" and text[7:8] == "-":
-        try:
-            return date.fromisoformat(text[:10])
-        except ValueError:
-            return _today()
-    formats = ["%d.%m.%Y", "%d-%m-%Y", "%Y/%m/%d", "%d/%m/%Y"]
-    for fmt in formats:
-        try:
-            return datetime.strptime(text, fmt).date()
-        except ValueError:
-            continue
-    return _today()
-
-
 def _next_occurrence(base: date, frequency: str, *, today: date | None = None) -> date:
     cursor = base
     now = today or _today()
-    frequency = _norm(frequency)
+    frequency = norm(frequency, strip_accents=True)
     while cursor < now:
         if "week" in frequency or "tydz" in frequency:
             cursor += timedelta(days=7)
@@ -92,10 +45,10 @@ class ScannerFilters:
     @classmethod
     def from_payload(cls, payload: Dict[str, Any]) -> "ScannerFilters":
         return cls(
-            min_score=_to_num(payload.get("minScore")),
-            max_risk=max(1.0, min(10.0, _to_num(payload.get("maxRisk")) or 10.0)),
+            min_score=to_num(payload.get("minScore")),
+            max_risk=max(1.0, min(10.0, to_num(payload.get("maxRisk")) or 10.0)),
             sector=str(payload.get("sector") or "").strip(),
-            min_price=max(0.0, _to_num(payload.get("minPrice"))),
+            min_price=max(0.0, to_num(payload.get("minPrice"))),
             portfolio_id=str(payload.get("portfolioId") or "").strip(),
         )
 
@@ -118,14 +71,14 @@ class ExpertToolsService:
             if not ticker:
                 continue
             quote = quote_map.get(ticker)
-            price = _to_num(quote["price"] if quote else asset.get("currentPrice"))
-            risk = _to_num(asset.get("risk") or 5)
+            price = to_num(quote["price"] if quote else asset.get("currentPrice"))
+            risk = to_num(asset.get("risk") or 5)
             sector = str(asset.get("sector") or "")
             tags = [str(tag) for tag in asset.get("tags") or []]
             holding = holdings_map.get(asset.get("id", ""))
-            value = _to_num(holding.value if holding else 0.0)
-            share = _to_num(holding.share if holding else 0.0)
-            unrealized_pct = _to_num(holding.unrealized_pct if holding else 0.0)
+            value = to_num(holding.value if holding else 0.0)
+            share = to_num(holding.share if holding else 0.0)
+            unrealized_pct = to_num(holding.unrealized_pct if holding else 0.0)
 
             score = self._scanner_score(
                 price=price,
@@ -139,7 +92,9 @@ class ExpertToolsService:
                 continue
             if risk > filters.max_risk:
                 continue
-            if filters.sector and _norm(filters.sector) not in _norm(sector):
+            if filters.sector and norm(filters.sector, strip_accents=True) not in norm(
+                sector, strip_accents=True
+            ):
                 continue
             if price < filters.min_price:
                 continue
@@ -172,7 +127,7 @@ class ExpertToolsService:
                 "portfolioId": filters.portfolio_id,
             },
             "items": items,
-            "generatedAt": _now_iso(),
+            "generatedAt": now_iso(),
         }
 
     def signals(self, *, portfolio_id: str = "") -> Dict[str, Any]:
@@ -195,11 +150,11 @@ class ExpertToolsService:
                 }
             )
         rows.sort(key=lambda row: (row["signal"], -row["confidence"]))
-        return {"portfolioId": portfolio_id, "signals": rows, "generatedAt": _now_iso()}
+        return {"portfolioId": portfolio_id, "signals": rows, "generatedAt": now_iso()}
 
     def calendar(self, *, days: int = 60, portfolio_id: str = "") -> Dict[str, Any]:
         state = self.database.get_state()
-        days = max(1, min(365, _to_int(days, 60)))
+        days = max(1, min(365, to_int(days, 60)))
         today = _today()
         end = today + timedelta(days=days)
 
@@ -210,7 +165,7 @@ class ExpertToolsService:
             due_raw = str(liability.get("dueDate") or "")
             if not due_raw:
                 continue
-            due = _parse_date(due_raw)
+            due = parse_date(due_raw, default=today)
             if due < today or due > end:
                 continue
             days_left = (due - today).days
@@ -221,7 +176,7 @@ class ExpertToolsService:
                     "title": f"Termin: {liability.get('name', 'Zobowiązanie')}",
                     "priority": "Wysoki" if days_left <= 7 else "Średni",
                     "source": "liabilities",
-                    "details": f"Kwota {round(_to_num(liability.get('amount')), 2)} {liability.get('currency', '')}",
+                    "details": f"Kwota {round(to_num(liability.get('amount')), 2)} {liability.get('currency', '')}",
                 }
             )
 
@@ -229,7 +184,7 @@ class ExpertToolsService:
         for recurring in state.get("recurringOps", []):
             if portfolio_id and recurring.get("portfolioId") != portfolio_id:
                 continue
-            start = _parse_date(recurring.get("startDate"))
+            start = parse_date(recurring.get("startDate"), default=today)
             next_date = _next_occurrence(start, str(recurring.get("frequency") or "monthly"), today=today)
             if next_date < today or next_date > end:
                 continue
@@ -240,14 +195,14 @@ class ExpertToolsService:
                     "title": f"{recurring.get('name', 'Operacja')} ({recurring.get('type', '')})",
                     "priority": "Średni",
                     "source": "recurring",
-                    "details": f"Kwota {round(_to_num(recurring.get('amount')), 2)}",
+                    "details": f"Kwota {round(to_num(recurring.get('amount')), 2)}",
                 }
             )
 
         # Synthetic company calendar for held equities (quarterly placeholders)
         metrics = AnalyticsEngine(state, portfolio_id=portfolio_id).metrics
         for holding in metrics["holdings"]:
-            if _norm(holding.asset_type) not in {"akcja", "etf", "fundusz", "inny"}:
+            if norm(holding.asset_type, strip_accents=True) not in {"akcja", "etf", "fundusz", "inny"}:
                 continue
             for offset, label in [(15, "Raport okresowy"), (45, "Dywidenda (szacunek)")]:
                 event_date = today + timedelta(days=offset)
@@ -265,7 +220,7 @@ class ExpertToolsService:
                 )
 
         events.sort(key=lambda row: (row["date"], row["priority"]))
-        return {"portfolioId": portfolio_id, "days": days, "events": events, "generatedAt": _now_iso()}
+        return {"portfolioId": portfolio_id, "days": days, "events": events, "generatedAt": now_iso()}
 
     def recommendations(self, *, portfolio_id: str = "") -> Dict[str, Any]:
         state = self.database.get_state()
@@ -358,7 +313,7 @@ class ExpertToolsService:
                 }
             )
 
-        return {"portfolioId": portfolio_id, "recommendations": rows, "generatedAt": _now_iso()}
+        return {"portfolioId": portfolio_id, "recommendations": rows, "generatedAt": now_iso()}
 
     def run_alert_workflow(self, *, portfolio_id: str = "") -> Dict[str, Any]:
         state = self.database.get_state()
@@ -376,8 +331,8 @@ class ExpertToolsService:
                 continue
             ticker = str(asset.get("ticker", "")).upper()
             quote = quote_map.get(ticker, {})
-            price = _to_num(quote.get("price") if quote else asset.get("currentPrice"))
-            target = _to_num(alert.get("targetPrice"))
+            price = to_num(quote.get("price") if quote else asset.get("currentPrice"))
+            target = to_num(alert.get("targetPrice"))
             direction = str(alert.get("direction") or "gte").lower()
 
             hit = price >= target if direction == "gte" else price <= target
@@ -390,7 +345,7 @@ class ExpertToolsService:
                 "currentPrice": price,
                 "currency": str(quote.get("currency") or asset.get("currency") or state["meta"]["baseCurrency"]),
                 "status": "TRIGGERED" if hit else "WAITING",
-                "checkedAt": _now_iso(),
+                "checkedAt": now_iso(),
             }
             if hit:
                 alert["lastTriggerAt"] = row["checkedAt"]
@@ -425,7 +380,7 @@ class ExpertToolsService:
             "waiting": waiting,
             "actions": actions,
             "history": self.database.list_alert_events(limit=50),
-            "generatedAt": _now_iso(),
+            "generatedAt": now_iso(),
         }
 
     def alert_history(self, *, limit: int = 100) -> Dict[str, Any]:

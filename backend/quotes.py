@@ -9,14 +9,32 @@ import json
 import ssl
 import threading
 import time
-from typing import Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, TypedDict
 import urllib.error
 import urllib.parse
 import urllib.request
 
+from .utils import now_iso
 
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+
+class QuoteRow(TypedDict):
+    ticker: str
+    price: float
+    currency: str
+    provider: str
+    fetched_at: str
+
+
+class ApiQuoteRow(QuoteRow, total=False):
+    fetchedAt: str
+    stale: bool
+    ageSeconds: int
+    source: str
+
+
+class HistoryRow(TypedDict):
+    date: str
+    close: float
 
 
 class QuoteService:
@@ -40,13 +58,13 @@ class QuoteService:
         self._history_cache: Dict[str, Dict[str, object]] = {}
         self._lock = threading.RLock()
 
-    def refresh(self, tickers: Iterable[str]) -> List[Dict[str, object]]:
+    def refresh(self, tickers: Iterable[str]) -> List[ApiQuoteRow]:
         requested = _normalize_tickers(tickers)
         if not requested:
             return []
 
         now_ts = time.time()
-        found: Dict[str, Dict[str, object]] = {}
+        found: Dict[str, ApiQuoteRow] = {}
         missing: List[str] = []
 
         for ticker in requested:
@@ -56,7 +74,7 @@ class QuoteService:
             else:
                 missing.append(ticker)
 
-        fetched: Dict[str, Dict[str, object]] = {}
+        fetched: Dict[str, QuoteRow] = {}
         if missing:
             for row in self._fetch_yahoo(missing):
                 normalized = self._normalize_quote_row(row)
@@ -97,7 +115,7 @@ class QuoteService:
         # Keep stable order for response payload.
         return [found[ticker] for ticker in requested if ticker in found]
 
-    def fetch_daily_history(self, ticker: str, limit: int = 400) -> List[Dict[str, object]]:
+    def fetch_daily_history(self, ticker: str, limit: int = 400) -> List[HistoryRow]:
         symbol = str(ticker or "").strip()
         if not symbol:
             return []
@@ -119,7 +137,7 @@ class QuoteService:
             rows = rows[-safe_limit:]
         return rows
 
-    def _fetch_yahoo(self, tickers: List[str]) -> List[Dict[str, object]]:
+    def _fetch_yahoo(self, tickers: List[str]) -> List[QuoteRow]:
         symbols = ",".join(tickers)
         query = urllib.parse.urlencode({"symbols": symbols})
         url = f"https://query1.finance.yahoo.com/v7/finance/quote?{query}"
@@ -137,7 +155,7 @@ class QuoteService:
             return []
 
         rows = payload.get("quoteResponse", {}).get("result", [])
-        output: List[Dict[str, object]] = []
+        output: List[QuoteRow] = []
         for row in rows:
             symbol = str(row.get("symbol") or "").upper().strip()
             price = row.get("regularMarketPrice")
@@ -155,15 +173,15 @@ class QuoteService:
             )
         return output
 
-    def _fetch_stooq(self, tickers: List[str]) -> List[Dict[str, object]]:
-        output: List[Dict[str, object]] = []
+    def _fetch_stooq(self, tickers: List[str]) -> List[QuoteRow]:
+        output: List[QuoteRow] = []
         for ticker in tickers:
             row = self._fetch_single_stooq(ticker)
             if row:
                 output.append(row)
         return output
 
-    def _fetch_stooq_history(self, ticker: str) -> List[Dict[str, object]]:
+    def _fetch_stooq_history(self, ticker: str) -> List[HistoryRow]:
         for candidate in _stooq_history_candidates(ticker):
             url = "https://stooq.com/q/d/l/?" + urllib.parse.urlencode({"s": candidate, "i": "d"})
             request = urllib.request.Request(
@@ -179,7 +197,7 @@ class QuoteService:
                 return rows
         return []
 
-    def _fetch_single_stooq(self, ticker: str) -> Dict[str, object] | None:
+    def _fetch_single_stooq(self, ticker: str) -> QuoteRow | None:
         candidates = _stooq_candidates(ticker)
         for candidate in candidates:
             url = (
@@ -245,7 +263,7 @@ class QuoteService:
         with urllib.request.urlopen(request, timeout=self.timeout_seconds, context=context) as response:
             return response.read()
 
-    def _normalize_quote_row(self, row: Dict[str, object]) -> Dict[str, object] | None:
+    def _normalize_quote_row(self, row: Dict[str, Any]) -> QuoteRow | None:
         ticker = str(row.get("ticker") or "").upper().strip()
         price_raw = row.get("price")
         if not ticker:
@@ -268,12 +286,12 @@ class QuoteService:
 
     def _quote_output(
         self,
-        row: Dict[str, object],
+        row: Dict[str, Any],
         *,
         now_ts: float,
         source: str,
         stale: bool,
-    ) -> Dict[str, object]:
+    ) -> ApiQuoteRow:
         fetched_at = _normalize_iso(str(row.get("fetched_at") or row.get("fetchedAt") or ""))
         age_seconds = _age_seconds_from_iso(fetched_at, now_ts)
         return {
@@ -298,7 +316,7 @@ class QuoteService:
                 return None
             return dict(cached)
 
-    def _set_quote_cache(self, row: Dict[str, object]) -> None:
+    def _set_quote_cache(self, row: Dict[str, Any]) -> None:
         key = str(row.get("ticker") or "").upper().strip()
         if not key:
             return
@@ -320,7 +338,7 @@ class QuoteService:
                 "rows": [dict(item) for item in cached.get("rows", [])],
             }
 
-    def _set_history_cache(self, key: str, rows: List[Dict[str, object]]) -> None:
+    def _set_history_cache(self, key: str, rows: List[HistoryRow]) -> None:
         cache_key = str(key or "").upper().strip()
         if not cache_key:
             return
@@ -352,10 +370,10 @@ def _normalize_tickers(tickers: Iterable[str]) -> List[str]:
     return output
 
 
-def _parse_stooq_history_csv(text: str) -> List[Dict[str, object]]:
+def _parse_stooq_history_csv(text: str) -> List[HistoryRow]:
     stream = io.StringIO(text)
     reader = csv.DictReader(stream)
-    output: List[Dict[str, object]] = []
+    output: List[HistoryRow] = []
     for row in reader:
         date_text = str(row.get("Date") or "").strip()
         close_text = str(row.get("Close") or "").strip()

@@ -20,28 +20,10 @@ import urllib.request
 from .database import Database
 from .quotes import QuoteService
 from .reports import AnalyticsEngine
-from .state_model import make_id, now_iso, normalize_date, to_num
-
-
-def _norm(value: Any) -> str:
-    return " ".join(str(value or "").strip().lower().split())
-
-
-def _to_num(value: Any) -> float:
-    if isinstance(value, (int, float)):
-        return float(value)
-    text = str(value or "").strip().replace(" ", "").replace(",", ".")
-    try:
-        return float(text)
-    except ValueError:
-        return 0.0
-
-
-def _to_int(value: Any, default: int) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
+from .state_model import make_id, now_iso, normalize_date
+from .utils import norm as _norm
+from .utils import to_int as _to_int
+from .utils import to_num as _to_num
 
 
 def _today() -> date:

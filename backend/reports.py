@@ -8,7 +8,9 @@ from datetime import datetime, timezone
 import math
 from statistics import fmean
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
-import unicodedata
+from .utils import norm
+from .utils import now_iso as _now_iso
+from .utils import to_num as _to_num
 
 
 REPORT_FEATURES: List[str] = [
@@ -61,15 +63,8 @@ REPORT_FEATURES: List[str] = [
     "Limity IKE/IKZE/PPK",
 ]
 
-
 def _norm(text: str) -> str:
-    raw = str(text or "").strip().lower()
-    ascii_text = "".join(
-        char
-        for char in unicodedata.normalize("NFKD", raw)
-        if not unicodedata.combining(char)
-    )
-    return " ".join(ascii_text.split())
+    return norm(text, strip_accents=True)
 
 
 def _contains(text: str, *parts: str) -> bool:
@@ -77,22 +72,8 @@ def _contains(text: str, *parts: str) -> bool:
     return all(_norm(part) in source for part in parts)
 
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
 def _today_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-
-def _to_num(value: Any) -> float:
-    if isinstance(value, (int, float)):
-        return float(value)
-    text = str(value or "").strip().replace(" ", "").replace(",", ".")
-    try:
-        return float(text)
-    except ValueError:
-        return 0.0
 
 
 def _safe_div(a: float, b: float) -> float:

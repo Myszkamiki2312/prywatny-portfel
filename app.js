@@ -187,18 +187,38 @@ const editingState = {
   alertId: "",
   liabilityId: ""
 };
+const uiModules = {
+  dashboard: null,
+  operations: null,
+  tools: null
+};
 
 document.addEventListener("DOMContentLoaded", () => {
-  void init();
+  void init().catch((error) => {
+    console.error("Błąd inicjalizacji aplikacji.", error);
+    window.alert("Nie udało się uruchomić aplikacji. Sprawdź konsolę przeglądarki.");
+  });
 });
 
 async function init() {
+  await loadUiModules();
   cacheDom();
   seedStaticSelects();
   bindEvents();
   resetOperationForm();
   await hydrateFromBackend();
   renderAll();
+}
+
+async function loadUiModules() {
+  const [dashboardModule, operationsModule, toolsModule] = await Promise.all([
+    import("./frontend/dashboard.js"),
+    import("./frontend/operations.js"),
+    import("./frontend/tools.js")
+  ]);
+  uiModules.dashboard = dashboardModule;
+  uiModules.operations = operationsModule;
+  uiModules.tools = toolsModule;
 }
 
 function cacheDom() {
@@ -932,6 +952,39 @@ async function refreshMetricsFromBackend(portfolioId) {
   }
 }
 
+function toolsModuleDeps() {
+  return {
+    dom,
+    state,
+    getState: () => state,
+    setState: (next) => {
+      state = next;
+    },
+    backendSync,
+    formToObject,
+    toNum,
+    textOrFallback,
+    apiRequest,
+    localScanner,
+    localSignals,
+    localCalendar,
+    localRecommendations,
+    localAlertWorkflow,
+    localAlertHistory,
+    renderScannerRows,
+    renderSignalsRows,
+    renderCalendarRows,
+    renderRecommendationsRows,
+    renderAlerts,
+    renderAlertWorkflowRows,
+    updateBackendStatus,
+    formatMoney,
+    normalizeState,
+    saveState,
+    windowRef: window
+  };
+}
+
 async function refreshExpertTools(options = {}) {
   const force = Boolean(options.force);
   if (!force && !isViewActive("toolsView")) {
@@ -963,232 +1016,79 @@ async function refreshExpertTools(options = {}) {
 }
 
 function toolsPortfolioId() {
+  if (uiModules.tools && typeof uiModules.tools.toolsPortfolioId === "function") {
+    return uiModules.tools.toolsPortfolioId(toolsModuleDeps());
+  }
   return dom.toolsPortfolioSelect ? dom.toolsPortfolioSelect.value || "" : "";
 }
 
 function scannerFiltersFromForm() {
-  if (!dom.scannerForm) {
-    return {
-      minScore: 0,
-      maxRisk: 10,
-      sector: "",
-      minPrice: 0
-    };
+  if (uiModules.tools && typeof uiModules.tools.scannerFiltersFromForm === "function") {
+    return uiModules.tools.scannerFiltersFromForm(toolsModuleDeps());
   }
-  const data = formToObject(dom.scannerForm);
   return {
-    minScore: toNum(data.minScore),
-    maxRisk: Math.max(1, Math.min(10, toNum(data.maxRisk) || 10)),
-    sector: textOrFallback(data.sector, ""),
-    minPrice: Math.max(0, toNum(data.minPrice))
+    minScore: 0,
+    maxRisk: 10,
+    sector: "",
+    minPrice: 0
   };
 }
 
 async function runScanner(options = {}) {
-  const silent = Boolean(options.silent);
+  if (uiModules.tools && typeof uiModules.tools.runScanner === "function") {
+    await uiModules.tools.runScanner(toolsModuleDeps(), options);
+    return;
+  }
   const filters = scannerFiltersFromForm();
   filters.portfolioId = toolsPortfolioId();
-  try {
-    let items = [];
-    let mode = "local";
-    if (backendSync.available) {
-      const payload = await apiRequest("/tools/scanner", {
-        method: "POST",
-        body: filters,
-        timeoutMs: 12000
-      });
-      items = Array.isArray(payload.items) ? payload.items : [];
-      mode = "backend";
-    } else {
-      items = localScanner(filters);
-    }
-    renderScannerRows(items);
-    if (dom.scannerInfo) {
-      dom.scannerInfo.textContent = `Skaner ${mode}: ${items.length} wyników`;
-    }
-  } catch (error) {
-    backendSync.available = false;
-    updateBackendStatus();
-    const local = localScanner(filters);
-    renderScannerRows(local);
-    if (dom.scannerInfo) {
-      dom.scannerInfo.textContent = `Skaner fallback lokalny: ${local.length} wyników`;
-    }
-    if (!silent) {
-      window.alert("Backend skanera niedostępny, pokazuję wyniki lokalne.");
-    }
-  }
+  const items = localScanner(filters);
+  renderScannerRows(items);
 }
 
 async function refreshSignals(options = {}) {
-  const silent = Boolean(options.silent);
-  const portfolioId = toolsPortfolioId();
-  try {
-    let signals = [];
-    let mode = "local";
-    if (backendSync.available) {
-      const query = portfolioId ? `?portfolioId=${encodeURIComponent(portfolioId)}` : "";
-      const payload = await apiRequest(`/tools/signals${query}`, { timeoutMs: 10000 });
-      signals = Array.isArray(payload.signals) ? payload.signals : [];
-      mode = "backend";
-    } else {
-      signals = localSignals(portfolioId);
-    }
-    renderSignalsRows(signals);
-    if (dom.signalsInfo) {
-      dom.signalsInfo.textContent = `Sygnały ${mode}: ${signals.length} pozycji`;
-    }
-  } catch (error) {
-    backendSync.available = false;
-    updateBackendStatus();
-    const signals = localSignals(portfolioId);
-    renderSignalsRows(signals);
-    if (dom.signalsInfo) {
-      dom.signalsInfo.textContent = `Sygnały fallback lokalny: ${signals.length} pozycji`;
-    }
-    if (!silent) {
-      window.alert("Backend sygnałów niedostępny, używam lokalnych reguł.");
-    }
+  if (uiModules.tools && typeof uiModules.tools.refreshSignals === "function") {
+    await uiModules.tools.refreshSignals(toolsModuleDeps(), options);
+    return;
   }
+  renderSignalsRows(localSignals(toolsPortfolioId()));
 }
 
 async function refreshCalendar(options = {}) {
-  const silent = Boolean(options.silent);
-  const formData = dom.calendarForm ? formToObject(dom.calendarForm) : {};
-  const days = Math.max(1, Math.min(365, Math.round(toNum(formData.days) || 60)));
-  const portfolioId = toolsPortfolioId();
-  try {
-    let events = [];
-    let mode = "local";
-    if (backendSync.available) {
-      const query = `?portfolioId=${encodeURIComponent(portfolioId)}&days=${days}`;
-      const payload = await apiRequest(`/tools/calendar${query}`, { timeoutMs: 10000 });
-      events = Array.isArray(payload.events) ? payload.events : [];
-      mode = "backend";
-    } else {
-      events = localCalendar(days, portfolioId);
-    }
-    renderCalendarRows(events);
-    if (dom.calendarInfo) {
-      dom.calendarInfo.textContent = `Kalendarium ${mode}: ${events.length} wydarzeń w ${days} dni`;
-    }
-  } catch (error) {
-    backendSync.available = false;
-    updateBackendStatus();
-    const events = localCalendar(days, portfolioId);
-    renderCalendarRows(events);
-    if (dom.calendarInfo) {
-      dom.calendarInfo.textContent = `Kalendarium fallback lokalny: ${events.length} wydarzeń`;
-    }
-    if (!silent) {
-      window.alert("Backend kalendarium niedostępny, pokazuję lokalną wersję.");
-    }
+  if (uiModules.tools && typeof uiModules.tools.refreshCalendar === "function") {
+    await uiModules.tools.refreshCalendar(toolsModuleDeps(), options);
+    return;
   }
+  renderCalendarRows(localCalendar(60, toolsPortfolioId()));
 }
 
 async function refreshRecommendations(options = {}) {
-  const silent = Boolean(options.silent);
-  const portfolioId = toolsPortfolioId();
-  try {
-    let items = [];
-    let mode = "local";
-    if (backendSync.available) {
-      const query = portfolioId ? `?portfolioId=${encodeURIComponent(portfolioId)}` : "";
-      const payload = await apiRequest(`/tools/recommendations${query}`, { timeoutMs: 9000 });
-      items = Array.isArray(payload.recommendations) ? payload.recommendations : [];
-      mode = "backend";
-    } else {
-      items = localRecommendations(portfolioId);
-    }
-    renderRecommendationsRows(items);
-    if (dom.recommendationsInfo) {
-      dom.recommendationsInfo.textContent = `Rekomendacje ${mode}: ${items.length}`;
-    }
-  } catch (error) {
-    backendSync.available = false;
-    updateBackendStatus();
-    const items = localRecommendations(portfolioId);
-    renderRecommendationsRows(items);
-    if (dom.recommendationsInfo) {
-      dom.recommendationsInfo.textContent = `Rekomendacje fallback lokalny: ${items.length}`;
-    }
-    if (!silent) {
-      window.alert("Backend rekomendacji niedostępny, używam lokalnych reguł.");
-    }
+  if (uiModules.tools && typeof uiModules.tools.refreshRecommendations === "function") {
+    await uiModules.tools.refreshRecommendations(toolsModuleDeps(), options);
+    return;
   }
+  renderRecommendationsRows(localRecommendations(toolsPortfolioId()));
 }
 
 async function runAlertWorkflow(options = {}) {
-  const interactive = Boolean(options.interactive);
-  const portfolioId = toolsPortfolioId();
-  try {
-    let payload;
-    if (backendSync.available) {
-      payload = await apiRequest("/tools/alerts/run", {
-        method: "POST",
-        body: { portfolioId },
-        timeoutMs: 12000
-      });
-      const refreshed = await apiRequest("/state", { timeoutMs: 8000 });
-      if (refreshed && refreshed.state) {
-        state = normalizeState(refreshed.state);
-        saveState({ skipBackend: true });
-      }
-    } else {
-      payload = localAlertWorkflow();
-    }
-    renderAlerts();
-    renderAlertWorkflowRows(payload.history || []);
-    const summary = payload.summary || {};
-    if (dom.alertWorkflowInfo) {
-      dom.alertWorkflowInfo.textContent = `Workflow: ${summary.triggered || 0} trafionych / ${
-        summary.totalAlerts || 0
-      } alertów`;
-    }
-    return {
-      triggeredLabels: (payload.triggered || []).map(
-        (row) => `${row.ticker} (${formatMoney(toNum(row.currentPrice), row.currency || state.meta.baseCurrency)})`
-      )
-    };
-  } catch (error) {
-    backendSync.available = false;
-    updateBackendStatus();
-    const payload = localAlertWorkflow();
-    renderAlerts();
-    renderAlertWorkflowRows(payload.history || []);
-    if (dom.alertWorkflowInfo) {
-      dom.alertWorkflowInfo.textContent = `Workflow lokalny: ${payload.summary.triggered} trafionych`;
-    }
-    if (interactive) {
-      window.alert("Backend workflow alertów niedostępny, wykonano wersję lokalną.");
-    }
-    return {
-      triggeredLabels: (payload.triggered || []).map(
-        (row) => `${row.ticker} (${formatMoney(toNum(row.currentPrice), row.currency || state.meta.baseCurrency)})`
-      )
-    };
+  if (uiModules.tools && typeof uiModules.tools.runAlertWorkflow === "function") {
+    return uiModules.tools.runAlertWorkflow(toolsModuleDeps(), options);
   }
+  const payload = localAlertWorkflow();
+  renderAlerts();
+  renderAlertWorkflowRows(payload.history || []);
+  return {
+    triggeredLabels: (payload.triggered || []).map(
+      (row) => `${row.ticker} (${formatMoney(toNum(row.currentPrice), row.currency || state.meta.baseCurrency)})`
+    )
+  };
 }
 
 async function refreshAlertHistory(options = {}) {
-  const silent = Boolean(options.silent);
-  try {
-    let history = [];
-    if (backendSync.available) {
-      const payload = await apiRequest("/tools/alerts/history?limit=80", { timeoutMs: 7000 });
-      history = Array.isArray(payload.history) ? payload.history : [];
-    } else {
-      history = localAlertHistory();
-    }
-    renderAlertWorkflowRows(history);
-  } catch (error) {
-    backendSync.available = false;
-    updateBackendStatus();
-    renderAlertWorkflowRows(localAlertHistory());
-    if (!silent) {
-      window.alert("Nie udało się pobrać historii workflow alertów z backendu.");
-    }
+  if (uiModules.tools && typeof uiModules.tools.refreshAlertHistory === "function") {
+    await uiModules.tools.refreshAlertHistory(toolsModuleDeps(), options);
+    return;
   }
+  renderAlertWorkflowRows(localAlertHistory());
 }
 
 function realtimeConfigFromForm() {
@@ -4351,108 +4251,49 @@ function renderAssets() {
 }
 
 function renderOperations() {
-  const rows = state.operations
-    .slice()
-    .sort((a, b) => String(b.date).localeCompare(String(a.date)))
-    .map((operation) => [
-      escapeHtml(operation.date),
-      escapeHtml(operation.type),
-      escapeHtml(lookupName(state.portfolios, operation.portfolioId)),
-      escapeHtml(lookupName(state.accounts, operation.accountId)),
-      escapeHtml(lookupAssetLabel(operation.assetId)),
-      escapeHtml(lookupAssetLabel(operation.targetAssetId)),
-      formatFloat(operation.quantity),
-      formatFloat(operation.targetQuantity),
-      formatFloat(operation.price),
-      formatMoney(operation.amount, operation.currency || state.meta.baseCurrency),
-      formatMoney(operation.fee, operation.currency || state.meta.baseCurrency),
-      escapeHtml(operation.tags.join(", ") || "-"),
-      escapeHtml(operation.note || "-"),
-      [
-        `<button class="btn secondary" data-action="edit-operation" data-id="${operation.id}">Edytuj</button>`,
-        `<button class="btn danger" data-action="delete-operation" data-id="${operation.id}">Usuń</button>`
-      ].join(" ")
-    ]);
-  renderTable(
-    dom.operationList,
-    [
-      "Data",
-      "Typ",
-      "Portfel",
-      "Konto",
-      "Walor",
-      "Walor docelowy",
-      "Ilość",
-      "Ilość doc.",
-      "Cena",
-      "Kwota",
-      "Prowizja",
-      "Tagi",
-      "Notatka",
-      "Akcje"
-    ],
-    rows
-  );
+  if (uiModules.operations && typeof uiModules.operations.renderOperations === "function") {
+    uiModules.operations.renderOperations({
+      dom,
+      state,
+      lookupName,
+      lookupAssetLabel,
+      escapeHtml,
+      formatFloat,
+      formatMoney,
+      renderTable
+    });
+  }
 }
 
 function renderRecurring() {
-  const rows = state.recurringOps.map((item) => [
-    escapeHtml(item.name),
-    escapeHtml(item.type),
-    escapeHtml(item.frequency),
-    escapeHtml(item.startDate),
-    formatMoney(item.amount, item.currency || state.meta.baseCurrency),
-    escapeHtml(lookupName(state.portfolios, item.portfolioId)),
-    escapeHtml(lookupName(state.accounts, item.accountId)),
-    escapeHtml(lookupAssetLabel(item.assetId)),
-    escapeHtml(item.lastGeneratedDate || "-"),
-    [
-      `<button class="btn secondary" data-action="edit-recurring" data-id="${item.id}">Edytuj</button>`,
-      `<button class="btn danger" data-action="delete-recurring" data-id="${item.id}">Usuń</button>`
-    ].join(" ")
-  ]);
-  renderTable(
-    dom.recurringList,
-    ["Nazwa", "Typ", "Częstotliwość", "Start", "Kwota", "Portfel", "Konto", "Walor", "Ostatnio", "Akcje"],
-    rows
-  );
+  if (uiModules.operations && typeof uiModules.operations.renderRecurring === "function") {
+    uiModules.operations.renderRecurring({
+      dom,
+      state,
+      lookupName,
+      lookupAssetLabel,
+      escapeHtml,
+      formatMoney,
+      renderTable
+    });
+  }
 }
 
 function renderDashboard() {
-  const portfolioId = dom.dashboardPortfolioSelect.value || "";
-  const metrics = computeMetrics(portfolioId);
-  const series = buildSeries(portfolioId);
-
-  dom.statMarketValue.textContent = formatMoney(metrics.marketValue);
-  dom.statCash.textContent = formatMoney(metrics.cashTotal);
-  dom.statNetWorth.textContent = formatMoney(metrics.netWorth);
-  dom.statTotalPl.textContent = formatMoney(metrics.totalPL);
-  dom.statTotalPl.style.color = metrics.totalPL >= 0 ? "var(--brand-strong)" : "var(--danger)";
-
-  drawLineChart(
-    dom.dashboardChart,
-    series.map((point) => point.date),
-    series.map((point) => point.marketValue),
-    { color: "#0e7a64" }
-  );
-
-  const rows = metrics.holdings.map((holding) => [
-    escapeHtml(holding.ticker),
-    escapeHtml(holding.name),
-    escapeHtml(holding.type),
-    formatFloat(holding.qty),
-    formatMoney(holding.price, holding.currency),
-    formatMoney(holding.value),
-    formatMoney(holding.unrealized),
-    `${formatFloat(holding.share)}%`
-  ]);
-  renderTable(
-    dom.dashboardDetails,
-    ["Ticker", "Nazwa", "Typ", "Ilość", "Cena", "Wartość", "Niezrealizowany P/L", "Udział"],
-    rows
-  );
-
-  scheduleMetricsRefresh(portfolioId);
+  if (uiModules.dashboard && typeof uiModules.dashboard.renderDashboard === "function") {
+    uiModules.dashboard.renderDashboard({
+      dom,
+      state,
+      computeMetrics,
+      buildSeries,
+      formatMoney,
+      drawLineChart,
+      escapeHtml,
+      formatFloat,
+      renderTable,
+      scheduleMetricsRefresh
+    });
+  }
 }
 
 async function renderReportCurrent(arg = null) {

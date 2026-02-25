@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 import json
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List, Tuple, TypedDict
 import time
 from urllib.parse import parse_qs, urlparse
 
@@ -25,7 +25,7 @@ from .parity_tools import ParityToolsService
 from .quotes import QuoteService
 from .realtime import RealtimeRunner
 from .reports import ReportService
-from .state_model import now_iso
+from .utils import now_iso, to_int
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -53,6 +53,29 @@ class AppContext:
     realtime: RealtimeRunner
     backup_service: BackupService
     project_root: Path
+
+
+RouteKey = Tuple[str, str]
+
+
+class QuoteUpsertRow(TypedDict):
+    ticker: str
+    price: float
+    currency: str
+    provider: str
+    fetched_at: str
+
+
+class ApiQuoteRow(TypedDict):
+    ticker: str
+    price: float
+    currency: str
+    provider: str
+    fetchedAt: str
+    fetched_at: str
+    ageSeconds: int
+    stale: bool
+    source: str
 
 
 class AppHandler(SimpleHTTPRequestHandler):
@@ -118,7 +141,7 @@ class AppHandler(SimpleHTTPRequestHandler):
         query: Dict[str, List[str]],
         payload: Dict[str, Any],
     ) -> Dict[str, Any]:
-        if method == "GET" and path == "/api/health":
+        def _route_health() -> Dict[str, Any]:
             state = self.context.database.get_state()
             return {
                 "status": "ok",
@@ -132,7 +155,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                 },
             }
 
-        if method == "GET" and path == "/api/tools/monitoring/status":
+        def _route_monitoring_status() -> Dict[str, Any]:
             state = self.context.database.get_state()
             quotes = self.context.database.get_quotes()
             quote_stats = _quote_freshness_stats(quotes)
@@ -155,10 +178,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                 },
             }
 
-        if method == "GET" and path == "/api/state":
-            return {"state": self.context.database.get_state()}
-
-        if method == "PUT" and path == "/api/state":
+        def _route_put_state() -> Dict[str, Any]:
             raw_state = payload.get("state") if isinstance(payload, dict) and "state" in payload else payload
             if not isinstance(raw_state, dict):
                 raise ApiError(400, "Expected JSON object for state.")
@@ -174,19 +194,13 @@ class AppHandler(SimpleHTTPRequestHandler):
                 },
             }
 
-        if method == "GET" and path == "/api/quotes":
-            tickers = _query_tickers(query)
-            rows = self.context.database.get_quotes(tickers or None)
-            quotes = [_api_quote_row(row, default_source="db") for row in rows]
-            return {"quotes": quotes}
-
-        if method == "POST" and path == "/api/quotes/refresh":
+        def _route_quotes_refresh() -> Dict[str, Any]:
             tickers = _payload_tickers(payload)
             if not tickers:
                 state = self.context.database.get_state()
                 tickers = [asset["ticker"] for asset in state["assets"] if str(asset.get("ticker") or "").strip()]
             refreshed_quotes = self.context.quote_service.refresh(tickers)
-            quote_map = {
+            quote_map: Dict[str, ApiQuoteRow] = {
                 str(row.get("ticker") or "").upper(): _api_quote_row(row, default_source="market-data")
                 for row in refreshed_quotes
                 if str(row.get("ticker") or "").strip()
@@ -210,7 +224,6 @@ class AppHandler(SimpleHTTPRequestHandler):
 
             quotes = [quote_map[ticker] for ticker in tickers if ticker in quote_map]
 
-            # Mirror latest prices to asset list so frontend state stays in sync.
             if quotes:
                 state = self.context.database.get_state()
                 updated = False
@@ -232,10 +245,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                 "missing": max(0, len(tickers) - len(quotes)),
             }
 
-        if method == "GET" and path == "/api/reports/catalog":
-            return {"reports": self.context.reports.catalog()}
-
-        if method == "POST" and path == "/api/reports/generate":
+        def _route_reports_generate() -> Dict[str, Any]:
             report_name = str(payload.get("reportName") or payload.get("report") or "").strip()
             portfolio_id = str(payload.get("portfolioId") or "").strip()
             if not report_name:
@@ -243,124 +253,25 @@ class AppHandler(SimpleHTTPRequestHandler):
             report = self.context.reports.generate(report_name=report_name, portfolio_id=portfolio_id)
             return {"report": report}
 
-        if method == "GET" and path == "/api/metrics/portfolio":
-            portfolio_id = str(query.get("portfolioId", [""])[0]).strip()
-            metrics = self.context.reports.metrics(portfolio_id=portfolio_id)
-            return {"metrics": metrics}
-
-        if method == "GET" and path == "/api/tools/scanner":
-            filters = {
-                "minScore": query.get("minScore", ["0"])[0],
-                "maxRisk": query.get("maxRisk", ["10"])[0],
-                "sector": query.get("sector", [""])[0],
-                "minPrice": query.get("minPrice", ["0"])[0],
-                "portfolioId": query.get("portfolioId", [""])[0],
-            }
-            return self.context.expert_tools.scanner(filters)
-
-        if method == "POST" and path == "/api/tools/scanner":
-            return self.context.expert_tools.scanner(payload)
-
-        if method == "GET" and path == "/api/tools/signals":
-            portfolio_id = str(query.get("portfolioId", [""])[0]).strip()
-            return self.context.expert_tools.signals(portfolio_id=portfolio_id)
-
-        if method == "GET" and path == "/api/tools/calendar":
-            portfolio_id = str(query.get("portfolioId", [""])[0]).strip()
-            days = _to_int(query.get("days", ["60"])[0], 60)
-            return self.context.expert_tools.calendar(days=days, portfolio_id=portfolio_id)
-
-        if method == "GET" and path == "/api/tools/recommendations":
-            portfolio_id = str(query.get("portfolioId", [""])[0]).strip()
-            return self.context.expert_tools.recommendations(portfolio_id=portfolio_id)
-
-        if method == "GET" and path == "/api/tools/charts/candles":
-            ticker = str(query.get("ticker", [""])[0]).strip()
-            limit = _to_int(query.get("limit", ["120"])[0], 120)
-            return self.context.parity_tools.candles(ticker=ticker, limit=limit)
-
-        if method == "GET" and path == "/api/tools/charts/tradingview":
-            ticker = str(query.get("ticker", [""])[0]).strip()
-            return self.context.parity_tools.tradingview(ticker=ticker)
-
-        if method == "GET" and path == "/api/tools/catalyst":
-            portfolio_id = str(query.get("portfolioId", [""])[0]).strip()
-            limit = _to_int(query.get("limit", ["80"])[0], 80)
-            return self.context.parity_tools.catalyst_analysis(portfolio_id=portfolio_id, limit=limit)
-
-        if method == "GET" and path == "/api/tools/funds/ranking":
-            limit = _to_int(query.get("limit", ["30"])[0], 30)
-            return self.context.parity_tools.funds_ranking(limit=limit)
-
-        if method == "GET" and path == "/api/tools/espi":
-            limit = _to_int(query.get("limit", ["40"])[0], 40)
-            search = str(query.get("query", [""])[0]).strip()
-            return self.context.parity_tools.espi_messages(query=search, limit=limit)
-
-        if method == "POST" and path == "/api/tools/tax/optimize":
-            return self.context.parity_tools.tax_optimize(payload)
-
-        if method == "POST" and path == "/api/tools/tax/foreign-dividend":
-            return self.context.parity_tools.tax_foreign_dividend(payload)
-
-        if method == "POST" and path == "/api/tools/tax/crypto":
-            return self.context.parity_tools.tax_crypto(payload)
-
-        if method == "POST" and path == "/api/tools/tax/foreign-interest":
-            return self.context.parity_tools.tax_foreign_interest(payload)
-
-        if method == "POST" and path == "/api/tools/tax/bond-interest":
-            return self.context.parity_tools.tax_bond_interest(payload)
-
-        if method == "GET" and path == "/api/tools/forum":
-            ticker = str(query.get("ticker", [""])[0]).strip()
-            limit = _to_int(query.get("limit", ["200"])[0], 200)
-            return self.context.parity_tools.list_forum(ticker=ticker, limit=limit)
-
-        if method == "POST" and path == "/api/tools/forum/post":
+        def _route_forum_post_add() -> Dict[str, Any]:
             try:
                 return self.context.parity_tools.add_forum_post(payload)
             except ValueError as error:
                 raise ApiError(400, str(error)) from error
 
-        if method == "DELETE" and path.startswith("/api/tools/forum/post/"):
-            post_id = path.removeprefix("/api/tools/forum/post/").strip()
-            return self.context.parity_tools.delete_forum_post(post_id=post_id)
-
-        if method == "POST" and path == "/api/tools/options/exercise-price":
-            return self.context.parity_tools.option_exercise_price(payload)
-
-        if method == "GET" and path == "/api/tools/options/positions":
-            refresh = str(query.get("refresh", ["false"])[0]).strip().lower() in {"1", "true", "yes", "on"}
-            return self.context.parity_tools.option_positions(refresh_quotes=refresh)
-
-        if method == "POST" and path == "/api/tools/options/positions":
+        def _route_option_position_add() -> Dict[str, Any]:
             try:
                 return self.context.parity_tools.add_option_position(payload)
             except ValueError as error:
                 raise ApiError(400, str(error)) from error
 
-        if method == "DELETE" and path.startswith("/api/tools/options/positions/"):
-            position_id = path.removeprefix("/api/tools/options/positions/").strip()
-            return self.context.parity_tools.delete_option_position(position_id=position_id)
-
-        if method == "GET" and path == "/api/tools/model-portfolio":
-            return {"model": self.context.parity_tools.get_model_portfolio()}
-
-        if method == "PUT" and path == "/api/tools/model-portfolio":
+        def _route_model_portfolio_set() -> Dict[str, Any]:
             try:
                 return {"model": self.context.parity_tools.set_model_portfolio(payload)}
             except ValueError as error:
                 raise ApiError(400, str(error)) from error
 
-        if method == "GET" and path == "/api/tools/model-portfolio/compare":
-            portfolio_id = str(query.get("portfolioId", [""])[0]).strip()
-            return self.context.parity_tools.compare_model_portfolio(portfolio_id=portfolio_id)
-
-        if method == "GET" and path == "/api/tools/public-portfolios":
-            return self.context.parity_tools.list_public_portfolios()
-
-        if method == "POST" and path == "/api/tools/public-portfolios/clone":
+        def _route_clone_public_portfolio() -> Dict[str, Any]:
             source_portfolio_id = str(payload.get("sourcePortfolioId") or "").strip()
             new_name = str(payload.get("name") or "").strip()
             if not source_portfolio_id:
@@ -373,11 +284,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             except ValueError as error:
                 raise ApiError(400, str(error)) from error
 
-        if method == "POST" and path == "/api/tools/alerts/run":
-            portfolio_id = str(payload.get("portfolioId") or "").strip()
-            return self.context.expert_tools.run_alert_workflow(portfolio_id=portfolio_id)
-
-        if method == "POST" and path == "/api/tools/alerts/webhook":
+        def _route_alerts_webhook() -> Dict[str, Any]:
             token = _extract_webhook_token(self.headers, query)
             config = self.context.database.get_realtime_config()
             expected = str(config.get("webhookSecret") or "").strip()
@@ -386,79 +293,27 @@ class AppHandler(SimpleHTTPRequestHandler):
             result = self.context.realtime.run_once(source="webhook")
             return {"ok": True, "result": result}
 
-        if method == "GET" and path == "/api/tools/alerts/history":
-            limit = _to_int(query.get("limit", ["100"])[0], 100)
-            return self.context.expert_tools.alert_history(limit=limit)
-
-        if method == "GET" and path == "/api/tools/realtime/status":
-            return self.context.realtime.status()
-
-        if method == "PUT" and path == "/api/tools/realtime/config":
-            saved = self.context.realtime.set_config(payload)
-            return {"config": saved, "status": self.context.realtime.status()}
-
-        if method == "POST" and path == "/api/tools/realtime/run":
-            result = self.context.realtime.run_once(source="manual")
-            return {"result": result, "status": self.context.realtime.status()}
-
-        if method == "POST" and path == "/api/tools/realtime/start":
+        def _route_realtime_start() -> Dict[str, Any]:
             config = self.context.database.get_realtime_config()
             config["enabled"] = True
             self.context.database.set_realtime_config(config)
             self.context.realtime.start()
             return self.context.realtime.status()
 
-        if method == "POST" and path == "/api/tools/realtime/stop":
+        def _route_realtime_stop() -> Dict[str, Any]:
             config = self.context.database.get_realtime_config()
             config["enabled"] = False
             self.context.database.set_realtime_config(config)
             self.context.realtime.stop()
             return self.context.realtime.status()
 
-        if method == "GET" and path == "/api/tools/backup/config":
-            return {"config": self.context.backup_service.get_config()}
-
-        if method == "PUT" and path == "/api/tools/backup/config":
-            saved = self.context.backup_service.set_config(payload)
-            return {"config": saved}
-
-        if method == "POST" and path == "/api/tools/backup/run":
+        def _route_backup_run() -> Dict[str, Any]:
             verify_after = payload.get("verifyAfter")
             verify_flag = bool(verify_after) if verify_after is not None else None
             result = self.context.backup_service.run_backup(trigger="manual", verify_after=verify_flag)
             return {"backup": result}
 
-        if method == "POST" and path == "/api/tools/backup/verify":
-            state_file = str(payload.get("stateFile") or "").strip()
-            result = self.context.backup_service.verify_backup(state_file=state_file)
-            return {"verify": result}
-
-        if method == "GET" and path == "/api/tools/backup/runs":
-            limit = _to_int(query.get("limit", ["50"])[0], 50)
-            return {"runs": self.context.backup_service.list_runs(limit=limit)}
-
-        if method == "GET" and path == "/api/tools/notifications/config":
-            return {"config": self.context.notifications.get_config()}
-
-        if method == "PUT" and path == "/api/tools/notifications/config":
-            saved = self.context.notifications.set_config(payload)
-            return {"config": saved}
-
-        if method == "POST" and path == "/api/tools/notifications/test":
-            return {"result": self.context.notifications.send_test()}
-
-        if method == "GET" and path == "/api/tools/notifications/history":
-            limit = _to_int(query.get("limit", ["100"])[0], 100)
-            return self.context.notifications.history(limit=limit)
-
-        if method == "GET" and path == "/api/import/brokers":
-            return {"brokers": self.context.importer.list_brokers()}
-
-        if method == "GET" and path == "/api/import/logs":
-            limit = _to_int(query.get("limit", ["50"])[0], 50)
-            return {"logs": self.context.database.list_import_logs(limit=limit)}
-
-        if method == "POST" and path.startswith("/api/import/broker/"):
+        def _route_import_broker() -> Dict[str, Any]:
             broker_id = path.removeprefix("/api/import/broker/").strip().lower()
             csv_text = payload.get("csv")
             if not isinstance(csv_text, str) or not csv_text.strip():
@@ -474,8 +329,148 @@ class AppHandler(SimpleHTTPRequestHandler):
             )
             return {"import": summary}
 
-        if method == "GET" and path == "/api/scanner":
-            return self.context.expert_tools.scanner({})
+        routes: Dict[RouteKey, Callable[[], Dict[str, Any]]] = {
+            ("GET", "/api/health"): _route_health,
+            ("GET", "/api/tools/monitoring/status"): _route_monitoring_status,
+            ("GET", "/api/state"): lambda: {"state": self.context.database.get_state()},
+            ("PUT", "/api/state"): _route_put_state,
+            ("GET", "/api/quotes"): lambda: {
+                "quotes": [_api_quote_row(row, default_source="db") for row in self.context.database.get_quotes(_query_tickers(query) or None)]
+            },
+            ("POST", "/api/quotes/refresh"): _route_quotes_refresh,
+            ("GET", "/api/reports/catalog"): lambda: {"reports": self.context.reports.catalog()},
+            ("POST", "/api/reports/generate"): _route_reports_generate,
+            ("GET", "/api/metrics/portfolio"): lambda: {
+                "metrics": self.context.reports.metrics(portfolio_id=str(query.get("portfolioId", [""])[0]).strip())
+            },
+            ("GET", "/api/tools/scanner"): lambda: self.context.expert_tools.scanner(
+                {
+                    "minScore": query.get("minScore", ["0"])[0],
+                    "maxRisk": query.get("maxRisk", ["10"])[0],
+                    "sector": query.get("sector", [""])[0],
+                    "minPrice": query.get("minPrice", ["0"])[0],
+                    "portfolioId": query.get("portfolioId", [""])[0],
+                }
+            ),
+            ("POST", "/api/tools/scanner"): lambda: self.context.expert_tools.scanner(payload),
+            ("GET", "/api/tools/signals"): lambda: self.context.expert_tools.signals(
+                portfolio_id=str(query.get("portfolioId", [""])[0]).strip()
+            ),
+            ("GET", "/api/tools/calendar"): lambda: self.context.expert_tools.calendar(
+                days=to_int(query.get("days", ["60"])[0], 60),
+                portfolio_id=str(query.get("portfolioId", [""])[0]).strip(),
+            ),
+            ("GET", "/api/tools/recommendations"): lambda: self.context.expert_tools.recommendations(
+                portfolio_id=str(query.get("portfolioId", [""])[0]).strip()
+            ),
+            ("GET", "/api/tools/charts/candles"): lambda: self.context.parity_tools.candles(
+                ticker=str(query.get("ticker", [""])[0]).strip(),
+                limit=to_int(query.get("limit", ["120"])[0], 120),
+            ),
+            ("GET", "/api/tools/charts/tradingview"): lambda: self.context.parity_tools.tradingview(
+                ticker=str(query.get("ticker", [""])[0]).strip()
+            ),
+            ("GET", "/api/tools/catalyst"): lambda: self.context.parity_tools.catalyst_analysis(
+                portfolio_id=str(query.get("portfolioId", [""])[0]).strip(),
+                limit=to_int(query.get("limit", ["80"])[0], 80),
+            ),
+            ("GET", "/api/tools/funds/ranking"): lambda: self.context.parity_tools.funds_ranking(
+                limit=to_int(query.get("limit", ["30"])[0], 30)
+            ),
+            ("GET", "/api/tools/espi"): lambda: self.context.parity_tools.espi_messages(
+                query=str(query.get("query", [""])[0]).strip(),
+                limit=to_int(query.get("limit", ["40"])[0], 40),
+            ),
+            ("POST", "/api/tools/tax/optimize"): lambda: self.context.parity_tools.tax_optimize(payload),
+            ("POST", "/api/tools/tax/foreign-dividend"): lambda: self.context.parity_tools.tax_foreign_dividend(payload),
+            ("POST", "/api/tools/tax/crypto"): lambda: self.context.parity_tools.tax_crypto(payload),
+            ("POST", "/api/tools/tax/foreign-interest"): lambda: self.context.parity_tools.tax_foreign_interest(payload),
+            ("POST", "/api/tools/tax/bond-interest"): lambda: self.context.parity_tools.tax_bond_interest(payload),
+            ("GET", "/api/tools/forum"): lambda: self.context.parity_tools.list_forum(
+                ticker=str(query.get("ticker", [""])[0]).strip(),
+                limit=to_int(query.get("limit", ["200"])[0], 200),
+            ),
+            ("POST", "/api/tools/forum/post"): _route_forum_post_add,
+            ("POST", "/api/tools/options/exercise-price"): lambda: self.context.parity_tools.option_exercise_price(payload),
+            ("GET", "/api/tools/options/positions"): lambda: self.context.parity_tools.option_positions(
+                refresh_quotes=str(query.get("refresh", ["false"])[0]).strip().lower() in {"1", "true", "yes", "on"}
+            ),
+            ("POST", "/api/tools/options/positions"): _route_option_position_add,
+            ("GET", "/api/tools/model-portfolio"): lambda: {"model": self.context.parity_tools.get_model_portfolio()},
+            ("PUT", "/api/tools/model-portfolio"): _route_model_portfolio_set,
+            ("GET", "/api/tools/model-portfolio/compare"): lambda: self.context.parity_tools.compare_model_portfolio(
+                portfolio_id=str(query.get("portfolioId", [""])[0]).strip()
+            ),
+            ("GET", "/api/tools/public-portfolios"): lambda: self.context.parity_tools.list_public_portfolios(),
+            ("POST", "/api/tools/public-portfolios/clone"): _route_clone_public_portfolio,
+            ("POST", "/api/tools/alerts/run"): lambda: self.context.expert_tools.run_alert_workflow(
+                portfolio_id=str(payload.get("portfolioId") or "").strip()
+            ),
+            ("POST", "/api/tools/alerts/webhook"): _route_alerts_webhook,
+            ("GET", "/api/tools/alerts/history"): lambda: self.context.expert_tools.alert_history(
+                limit=to_int(query.get("limit", ["100"])[0], 100)
+            ),
+            ("GET", "/api/tools/realtime/status"): lambda: self.context.realtime.status(),
+            ("PUT", "/api/tools/realtime/config"): lambda: {
+                "config": self.context.realtime.set_config(payload),
+                "status": self.context.realtime.status(),
+            },
+            ("POST", "/api/tools/realtime/run"): lambda: {
+                "result": self.context.realtime.run_once(source="manual"),
+                "status": self.context.realtime.status(),
+            },
+            ("POST", "/api/tools/realtime/start"): _route_realtime_start,
+            ("POST", "/api/tools/realtime/stop"): _route_realtime_stop,
+            ("GET", "/api/tools/backup/config"): lambda: {"config": self.context.backup_service.get_config()},
+            ("PUT", "/api/tools/backup/config"): lambda: {"config": self.context.backup_service.set_config(payload)},
+            ("POST", "/api/tools/backup/run"): _route_backup_run,
+            ("POST", "/api/tools/backup/verify"): lambda: {
+                "verify": self.context.backup_service.verify_backup(state_file=str(payload.get("stateFile") or "").strip())
+            },
+            ("GET", "/api/tools/backup/runs"): lambda: {
+                "runs": self.context.backup_service.list_runs(limit=to_int(query.get("limit", ["50"])[0], 50))
+            },
+            ("GET", "/api/tools/notifications/config"): lambda: {"config": self.context.notifications.get_config()},
+            ("PUT", "/api/tools/notifications/config"): lambda: {"config": self.context.notifications.set_config(payload)},
+            ("POST", "/api/tools/notifications/test"): lambda: {"result": self.context.notifications.send_test()},
+            ("GET", "/api/tools/notifications/history"): lambda: self.context.notifications.history(
+                limit=to_int(query.get("limit", ["100"])[0], 100)
+            ),
+            ("GET", "/api/import/brokers"): lambda: {"brokers": self.context.importer.list_brokers()},
+            ("GET", "/api/import/logs"): lambda: {
+                "logs": self.context.database.list_import_logs(limit=to_int(query.get("limit", ["50"])[0], 50))
+            },
+            ("GET", "/api/scanner"): lambda: self.context.expert_tools.scanner({}),
+        }
+
+        handler = routes.get((method, path))
+        if handler:
+            return handler()
+
+        prefix_routes: List[Tuple[str, str, Callable[[], Dict[str, Any]]]] = [
+            (
+                "DELETE",
+                "/api/tools/forum/post/",
+                lambda: self.context.parity_tools.delete_forum_post(
+                    post_id=path.removeprefix("/api/tools/forum/post/").strip()
+                ),
+            ),
+            (
+                "DELETE",
+                "/api/tools/options/positions/",
+                lambda: self.context.parity_tools.delete_option_position(
+                    position_id=path.removeprefix("/api/tools/options/positions/").strip()
+                ),
+            ),
+            (
+                "POST",
+                "/api/import/broker/",
+                _route_import_broker,
+            ),
+        ]
+        for route_method, prefix, prefix_handler in prefix_routes:
+            if method == route_method and path.startswith(prefix):
+                return prefix_handler()
 
         raise ApiError(404, "Endpoint not found")
 
@@ -542,14 +537,7 @@ def _extract_webhook_token(headers, query: Dict[str, List[str]]) -> str:
     return ""
 
 
-def _to_int(value: Any, default: int) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _quote_upsert_row(row: Dict[str, Any]) -> Dict[str, Any]:
+def _quote_upsert_row(row: Dict[str, Any]) -> QuoteUpsertRow:
     return {
         "ticker": str(row.get("ticker") or "").upper(),
         "price": float(row.get("price") or 0),
@@ -559,7 +547,7 @@ def _quote_upsert_row(row: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _api_quote_row(row: Dict[str, Any], *, default_source: str) -> Dict[str, Any]:
+def _api_quote_row(row: Dict[str, Any], *, default_source: str) -> ApiQuoteRow:
     ticker = str(row.get("ticker") or "").upper().strip()
     fetched_at = str(row.get("fetched_at") or row.get("fetchedAt") or now_iso())
     age_seconds = _age_seconds_from_iso(fetched_at)
@@ -610,35 +598,6 @@ def _quote_freshness_stats(quotes: List[Dict[str, Any]]) -> Dict[str, Any]:
         "stale": stale,
         "maxAgeSeconds": max_age,
     }
-
-
-def _build_scanner_payload(database: Database) -> List[Dict[str, Any]]:
-    state = database.get_state()
-    quotes = database.get_quotes([asset["ticker"] for asset in state["assets"]])
-    quote_map = {str(item["ticker"]).upper(): item for item in quotes}
-
-    items = []
-    for asset in state["assets"]:
-        ticker = str(asset.get("ticker") or "").upper()
-        quote = quote_map.get(ticker)
-        price = float(quote["price"]) if quote else float(asset.get("currentPrice") or 0)
-        risk = float(asset.get("risk") or 1)
-        score = price / max(1.0, risk)
-        items.append(
-            {
-                "ticker": ticker,
-                "name": asset.get("name", ""),
-                "type": asset.get("type", ""),
-                "risk": risk,
-                "price": price,
-                "currency": quote.get("currency") if quote else asset.get("currency", "PLN"),
-                "score": score,
-                "sector": asset.get("sector", ""),
-                "industry": asset.get("industry", ""),
-            }
-        )
-    items.sort(key=lambda row: row["score"], reverse=True)
-    return items
 
 
 def parse_args() -> argparse.Namespace:
