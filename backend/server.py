@@ -1,4 +1,4 @@
-"""MyFund Solo backend server.
+"""Prywatny Portfel backend server.
 
 Run:
     python3 -m backend.server --port 8080
@@ -29,6 +29,9 @@ from .state_model import now_iso
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+APP_NAME = "Prywatny Portfel"
+DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "prywatny_portfel.db"
+LEGACY_DB_PATH = PROJECT_ROOT / "data" / "myfund_solo.db"
 
 
 class ApiError(Exception):
@@ -639,16 +642,23 @@ def _build_scanner_payload(database: Database) -> List[Dict[str, Any]]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="MyFund Solo backend server")
+    parser = argparse.ArgumentParser(description=f"{APP_NAME} backend server")
     parser.add_argument("--host", default="127.0.0.1", help="Bind host")
     parser.add_argument("--port", default=8080, type=int, help="Bind port")
-    parser.add_argument("--db", default=str(PROJECT_ROOT / "data" / "myfund_solo.db"), help="SQLite database path")
+    parser.add_argument("--db", default=str(DEFAULT_DB_PATH), help="SQLite database path")
     return parser.parse_args()
+
+
+def resolve_db_path(arg_db: str) -> Path:
+    db_path = Path(arg_db)
+    if db_path == DEFAULT_DB_PATH and not db_path.exists() and LEGACY_DB_PATH.exists():
+        return LEGACY_DB_PATH
+    return db_path
 
 
 def main() -> None:
     args = parse_args()
-    database = Database(Path(args.db))
+    database = Database(resolve_db_path(args.db))
     quote_service = QuoteService()
     backup_service = BackupService(database=database, project_root=PROJECT_ROOT)
     expert_tools = ExpertToolsService(database)
@@ -679,7 +689,7 @@ def main() -> None:
     )
     AppHandler.context = context
     server = ThreadingHTTPServer((args.host, args.port), AppHandler)
-    print(f"MyFund Solo running at http://{args.host}:{args.port}")
+    print(f"{APP_NAME} running at http://{args.host}:{args.port}")
     print(f"Database: {database.db_path}")
     try:
         server.serve_forever()

@@ -1,6 +1,7 @@
 "use strict";
 
-const STORAGE_KEY = "myfund-solo-state-v1";
+const STORAGE_KEY = "prywatny-portfel-state-v1";
+const LEGACY_STORAGE_KEYS = ["myfund-solo-state-v1"];
 const API_BASE = "/api";
 const PLAN_ORDER = ["Brak", "Basic", "Standard", "Pro", "Expert"];
 const PLAN_LIMITS = {
@@ -3919,7 +3920,7 @@ function onBackupExport() {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `myfund-solo-backup-${todayIso()}.json`;
+  link.download = `prywatny-portfel-backup-${todayIso()}.json`;
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -6119,16 +6120,24 @@ function defaultState() {
 }
 
 function loadState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+  const storageCandidates = [STORAGE_KEY].concat(LEGACY_STORAGE_KEYS);
+  for (const key of storageCandidates) {
+    const raw = localStorage.getItem(key);
     if (!raw) {
-      return defaultState();
+      continue;
     }
-    const parsed = JSON.parse(raw);
-    return normalizeState(parsed);
-  } catch (error) {
-    return defaultState();
+    try {
+      const parsed = JSON.parse(raw);
+      const normalized = normalizeState(parsed);
+      if (key !== STORAGE_KEY) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+      }
+      return normalized;
+    } catch (error) {
+      continue;
+    }
   }
+  return defaultState();
 }
 
 function normalizeState(input) {

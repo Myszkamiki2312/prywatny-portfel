@@ -837,7 +837,7 @@ class ParityToolsService:
         request = urllib.request.Request(
             url,
             headers={
-                "User-Agent": "MyFundSolo/1.0",
+                "User-Agent": "PrywatnyPortfel/1.0",
                 "Accept": "text/html,application/xml,text/xml,*/*",
             },
         )

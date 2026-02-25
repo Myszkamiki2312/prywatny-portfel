@@ -126,7 +126,7 @@ class QuoteService:
         request = urllib.request.Request(
             url,
             headers={
-                "User-Agent": "MyFundSolo/1.0",
+                "User-Agent": "PrywatnyPortfel/1.0",
                 "Accept": "application/json",
             },
         )
@@ -168,7 +168,7 @@ class QuoteService:
             url = "https://stooq.com/q/d/l/?" + urllib.parse.urlencode({"s": candidate, "i": "d"})
             request = urllib.request.Request(
                 url,
-                headers={"User-Agent": "MyFundSolo/1.0", "Accept": "text/csv"},
+                headers={"User-Agent": "PrywatnyPortfel/1.0", "Accept": "text/csv"},
             )
             try:
                 text = self._urlopen_bytes(request).decode("utf-8", errors="ignore")
@@ -188,7 +188,7 @@ class QuoteService:
             )
             request = urllib.request.Request(
                 url,
-                headers={"User-Agent": "MyFundSolo/1.0", "Accept": "text/csv"},
+                headers={"User-Agent": "PrywatnyPortfel/1.0", "Accept": "text/csv"},
             )
             try:
                 text = self._urlopen_bytes(request).decode("utf-8", errors="ignore")

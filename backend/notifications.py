@@ -196,7 +196,7 @@ class NotificationService:
         current_price = _to_num(row.get("currentPrice"))
         currency = str(row.get("currency") or "PLN")
         checked_at = str(row.get("checkedAt") or _now_iso())
-        subject = f"[MyFund Solo] Alert {ticker} {direction}"
+        subject = f"[Prywatny Portfel] Alert {ticker} {direction}"
         body = (
             f"Alert aktywny: {ticker}\n"
             f"Warunek: {direction}\n"

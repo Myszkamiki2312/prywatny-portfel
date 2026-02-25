@@ -48,7 +48,7 @@ class RealtimeRunner:
             if self._thread and self._thread.is_alive():
                 return
             self._stop_event.clear()
-            self._thread = threading.Thread(target=self._loop, daemon=True, name="myfund-realtime")
+            self._thread = threading.Thread(target=self._loop, daemon=True, name="prywatny-portfel-realtime")
             self._thread.start()
 
     def stop(self) -> None:

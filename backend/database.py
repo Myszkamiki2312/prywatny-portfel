@@ -1,4 +1,4 @@
-"""SQLite storage adapter for MyFund Solo backend."""
+"""SQLite storage adapter for Prywatny Portfel backend."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-# MyFund Solo
+# Prywatny Portfel
 
 Lokalna aplikacja inwestycyjna dla uzytkownika
 

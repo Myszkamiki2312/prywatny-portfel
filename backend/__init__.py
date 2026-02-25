@@ -1,2 +1,1 @@
-"""MyFund Solo backend package."""
-
+"""Prywatny Portfel backend package."""

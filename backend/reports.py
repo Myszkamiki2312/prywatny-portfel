@@ -1,4 +1,4 @@
-"""Reporting and analytics service for MyFund Solo."""
+"""Reporting and analytics service for Prywatny Portfel."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-# Audyt zgodnosci funkcji (MyFund Solo vs lista referencyjna)
+# Audyt zgodnosci funkcji (Prywatny Portfel vs lista referencyjna)
 
 Data audytu: 2026-02-23
 

@@ -92,7 +92,7 @@ class BackupService:
                     "exportedAt": now_iso(),
                     "state": self.database.get_state(),
                 }
-                state_path = self.backup_dir / f"myfund-state-{timestamp_tag}.json"
+                state_path = self.backup_dir / f"prywatny-portfel-state-{timestamp_tag}.json"
                 state_path.write_text(
                     json.dumps(state_payload, ensure_ascii=False, indent=2),
                     encoding="utf-8",
@@ -101,7 +101,7 @@ class BackupService:
                 state_size = state_path.stat().st_size
 
             if include_db:
-                db_path = self.backup_dir / f"myfund-db-{timestamp_tag}.sqlite3"
+                db_path = self.backup_dir / f"prywatny-portfel-db-{timestamp_tag}.sqlite3"
                 self.database.backup_to_file(db_path)
                 db_file = str(db_path)
                 db_size = db_path.stat().st_size if db_path.exists() else 0
@@ -213,7 +213,12 @@ class BackupService:
 
     def _prune_files(self, *, keep_last: int) -> None:
         keep = max(1, keep_last)
-        for pattern in ("myfund-state-*.json", "myfund-db-*.sqlite3"):
+        for pattern in (
+            "prywatny-portfel-state-*.json",
+            "prywatny-portfel-db-*.sqlite3",
+            "myfund-state-*.json",
+            "myfund-db-*.sqlite3",
+        ):
             files = sorted(
                 self.backup_dir.glob(pattern),
                 key=lambda item: item.name,
