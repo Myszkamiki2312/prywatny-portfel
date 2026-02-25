@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import json
 import sqlite3
 import threading
@@ -9,7 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .state_model import default_state, normalize_state
-from .utils import to_int as _to_int
+from .utils import now_iso, to_int as _to_int
 
 
 class Database:
@@ -218,6 +219,17 @@ class Database:
             db_size INTEGER NOT NULL,
             verified INTEGER NOT NULL,
             message TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS error_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source TEXT NOT NULL,
+            level TEXT NOT NULL,
+            method TEXT NOT NULL,
+            path TEXT NOT NULL,
+            message TEXT NOT NULL,
+            details_json TEXT NOT NULL,
             created_at TEXT NOT NULL
         );
         """
@@ -1218,6 +1230,123 @@ class Database:
             "createdAt": row["created_at"],
         }
 
+    def log_error(
+        self,
+        *,
+        source: str,
+        level: str,
+        method: str,
+        path: str,
+        message: str,
+        details_json: str = "",
+        created_at: str = "",
+    ) -> Dict[str, Any]:
+        timestamp = str(created_at or now_iso())
+        with self._lock:
+            cursor = self._conn.execute(
+                """
+                INSERT INTO error_logs
+                (source, level, method, path, message, details_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(source or "server"),
+                    str(level or "error"),
+                    str(method or ""),
+                    str(path or ""),
+                    str(message or ""),
+                    str(details_json or ""),
+                    timestamp,
+                ),
+            )
+            self._conn.commit()
+            row_id = cursor.lastrowid
+            row = self._conn.execute("SELECT * FROM error_logs WHERE id = ?", (row_id,)).fetchone()
+        if row is None:
+            return {}
+        return {
+            "id": row["id"],
+            "source": row["source"],
+            "level": row["level"],
+            "method": row["method"],
+            "path": row["path"],
+            "message": row["message"],
+            "detailsJson": row["details_json"],
+            "createdAt": row["created_at"],
+        }
+
+    def list_error_logs(self, *, limit: int = 100, source: str = "", level: str = "") -> List[Dict[str, Any]]:
+        safe_limit = max(1, min(limit, 2000))
+        src = str(source or "").strip().lower()
+        lvl = str(level or "").strip().lower()
+        where_parts: List[str] = []
+        params: List[Any] = []
+        if src:
+            where_parts.append("lower(source) = ?")
+            params.append(src)
+        if lvl:
+            where_parts.append("lower(level) = ?")
+            params.append(lvl)
+        where_sql = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT * FROM error_logs {where_sql} ORDER BY id DESC LIMIT ?",
+                tuple(params + [safe_limit]),
+            ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "source": row["source"],
+                "level": row["level"],
+                "method": row["method"],
+                "path": row["path"],
+                "message": row["message"],
+                "detailsJson": row["details_json"],
+                "createdAt": row["created_at"],
+            }
+            for row in rows
+        ]
+
+    def clear_error_logs(self, *, keep_last: int = 0) -> Dict[str, int]:
+        keep = max(0, int(keep_last))
+        with self._lock:
+            before = int(self._conn.execute("SELECT COUNT(*) FROM error_logs").fetchone()[0])
+            if keep > 0:
+                self._conn.execute(
+                    """
+                    DELETE FROM error_logs
+                    WHERE id NOT IN (
+                        SELECT id FROM error_logs ORDER BY id DESC LIMIT ?
+                    )
+                    """,
+                    (keep,),
+                )
+            else:
+                self._conn.execute("DELETE FROM error_logs")
+            self._conn.commit()
+            after = int(self._conn.execute("SELECT COUNT(*) FROM error_logs").fetchone()[0])
+        return {"deleted": max(0, before - after), "remaining": after}
+
+    def count_error_logs(self, *, minutes: int = 0, level: str = "") -> int:
+        min_window = max(0, int(minutes))
+        lvl = str(level or "").strip().lower()
+        where_parts: List[str] = []
+        params: List[Any] = []
+        if min_window > 0:
+            threshold = (datetime.now(timezone.utc) - timedelta(minutes=min_window)).isoformat()
+            where_parts.append("created_at >= ?")
+            params.append(threshold)
+        if lvl:
+            where_parts.append("lower(level) = ?")
+            params.append(lvl)
+        where_sql = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+        with self._lock:
+            row = self._conn.execute(
+                f"SELECT COUNT(*) AS count FROM error_logs {where_sql}",
+                tuple(params),
+            ).fetchone()
+        return int(row["count"] if row is not None else 0)
+
 
 def _json_loads_list(value: Any) -> List[Any]:
     if value is None:
@@ -1230,4 +1359,3 @@ def _json_loads_list(value: Any) -> List[Any]:
         return parsed if isinstance(parsed, list) else []
     except json.JSONDecodeError:
         return []
-

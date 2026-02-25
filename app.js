@@ -192,6 +192,11 @@ const uiModules = {
   operations: null,
   tools: null
 };
+const clientErrorTracker = {
+  bound: false,
+  recent: new Map(),
+  ttlMs: 15000
+};
 
 document.addEventListener("DOMContentLoaded", () => {
   void init().catch((error) => {
@@ -202,6 +207,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
 async function init() {
   await loadUiModules();
+  setupGlobalErrorReporting();
   cacheDom();
   seedStaticSelects();
   bindEvents();
@@ -338,6 +344,13 @@ function cacheDom() {
   dom.refreshMonitoringBtn = document.getElementById("refreshMonitoringBtn");
   dom.monitoringInfo = document.getElementById("monitoringInfo");
   dom.monitoringTable = document.getElementById("monitoringTable");
+  dom.refreshHealthcheckBtn = document.getElementById("refreshHealthcheckBtn");
+  dom.healthcheckInfo = document.getElementById("healthcheckInfo");
+  dom.healthcheckTable = document.getElementById("healthcheckTable");
+  dom.refreshErrorLogsBtn = document.getElementById("refreshErrorLogsBtn");
+  dom.clearErrorLogsBtn = document.getElementById("clearErrorLogsBtn");
+  dom.errorLogsInfo = document.getElementById("errorLogsInfo");
+  dom.errorLogsTable = document.getElementById("errorLogsTable");
   dom.liabilityForm = document.getElementById("liabilityForm");
   dom.liabilityEditId = document.getElementById("liabilityEditId");
   dom.liabilitySubmitBtn = document.getElementById("liabilitySubmitBtn");
@@ -520,6 +533,18 @@ function bindEvents() {
     event.preventDefault();
     void refreshMonitoringStatus();
   });
+  dom.refreshHealthcheckBtn.addEventListener("click", (event) => {
+    event.preventDefault();
+    void refreshHealthcheck();
+  });
+  dom.refreshErrorLogsBtn.addEventListener("click", (event) => {
+    event.preventDefault();
+    void refreshErrorLogs();
+  });
+  dom.clearErrorLogsBtn.addEventListener("click", (event) => {
+    event.preventDefault();
+    void clearErrorLogsNow();
+  });
   dom.liabilityForm.addEventListener("submit", onLiabilitySubmit);
   dom.liabilityCancelEditBtn.addEventListener("click", () => {
     resetLiabilityForm();
@@ -670,6 +695,8 @@ async function hydrateRealtimeAndNotifications() {
     await refreshBackupConfig({ silent: true });
     await refreshBackupRuns({ silent: true });
     await refreshMonitoringStatus({ silent: true });
+    await refreshHealthcheck({ silent: true });
+    await refreshErrorLogs({ silent: true });
   } catch (error) {
     // ignore
   }
@@ -1004,6 +1031,8 @@ async function refreshExpertTools(options = {}) {
   await refreshBackupConfig({ silent: true });
   await refreshBackupRuns({ silent: true });
   await refreshMonitoringStatus({ silent: true });
+  await refreshHealthcheck({ silent: true });
+  await refreshErrorLogs({ silent: true });
   await refreshCandles({ silent: true });
   await refreshCatalyst({ silent: true });
   await refreshFundsRanking({ silent: true });
@@ -1492,6 +1521,84 @@ async function refreshMonitoringStatus(options = {}) {
   }
 }
 
+async function refreshHealthcheck(options = {}) {
+  const silent = Boolean(options.silent);
+  if (!backendSync.available) {
+    return;
+  }
+  try {
+    const payload = await apiRequest("/tools/healthcheck", { timeoutMs: 8000 });
+    renderHealthcheckStatus(payload || {});
+  } catch (error) {
+    if (!silent) {
+      window.alert("Nie udało się pobrać healthcheck.");
+    }
+  }
+}
+
+function renderHealthcheckStatus(payload) {
+  if (!payload || typeof payload !== "object") {
+    renderTable(dom.healthcheckTable, ["Check", "Status", "Szczegóły"], []);
+    return;
+  }
+  const checks = Array.isArray(payload.checks) ? payload.checks : [];
+  const rows = checks.map((item) => {
+    const status = String(item.status || "-").toLowerCase();
+    const badge =
+      status === "ok"
+        ? '<span class="badge ok">OK</span>'
+        : status === "warn"
+          ? '<span class="badge off">WARN</span>'
+          : '<span class="badge off">ERROR</span>';
+    return [escapeHtml(item.key || "-"), badge, escapeHtml(item.message || "-")];
+  });
+  renderTable(dom.healthcheckTable, ["Check", "Status", "Szczegóły"], rows);
+  if (dom.healthcheckInfo) {
+    const overall = String(payload.status || "unknown").toLowerCase();
+    dom.healthcheckInfo.textContent = `Healthcheck: ${overall.toUpperCase()} | ${checks.length} checków`;
+  }
+}
+
+async function refreshErrorLogs(options = {}) {
+  const silent = Boolean(options.silent);
+  if (!backendSync.available) {
+    return;
+  }
+  try {
+    const payload = await apiRequest("/tools/errors?limit=120", { timeoutMs: 9000 });
+    const logs = Array.isArray(payload.logs) ? payload.logs : [];
+    renderErrorLogsRows(logs);
+  } catch (error) {
+    if (!silent) {
+      window.alert("Nie udało się pobrać logów błędów.");
+    }
+  }
+}
+
+async function clearErrorLogsNow() {
+  if (!backendSync.available) {
+    window.alert("Backend offline. Czyszczenie logów niedostępne.");
+    return;
+  }
+  const confirmed = window.confirm("Usunąć wszystkie logi błędów?");
+  if (!confirmed) {
+    return;
+  }
+  try {
+    const payload = await apiRequest("/tools/errors/clear", {
+      method: "POST",
+      body: { keepLast: 0 },
+      timeoutMs: 7000
+    });
+    if (dom.errorLogsInfo) {
+      dom.errorLogsInfo.textContent = `Wyczyszczono logi: ${toNum(payload.deleted)}.`;
+    }
+    await refreshErrorLogs({ silent: true });
+  } catch (error) {
+    window.alert(`Nie udało się wyczyścić logów: ${error.message}`);
+  }
+}
+
 function renderBackupRunsRows(items) {
   const rows = (items || []).map((item) => [
     escapeHtml(formatDateTime(item.createdAt) || item.createdAt || "-"),
@@ -1512,6 +1619,7 @@ function renderMonitoringStatus(payload) {
   }
   const counts = payload.counts || {};
   const quotes = payload.quotes || {};
+  const errors = payload.errors || {};
   const realtime = payload.realtime || {};
   const backup = payload.backup || {};
   const backupLast = backup.lastRun || {};
@@ -1528,6 +1636,7 @@ function renderMonitoringStatus(payload) {
     ["Notowania świeże", String(toNum(quotes.fresh))],
     ["Notowania nieświeże", String(toNum(quotes.stale))],
     ["Max wiek notowań (s)", String(toNum(quotes.maxAgeSeconds))],
+    ["Błędy (ostatnia godzina)", String(toNum(errors.lastHour))],
     ["Realtime cron", realtime.cronEnabled ? "aktywny" : "wyłączony"],
     ["Realtime worker", realtime.running ? "on" : "off"],
     ["Backup cron", backupCfg.enabled ? "aktywny" : "wyłączony"],
@@ -1543,7 +1652,7 @@ function renderMonitoringStatus(payload) {
   if (dom.monitoringInfo) {
     dom.monitoringInfo.textContent = `Monitoring: quotes fresh ${toNum(quotes.fresh)} / ${
       toNum(quotes.total)
-    }, backup ${backupLast.status || "-"}`;
+    }, backup ${backupLast.status || "-"}, errors/h ${toNum(errors.lastHour)}`;
   }
 }
 
@@ -1564,6 +1673,21 @@ function renderNotificationHistoryRows(items) {
     escapeHtml(item.message || "-")
   ]);
   renderTable(dom.notificationHistoryList, ["Czas", "Kanał", "Alert", "Status", "Komunikat"], rows);
+}
+
+function renderErrorLogsRows(items) {
+  const rows = (items || []).map((item) => [
+    escapeHtml(formatDateTime(item.createdAt) || item.createdAt || "-"),
+    escapeHtml(item.source || "-"),
+    escapeHtml((item.level || "-").toUpperCase()),
+    escapeHtml(item.method || "-"),
+    escapeHtml(item.path || "-"),
+    escapeHtml(item.message || "-")
+  ]);
+  renderTable(dom.errorLogsTable, ["Czas", "Źródło", "Poziom", "Metoda", "Ścieżka", "Komunikat"], rows);
+  if (dom.errorLogsInfo) {
+    dom.errorLogsInfo.textContent = `Logi błędów: ${rows.length}`;
+  }
 }
 
 function renderScannerRows(items) {
@@ -2781,6 +2905,96 @@ function localAlertHistory(limit = 80) {
     .slice(0, limit);
 }
 
+function setupGlobalErrorReporting() {
+  if (clientErrorTracker.bound) {
+    return;
+  }
+  if (typeof window === "undefined" || typeof window.addEventListener !== "function") {
+    return;
+  }
+  clientErrorTracker.bound = true;
+  window.addEventListener("error", (event) => {
+    const message = String(
+      (event && event.error && event.error.message) || (event && event.message) || "Błąd JS"
+    );
+    void reportClientError({
+      source: "client-runtime",
+      level: "error",
+      method: "RUNTIME",
+      path: (event && event.filename) || window.location.pathname || "",
+      message,
+      details: {
+        line: event && event.lineno,
+        column: event && event.colno
+      }
+    });
+  });
+  window.addEventListener("unhandledrejection", (event) => {
+    const reason = event ? event.reason : null;
+    const message =
+      typeof reason === "string"
+        ? reason
+        : reason && reason.message
+          ? String(reason.message)
+          : "Unhandled promise rejection";
+    void reportClientError({
+      source: "client-runtime",
+      level: "error",
+      method: "PROMISE",
+      path: window.location.pathname || "",
+      message,
+      details: {
+        reason: String(reason || "")
+      }
+    });
+  });
+}
+
+function shouldSendClientError(signature) {
+  const now = Date.now();
+  for (const [key, timestamp] of clientErrorTracker.recent.entries()) {
+    if (now - timestamp > clientErrorTracker.ttlMs) {
+      clientErrorTracker.recent.delete(key);
+    }
+  }
+  const previous = clientErrorTracker.recent.get(signature);
+  if (previous && now - previous <= clientErrorTracker.ttlMs) {
+    return false;
+  }
+  clientErrorTracker.recent.set(signature, now);
+  return true;
+}
+
+async function reportClientError(entry) {
+  if (!backendSync.available) {
+    return;
+  }
+  if (!entry || typeof entry !== "object") {
+    return;
+  }
+  const payload = {
+    source: textOrFallback(entry.source, "client"),
+    level: textOrFallback(entry.level, "error"),
+    method: textOrFallback(entry.method, ""),
+    path: textOrFallback(entry.path, ""),
+    message: String(entry.message || "Unknown error").slice(0, 1000),
+    details: entry.details && typeof entry.details === "object" ? entry.details : {}
+  };
+  const signature = `${payload.source}|${payload.level}|${payload.method}|${payload.path}|${payload.message}`;
+  if (!shouldSendClientError(signature)) {
+    return;
+  }
+  try {
+    await fetch(`${API_BASE}/tools/errors/log`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+  } catch (error) {
+    // ignore logging failures
+  }
+}
+
 function scheduleBackendPush() {
   if (!backendSync.available || backendSync.suspendPush) {
     return;
@@ -2853,6 +3067,20 @@ async function apiRequest(path, options = {}) {
       throw new Error(message);
     }
     return payload;
+  } catch (error) {
+    if (!String(path || "").startsWith("/tools/errors")) {
+      void reportClientError({
+        source: "client-api",
+        level: "error",
+        method,
+        path,
+        message: error && error.message ? String(error.message) : "API request failed",
+        details: {
+          timeoutMs
+        }
+      });
+    }
+    throw error;
   } finally {
     window.clearTimeout(timer);
   }

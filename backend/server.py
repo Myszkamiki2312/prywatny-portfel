@@ -11,7 +11,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+import shutil
 from pathlib import Path
+import traceback
 from typing import Any, Callable, Dict, List, Tuple, TypedDict
 import time
 from urllib.parse import parse_qs, urlparse
@@ -130,8 +132,28 @@ class AppHandler(SimpleHTTPRequestHandler):
             response = self._dispatch(method, parsed.path, parse_qs(parsed.query), payload)
             self._send_json(200, response)
         except ApiError as error:
+            if int(error.status) >= 500:
+                self._log_error(
+                    source="server",
+                    level="error",
+                    method=method,
+                    path=parsed.path,
+                    message=error.message,
+                    details={"type": "ApiError", "status": int(error.status)},
+                )
             self._send_json(error.status, {"error": error.message})
         except Exception as error:  # noqa: BLE001
+            self._log_error(
+                source="server",
+                level="error",
+                method=method,
+                path=parsed.path,
+                message=str(error),
+                details={
+                    "type": type(error).__name__,
+                    "traceback": traceback.format_exc(limit=8),
+                },
+            )
             self._send_json(500, {"error": f"Internal server error: {error}"})
 
     def _dispatch(
@@ -159,6 +181,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             state = self.context.database.get_state()
             quotes = self.context.database.get_quotes()
             quote_stats = _quote_freshness_stats(quotes)
+            recent_errors = self.context.database.count_error_logs(minutes=60, level="error")
             return {
                 "status": "ok",
                 "serverTime": now_iso(),
@@ -171,11 +194,151 @@ class AppHandler(SimpleHTTPRequestHandler):
                     "liabilities": len(state["liabilities"]),
                 },
                 "quotes": quote_stats,
+                "errors": {
+                    "lastHour": recent_errors,
+                },
                 "realtime": self.context.realtime.status(),
                 "backup": {
                     "config": self.context.backup_service.get_config(),
                     "lastRun": self.context.backup_service.last_run(),
                 },
+            }
+
+        def _route_healthcheck() -> Dict[str, Any]:
+            now_ts = time.time()
+            checks: List[Dict[str, Any]] = []
+
+            db_ok = True
+            db_message = "Połączenie SQLite OK."
+            try:
+                _ = self.context.database.get_state()
+            except Exception as error:  # noqa: BLE001
+                db_ok = False
+                db_message = f"Błąd DB: {error}"
+            checks.append(
+                {
+                    "key": "database",
+                    "status": "ok" if db_ok else "error",
+                    "message": db_message,
+                }
+            )
+
+            quotes = self.context.database.get_quotes()
+            quote_stats = _quote_freshness_stats(quotes)
+            total_quotes = int(quote_stats.get("total") or 0)
+            stale_quotes = int(quote_stats.get("stale") or 0)
+            if total_quotes == 0:
+                quote_status = "warn"
+                quote_msg = "Brak notowań w cache."
+            elif stale_quotes > 0:
+                quote_status = "warn"
+                quote_msg = f"Nieświeże notowania: {stale_quotes}/{total_quotes}."
+            else:
+                quote_status = "ok"
+                quote_msg = f"Wszystkie notowania świeże ({total_quotes})."
+            checks.append(
+                {
+                    "key": "quotes",
+                    "status": quote_status,
+                    "message": quote_msg,
+                    "stats": quote_stats,
+                }
+            )
+
+            backup_cfg = self.context.backup_service.get_config()
+            backup_last = self.context.backup_service.last_run()
+            backup_enabled = bool(backup_cfg.get("enabled"))
+            if not backup_enabled:
+                backup_status = "warn"
+                backup_msg = "Backup cron wyłączony."
+            else:
+                interval_seconds = max(60, to_int(backup_cfg.get("intervalMinutes"), 720) * 60)
+                last_run_at = str(backup_last.get("createdAt") or "")
+                age_seconds = _age_seconds_from_iso(last_run_at) if last_run_at else 10**9
+                if not backup_last:
+                    backup_status = "warn"
+                    backup_msg = "Backup cron aktywny, ale brak wykonanego backupu."
+                elif str(backup_last.get("status") or "").lower() != "success":
+                    backup_status = "error"
+                    backup_msg = f"Ostatni backup ma status {backup_last.get('status') or '-'}."
+                elif age_seconds > interval_seconds * 2:
+                    backup_status = "warn"
+                    backup_msg = f"Ostatni backup był {age_seconds // 60} min temu (poza oknem interwału)."
+                else:
+                    backup_status = "ok"
+                    backup_msg = "Backup działa w zadanym interwale."
+            checks.append(
+                {
+                    "key": "backup",
+                    "status": backup_status,
+                    "message": backup_msg,
+                    "config": backup_cfg,
+                    "lastRun": backup_last,
+                }
+            )
+
+            realtime_status = self.context.realtime.status()
+            realtime_enabled = bool(realtime_status.get("cronEnabled"))
+            realtime_running = bool(realtime_status.get("running"))
+            if realtime_enabled and not realtime_running:
+                rt_status = "error"
+                rt_msg = "Realtime cron włączony, ale worker nie działa."
+            elif realtime_enabled:
+                rt_status = "ok"
+                rt_msg = "Realtime cron i worker aktywne."
+            else:
+                rt_status = "warn"
+                rt_msg = "Realtime cron wyłączony."
+            checks.append(
+                {
+                    "key": "realtime",
+                    "status": rt_status,
+                    "message": rt_msg,
+                    "details": realtime_status,
+                }
+            )
+
+            error_last_hour = self.context.database.count_error_logs(minutes=60, level="error")
+            if error_last_hour > 0:
+                error_status = "warn"
+                error_msg = f"Zarejestrowano {error_last_hour} błędów w ostatniej godzinie."
+            else:
+                error_status = "ok"
+                error_msg = "Brak błędów w ostatniej godzinie."
+            checks.append(
+                {
+                    "key": "errors",
+                    "status": error_status,
+                    "message": error_msg,
+                    "lastHour": error_last_hour,
+                }
+            )
+
+            try:
+                disk = shutil.disk_usage(str(PROJECT_ROOT))
+                free_gb = round(disk.free / (1024**3), 2)
+                disk_status = "warn" if free_gb < 2 else "ok"
+                disk_msg = f"Wolne miejsce: {free_gb} GB."
+            except OSError as error:
+                free_gb = 0.0
+                disk_status = "warn"
+                disk_msg = f"Nie udało się odczytać miejsca na dysku: {error}"
+            checks.append(
+                {
+                    "key": "disk",
+                    "status": disk_status,
+                    "message": disk_msg,
+                    "freeGb": free_gb,
+                }
+            )
+
+            has_error = any(item.get("status") == "error" for item in checks)
+            has_warn = any(item.get("status") == "warn" for item in checks)
+            overall = "error" if has_error else "warn" if has_warn else "ok"
+            return {
+                "status": overall,
+                "serverTime": datetime.fromtimestamp(now_ts, timezone.utc).isoformat(),
+                "checks": checks,
             }
 
         def _route_put_state() -> Dict[str, Any]:
@@ -329,8 +492,49 @@ class AppHandler(SimpleHTTPRequestHandler):
             )
             return {"import": summary}
 
+        def _route_error_logs() -> Dict[str, Any]:
+            return {
+                "logs": self.context.database.list_error_logs(
+                    limit=to_int(query.get("limit", ["100"])[0], 100),
+                    source=str(query.get("source", [""])[0]).strip(),
+                    level=str(query.get("level", [""])[0]).strip(),
+                )
+            }
+
+        def _route_error_log_add() -> Dict[str, Any]:
+            source = str(payload.get("source") or "client").strip() or "client"
+            level = str(payload.get("level") or "error").strip() or "error"
+            method_text = str(payload.get("method") or "").strip()
+            path_text = str(payload.get("path") or "").strip()
+            message = str(payload.get("message") or "").strip()
+            details_json = ""
+            details = payload.get("details")
+            if details is not None:
+                try:
+                    details_json = json.dumps(details, ensure_ascii=False)
+                except TypeError:
+                    details_json = json.dumps({"detailsRaw": str(details)}, ensure_ascii=False)
+            if not message:
+                raise ApiError(400, "Missing message.")
+            row = self.context.database.log_error(
+                source=source,
+                level=level,
+                method=method_text,
+                path=path_text,
+                message=message,
+                details_json=details_json,
+                created_at=now_iso(),
+            )
+            return {"logged": True, "error": row}
+
+        def _route_error_logs_clear() -> Dict[str, Any]:
+            keep_last = to_int(payload.get("keepLast"), 0)
+            result = self.context.database.clear_error_logs(keep_last=keep_last)
+            return {"cleared": True, **result}
+
         routes: Dict[RouteKey, Callable[[], Dict[str, Any]]] = {
             ("GET", "/api/health"): _route_health,
+            ("GET", "/api/tools/healthcheck"): _route_healthcheck,
             ("GET", "/api/tools/monitoring/status"): _route_monitoring_status,
             ("GET", "/api/state"): lambda: {"state": self.context.database.get_state()},
             ("PUT", "/api/state"): _route_put_state,
@@ -436,6 +640,9 @@ class AppHandler(SimpleHTTPRequestHandler):
             ("GET", "/api/tools/notifications/history"): lambda: self.context.notifications.history(
                 limit=to_int(query.get("limit", ["100"])[0], 100)
             ),
+            ("GET", "/api/tools/errors"): _route_error_logs,
+            ("POST", "/api/tools/errors/log"): _route_error_log_add,
+            ("POST", "/api/tools/errors/clear"): _route_error_logs_clear,
             ("GET", "/api/import/brokers"): lambda: {"brokers": self.context.importer.list_brokers()},
             ("GET", "/api/import/logs"): lambda: {
                 "logs": self.context.database.list_import_logs(limit=to_int(query.get("limit", ["50"])[0], 50))
@@ -496,6 +703,38 @@ class AppHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _log_error(
+        self,
+        *,
+        source: str,
+        level: str,
+        method: str,
+        path: str,
+        message: str,
+        details: Dict[str, Any] | None = None,
+    ) -> None:
+        database = getattr(getattr(self, "context", None), "database", None)
+        if database is None or not hasattr(database, "log_error"):
+            return
+        details_json = ""
+        if details:
+            try:
+                details_json = json.dumps(details, ensure_ascii=False)
+            except TypeError:
+                details_json = json.dumps({"detailsRaw": str(details)}, ensure_ascii=False)
+        try:
+            database.log_error(
+                source=source,
+                level=level,
+                method=method,
+                path=path,
+                message=message,
+                details_json=details_json,
+                created_at=now_iso(),
+            )
+        except Exception:  # noqa: BLE001
+            return
 
 
 def _query_tickers(query: Dict[str, List[str]]) -> List[str]:

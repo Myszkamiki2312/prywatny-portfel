@@ -141,6 +141,40 @@ class BackupMonitoringTests(unittest.TestCase):
         self.assertEqual(payload["backup"]["config"]["enabled"], False)
         self.assertEqual(payload["backup"]["lastRun"]["status"], "success")
 
+    def test_healthcheck_and_error_logs_endpoints(self):
+        add_payload = self.handler.dispatch(
+            "POST",
+            "/api/tools/errors/log",
+            payload={
+                "source": "client",
+                "level": "error",
+                "method": "GET",
+                "path": "/api/test",
+                "message": "Test error log",
+                "details": {"code": "E_TEST"},
+            },
+        )
+        self.assertEqual(add_payload["logged"], True)
+
+        logs_payload = self.handler.dispatch("GET", "/api/tools/errors", query={"limit": ["20"]})
+        self.assertGreaterEqual(len(logs_payload["logs"]), 1)
+        self.assertEqual(logs_payload["logs"][0]["message"], "Test error log")
+
+        health_payload = self.handler.dispatch("GET", "/api/tools/healthcheck")
+        self.assertIn(health_payload["status"], {"ok", "warn", "error"})
+        checks = health_payload.get("checks", [])
+        check_keys = {item.get("key") for item in checks}
+        self.assertIn("database", check_keys)
+        self.assertIn("errors", check_keys)
+
+        clear_payload = self.handler.dispatch(
+            "POST",
+            "/api/tools/errors/clear",
+            payload={"keepLast": 0},
+        )
+        self.assertEqual(clear_payload["cleared"], True)
+        self.assertGreaterEqual(clear_payload["deleted"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
