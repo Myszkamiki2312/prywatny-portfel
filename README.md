@@ -1,15 +1,3 @@
-# Prywatny Portfel
-
-Lokalna aplikacja inwestycyjna dla uzytkownika
-
-## Uruchomienie
-
-1. Wejdź do katalogu projektu:
-   - `/Users/bartlomiejprzybycien/Documents/New project`
-2. Uruchom backend (serwuje także frontend):
-   - `python3 -m backend.server --host 127.0.0.1 --port 8080`
-3. Otwórz w przeglądarce:
-   - `http://localhost:8080`
 
 ## Testy
 
