@@ -8,9 +8,11 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.time.Instant
+import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+import java.text.Normalizer
 import kotlin.math.roundToInt
 
 data class ApiDispatchResult(
@@ -24,6 +26,33 @@ data class OfflineMetrics(
     val cashTotal: Double,
     val netWorth: Double,
     val totalPL: Double
+)
+
+data class HoldingRow(
+    val assetId: String,
+    val ticker: String,
+    val name: String,
+    val currency: String,
+    val risk: Double,
+    val sector: String,
+    val quantity: Double,
+    val averageCost: Double,
+    val currentPrice: Double,
+    val marketValue: Double,
+    val costValue: Double,
+    val unrealized: Double,
+    val unrealizedPct: Double,
+    val sharePct: Double
+)
+
+data class PortfolioSnapshot(
+    val portfolioId: String,
+    val cash: Double,
+    val contributions: Double,
+    val marketValue: Double,
+    val netWorth: Double,
+    val totalPl: Double,
+    val holdings: List<HoldingRow>
 )
 
 class OfflineRepository(private val context: Context) {
@@ -69,27 +98,7 @@ class OfflineRepository(private val context: Context) {
                     val payload = safeJsonObject(bodyText)
                     val reportName = payload.optString("reportName", "Statystyki portfela")
                     val portfolioId = payload.optString("portfolioId", "")
-                    val metrics = computeMetrics(portfolioId)
-                    val report = JSONObject()
-                        .put("reportName", reportName)
-                        .put("info", "$reportName | Offline Android")
-                        .put("headers", JSONArray().put("Metryka").put("Wartość"))
-                        .put(
-                            "rows",
-                            JSONArray()
-                                .put(JSONArray().put("Wartość rynkowa").put(round2(metrics.marketValue)))
-                                .put(JSONArray().put("Gotówka").put(round2(metrics.cashTotal)))
-                                .put(JSONArray().put("Wartość netto").put(round2(metrics.netWorth)))
-                                .put(JSONArray().put("Całkowity zysk/strata").put(round2(metrics.totalPL)))
-                        )
-                        .put(
-                            "chart",
-                            JSONObject()
-                                .put("labels", JSONArray().put(todayIso()))
-                                .put("values", JSONArray().put(round2(metrics.netWorth)))
-                                .put("color", "#0e7a64")
-                        )
-                    ok(JSONObject().put("report", report))
+                    ok(JSONObject().put("report", generateReport(reportName, portfolioId)))
                 }
 
                 method == "GET" && path == "/metrics/portfolio" -> {
@@ -122,17 +131,9 @@ class OfflineRepository(private val context: Context) {
                 )
 
                 method == "POST" && path.startsWith("/import/broker/") -> {
-                    ok(
-                        JSONObject().put(
-                            "import",
-                            JSONObject()
-                                .put("broker", path.removePrefix("/import/broker/"))
-                                .put("inserted", 0)
-                                .put("skipped", 0)
-                                .put("errors", JSONArray())
-                                .put("offline", true)
-                        )
-                    )
+                    val broker = path.removePrefix("/import/broker/")
+                    val payload = safeJsonObject(bodyText)
+                    ok(JSONObject().put("import", importBrokerCsv(broker, payload)))
                 }
 
                 method == "GET" && path == "/quotes" -> {
@@ -271,18 +272,20 @@ class OfflineRepository(private val context: Context) {
                     ok(cleared)
                 }
 
-                method == "POST" && path == "/tools/scanner" -> ok(JSONObject().put("items", JSONArray()))
-                method == "GET" && path == "/tools/signals" -> ok(JSONObject().put("signals", JSONArray()))
-                method == "GET" && path == "/tools/calendar" -> ok(JSONObject().put("events", JSONArray()))
-                method == "GET" && path == "/tools/recommendations" -> ok(JSONObject().put("recommendations", JSONArray()))
-                method == "POST" && path == "/tools/alerts/run" -> ok(
-                    JSONObject()
-                        .put("summary", JSONObject().put("triggered", 0).put("totalAlerts", 0))
-                        .put("history", JSONArray())
-                        .put("triggered", JSONArray())
-                )
+                method == "POST" && path == "/tools/scanner" -> ok(JSONObject().put("items", runScanner(safeJsonObject(bodyText))))
+                method == "GET" && path == "/tools/signals" -> ok(JSONObject().put("signals", buildSignals(query["portfolioId"].orEmpty())))
+                method == "GET" && path == "/tools/calendar" -> {
+                    val days = query["days"]?.toIntOrNull()?.coerceIn(1, 365) ?: 60
+                    val portfolioId = query["portfolioId"].orEmpty()
+                    ok(JSONObject().put("events", buildCalendar(days, portfolioId)))
+                }
+                method == "GET" && path == "/tools/recommendations" -> ok(JSONObject().put("recommendations", buildRecommendations(query["portfolioId"].orEmpty())))
+                method == "POST" && path == "/tools/alerts/run" -> ok(runAlertWorkflow(safeJsonObject(bodyText)))
 
-                method == "GET" && path == "/tools/alerts/history" -> ok(JSONObject().put("history", JSONArray()))
+                method == "GET" && path == "/tools/alerts/history" -> {
+                    val limit = query["limit"]?.toIntOrNull()?.coerceIn(1, 500) ?: 80
+                    ok(JSONObject().put("history", alertHistory(limit)))
+                }
                 method == "GET" && path == "/tools/charts/candles" -> ok(
                     JSONObject()
                         .put("ticker", query["ticker"].orEmpty())
@@ -297,9 +300,13 @@ class OfflineRepository(private val context: Context) {
                     ok(JSONObject().put("embedUrl", tv).put("url", tv).put("ticker", ticker).put("signal", "HOLD"))
                 }
 
-                method == "GET" && path == "/tools/catalyst" -> ok(JSONObject().put("rows", JSONArray()))
-                method == "GET" && path == "/tools/funds/ranking" -> ok(JSONObject().put("rows", JSONArray()))
-                method == "GET" && path == "/tools/espi" -> ok(JSONObject().put("items", JSONArray()))
+                method == "GET" && path == "/tools/catalyst" -> ok(JSONObject().put("rows", catalystRows()))
+                method == "GET" && path == "/tools/funds/ranking" -> ok(JSONObject().put("rows", fundsRankingRows()))
+                method == "GET" && path == "/tools/espi" -> {
+                    val phrase = query["query"].orEmpty()
+                    val limit = query["limit"]?.toIntOrNull()?.coerceIn(1, 200) ?: 40
+                    ok(JSONObject().put("items", espiItems(phrase, limit)))
+                }
                 method == "POST" && path == "/tools/tax/optimize" -> ok(taxOptimize(safeJsonObject(bodyText)))
                 method == "POST" && path == "/tools/tax/foreign-dividend" -> ok(taxForeignDividend(safeJsonObject(bodyText)))
                 method == "POST" && path == "/tools/tax/crypto" -> ok(taxCrypto(safeJsonObject(bodyText)))
@@ -466,86 +473,888 @@ class OfflineRepository(private val context: Context) {
     }
 
     private suspend fun computeMetrics(portfolioId: String): OfflineMetrics {
-        val state = JSONObject(ensureStateJson())
-        val operations = state.optJSONArray("operations") ?: JSONArray()
-        val assets = state.optJSONArray("assets") ?: JSONArray()
+        val snapshot = calculateSnapshot(portfolioId)
+        return OfflineMetrics(
+            portfolioId = snapshot.portfolioId,
+            marketValue = round2(snapshot.marketValue),
+            cashTotal = round2(snapshot.cash),
+            netWorth = round2(snapshot.netWorth),
+            totalPL = round2(snapshot.totalPl)
+        )
+    }
 
-        val assetById = HashMap<String, JSONObject>()
-        for (index in 0 until assets.length()) {
-            val row = assets.optJSONObject(index) ?: continue
-            assetById[row.optString("id", "")] = row
+    private suspend fun loadStateObject(): JSONObject = JSONObject(ensureStateJson())
+
+    private suspend fun persistStateObject(state: JSONObject) {
+        dao.upsertStateSnapshot(StateSnapshotEntity(stateJson = state.toString(), updatedAt = nowIso()))
+    }
+
+    private suspend fun calculateSnapshot(portfolioId: String): PortfolioSnapshot {
+        val state = loadStateObject()
+        val assets = state.optJSONArray("assets") ?: JSONArray()
+        val operations = state.optJSONArray("operations") ?: JSONArray()
+        val assetsById = HashMap<String, JSONObject>()
+        for (i in 0 until assets.length()) {
+            val asset = assets.optJSONObject(i) ?: continue
+            val id = asset.optString("id", "")
+            if (id.isNotBlank()) {
+                assetsById[id] = asset
+            }
         }
 
-        val holdings = HashMap<String, Double>()
+        val qtyByAsset = HashMap<String, Double>()
+        val costByAsset = HashMap<String, Double>()
         var cash = 0.0
         var contributions = 0.0
 
-        for (index in 0 until operations.length()) {
-            val op = operations.optJSONObject(index) ?: continue
+        for (i in 0 until operations.length()) {
+            val op = operations.optJSONObject(i) ?: continue
             val opPortfolioId = op.optString("portfolioId", "")
             if (portfolioId.isNotBlank() && opPortfolioId != portfolioId) {
                 continue
             }
-            val type = op.optString("type", "")
-            val quantity = num(op.opt("quantity"))
+            val type = normalizeKey(op.optString("type", ""))
+            val quantity = kotlin.math.abs(num(op.opt("quantity")))
             val price = num(op.opt("price"))
             val amountRaw = num(op.opt("amount"))
-            val amount = if (amountRaw != 0.0) amountRaw else quantity * price
-            val commission = num(op.opt("commission"))
+            val fee = num(if (op.has("fee")) op.opt("fee") else op.opt("commission"))
+            val amount = if (amountRaw != 0.0) kotlin.math.abs(amountRaw) else quantity * price
             val assetId = op.optString("assetId", "")
 
-            when (type) {
-                "Operacja gotówkowa", "Wpłata", "Wpłata gotówkowa" -> {
+            when {
+                type.contains("gotowk") || type.contains("wplata") || type.contains("cash") || type.contains("transfer") -> {
+                    val signed = if (amountRaw != 0.0) amountRaw else amount
+                    cash += signed
+                    if (signed > 0.0) {
+                        contributions += signed
+                    }
+                }
+
+                type.contains("kupno") || type.contains("buy") -> {
+                    cash -= amount + fee
+                    if (assetId.isNotBlank()) {
+                        qtyByAsset[assetId] = (qtyByAsset[assetId] ?: 0.0) + quantity
+                        costByAsset[assetId] = (costByAsset[assetId] ?: 0.0) + amount + fee
+                    }
+                }
+
+                type.contains("sprzed") || type.contains("sell") -> {
+                    cash += amount - fee
+                    if (assetId.isNotBlank()) {
+                        val beforeQty = qtyByAsset[assetId] ?: 0.0
+                        val beforeCost = costByAsset[assetId] ?: 0.0
+                        if (beforeQty > 0.0) {
+                            val sold = kotlin.math.min(quantity, beforeQty)
+                            val avgCost = beforeCost / beforeQty
+                            val costReduction = avgCost * sold
+                            qtyByAsset[assetId] = (beforeQty - sold).coerceAtLeast(0.0)
+                            costByAsset[assetId] = (beforeCost - costReduction).coerceAtLeast(0.0)
+                        }
+                    }
+                }
+
+                type.contains("dywidend") || type.contains("odsetk") || type.contains("dividend") || type.contains("interest") -> {
                     cash += amount
-                    contributions += amount
                 }
 
-                "Kupno waloru" -> {
-                    cash -= amount + commission
-                    if (assetId.isNotBlank()) {
-                        holdings[assetId] = (holdings[assetId] ?: 0.0) + quantity
-                    }
-                }
-
-                "Sprzedaż waloru" -> {
-                    cash += amount - commission
-                    if (assetId.isNotBlank()) {
-                        holdings[assetId] = (holdings[assetId] ?: 0.0) - quantity
-                    }
-                }
-
-                "Dywidenda", "Odsetki" -> cash += amount
-                "Prowizja" -> cash -= kotlin.math.abs(amount)
-                else -> {
-                    // Keep other operations neutral for core offline metric pass.
+                type.contains("prowiz") || type.contains("fee") || type.contains("commission") -> {
+                    cash -= kotlin.math.abs(if (amountRaw != 0.0) amountRaw else fee)
                 }
             }
         }
 
+        val holdings = mutableListOf<HoldingRow>()
         var marketValue = 0.0
-        holdings.forEach { (assetId, qty) ->
-            if (qty <= 0.0) return@forEach
-            val asset = assetById[assetId] ?: return@forEach
+        for ((assetId, quantity) in qtyByAsset) {
+            if (quantity <= 0.0) {
+                continue
+            }
+            val asset = assetsById[assetId] ?: continue
+            val currentPrice = num(asset.opt("currentPrice"))
+            val costValue = (costByAsset[assetId] ?: 0.0).coerceAtLeast(0.0)
+            val value = quantity * currentPrice
+            val unrealized = value - costValue
+            holdings += HoldingRow(
+                assetId = assetId,
+                ticker = asset.optString("ticker", ""),
+                name = asset.optString("name", ""),
+                currency = asset.optString("currency", state.optJSONObject("meta")?.optString("baseCurrency", "PLN") ?: "PLN"),
+                risk = num(asset.opt("risk")).coerceIn(1.0, 10.0),
+                sector = asset.optString("sector", ""),
+                quantity = round6(quantity),
+                averageCost = if (quantity > 0.0) round6(costValue / quantity) else 0.0,
+                currentPrice = round6(currentPrice),
+                marketValue = round2(value),
+                costValue = round2(costValue),
+                unrealized = round2(unrealized),
+                unrealizedPct = if (costValue > 0.0) round2((unrealized / costValue) * 100.0) else 0.0,
+                sharePct = 0.0
+            )
+            marketValue += value
+        }
+
+        val holdingsWithShare = holdings.map { row ->
+            if (marketValue <= 0.0) {
+                row
+            } else {
+                row.copy(sharePct = round2((row.marketValue / marketValue) * 100.0))
+            }
+        }
+        val netWorth = marketValue + cash
+        val totalPl = netWorth - contributions
+        return PortfolioSnapshot(
+            portfolioId = portfolioId,
+            cash = round2(cash),
+            contributions = round2(contributions),
+            marketValue = round2(marketValue),
+            netWorth = round2(netWorth),
+            totalPl = round2(totalPl),
+            holdings = holdingsWithShare
+        )
+    }
+
+    private suspend fun generateReport(reportName: String, portfolioId: String): JSONObject {
+        val state = loadStateObject()
+        val snapshot = calculateSnapshot(portfolioId)
+        val normalized = normalizeKey(reportName)
+        if (normalized.contains("historiaoperacji")) {
+            val operations = state.optJSONArray("operations") ?: JSONArray()
+            val rows = JSONArray()
+            for (i in 0 until operations.length()) {
+                val op = operations.optJSONObject(i) ?: continue
+                if (portfolioId.isNotBlank() && op.optString("portfolioId", "") != portfolioId) {
+                    continue
+                }
+                rows.put(
+                    JSONArray()
+                        .put(op.optString("date", ""))
+                        .put(op.optString("type", ""))
+                        .put(op.optString("assetId", ""))
+                        .put(round2(num(op.opt("quantity"))))
+                        .put(round2(num(op.opt("price"))))
+                        .put(round2(num(op.opt("amount"))))
+                        .put(round2(num(op.opt("fee"))))
+                )
+            }
+            return JSONObject()
+                .put("reportName", reportName)
+                .put("info", "$reportName | Offline Android")
+                .put("headers", JSONArray().put("Data").put("Typ").put("Asset ID").put("Ilość").put("Cena").put("Kwota").put("Prowizja"))
+                .put("rows", rows)
+                .put("chart", JSONObject().put("labels", JSONArray()).put("values", JSONArray()).put("color", "#0e7a64"))
+        }
+        if (normalized.contains("podsumowanieportfeli")) {
+            val portfolios = state.optJSONArray("portfolios") ?: JSONArray()
+            val rows = JSONArray()
+            for (i in 0 until portfolios.length()) {
+                val portfolio = portfolios.optJSONObject(i) ?: continue
+                val id = portfolio.optString("id", "")
+                val name = portfolio.optString("name", id)
+                val pSnapshot = calculateSnapshot(id)
+                rows.put(
+                    JSONArray()
+                        .put(name)
+                        .put(round2(pSnapshot.marketValue))
+                        .put(round2(pSnapshot.cash))
+                        .put(round2(pSnapshot.netWorth))
+                        .put(round2(pSnapshot.totalPl))
+                )
+            }
+            return JSONObject()
+                .put("reportName", reportName)
+                .put("info", "$reportName | Offline Android")
+                .put("headers", JSONArray().put("Portfel").put("Wartość rynkowa").put("Gotówka").put("Netto").put("P/L"))
+                .put("rows", rows)
+                .put("chart", JSONObject().put("labels", JSONArray()).put("values", JSONArray()).put("color", "#0e7a64"))
+        }
+        return JSONObject()
+            .put("reportName", reportName)
+            .put("info", "$reportName | Offline Android")
+            .put("headers", JSONArray().put("Metryka").put("Wartość"))
+            .put(
+                "rows",
+                JSONArray()
+                    .put(JSONArray().put("Wartość rynkowa").put(round2(snapshot.marketValue)))
+                    .put(JSONArray().put("Gotówka").put(round2(snapshot.cash)))
+                    .put(JSONArray().put("Wartość netto").put(round2(snapshot.netWorth)))
+                    .put(JSONArray().put("Całkowity zysk/strata").put(round2(snapshot.totalPl)))
+                    .put(JSONArray().put("Pozycje").put(snapshot.holdings.size))
+            )
+            .put(
+                "chart",
+                JSONObject()
+                    .put("labels", JSONArray().put(todayIso()))
+                    .put("values", JSONArray().put(round2(snapshot.netWorth)))
+                    .put("color", "#0e7a64")
+            )
+    }
+
+    private suspend fun runScanner(filters: JSONObject): JSONArray {
+        val minScore = num(filters.opt("minScore"))
+        val maxRiskInput = if (filters.has("maxRisk")) num(filters.opt("maxRisk")) else 10.0
+        val maxRisk = if (maxRiskInput <= 0.0) 10.0 else maxRiskInput.coerceIn(1.0, 10.0)
+        val minPrice = num(filters.opt("minPrice")).coerceAtLeast(0.0)
+        val sectorFilter = filters.optString("sector", "").trim().lowercase()
+        val portfolioId = filters.optString("portfolioId", "")
+        val state = loadStateObject()
+        val assets = state.optJSONArray("assets") ?: JSONArray()
+        val snapshot = calculateSnapshot(portfolioId)
+        val holdingByAsset = snapshot.holdings.associateBy { it.assetId }
+        val rows = JSONArray()
+        for (i in 0 until assets.length()) {
+            val asset = assets.optJSONObject(i) ?: continue
+            val assetId = asset.optString("id", "")
+            val holding = holdingByAsset[assetId]
+            val price = num(asset.opt("currentPrice"))
+            val risk = num(asset.opt("risk")).coerceIn(1.0, 10.0)
+            val share = holding?.sharePct ?: 0.0
+            val unrealizedPct = holding?.unrealizedPct ?: 0.0
+            val sector = asset.optString("sector", "")
+            val score = kotlin.math.max(
+                0.0,
+                (10.0 - risk) * 6.0 +
+                    kotlin.math.min(20.0, kotlin.math.max(-20.0, unrealizedPct) + 20.0) +
+                    kotlin.math.min(20.0, price / 10.0) -
+                    kotlin.math.max(0.0, share - 20.0) * 1.2
+            )
+            if (score < minScore || risk > maxRisk || price < minPrice) {
+                continue
+            }
+            if (sectorFilter.isNotBlank() && !sector.lowercase().contains(sectorFilter)) {
+                continue
+            }
+            val signal = when {
+                score >= 72.0 -> "BUY"
+                score >= 46.0 -> "HOLD"
+                else -> "REDUCE"
+            }
+            val reason = when {
+                share > 35.0 -> "Duża koncentracja pozycji"
+                unrealizedPct < -8.0 -> "Słaba dynamika P/L"
+                risk >= 8.0 -> "Wysokie ryzyko waloru"
+                else -> "Profil zgodny z filtrem"
+            }
+            rows.put(
+                JSONObject()
+                    .put("ticker", asset.optString("ticker", ""))
+                    .put("name", asset.optString("name", ""))
+                    .put("signal", signal)
+                    .put("score", round2(score))
+                    .put("risk", round2(risk))
+                    .put("price", round2(price))
+                    .put("currency", asset.optString("currency", state.optJSONObject("meta")?.optString("baseCurrency", "PLN") ?: "PLN"))
+                    .put("share", round2(share))
+                    .put("unrealizedPct", round2(unrealizedPct))
+                    .put("sector", sector)
+                    .put("signalReason", reason)
+            )
+        }
+        return rows
+    }
+
+    private suspend fun buildSignals(portfolioId: String): JSONArray {
+        val scanner = runScanner(
+            JSONObject()
+                .put("minScore", 0)
+                .put("maxRisk", 10)
+                .put("minPrice", 0)
+                .put("portfolioId", portfolioId)
+        )
+        val rows = JSONArray()
+        for (i in 0 until scanner.length()) {
+            val item = scanner.optJSONObject(i) ?: continue
+            val score = num(item.opt("score"))
+            val confidence = (score / 100.0).coerceIn(0.1, 0.99)
+            rows.put(
+                JSONObject()
+                    .put("ticker", item.optString("ticker", ""))
+                    .put("name", item.optString("name", ""))
+                    .put("signal", item.optString("signal", "HOLD"))
+                    .put("confidence", round2(confidence))
+                    .put("risk", round2(num(item.opt("risk"))))
+                    .put("share", round2(num(item.opt("share"))))
+                    .put("unrealizedPct", round2(num(item.opt("unrealizedPct"))))
+                    .put("reason", item.optString("signalReason", "Analiza offline"))
+            )
+        }
+        return rows
+    }
+
+    private suspend fun buildCalendar(days: Int, portfolioId: String): JSONArray {
+        val state = loadStateObject()
+        val liabilities = state.optJSONArray("liabilities") ?: JSONArray()
+        val recurring = state.optJSONArray("recurringOps") ?: JSONArray()
+        val alerts = state.optJSONArray("alerts") ?: JSONArray()
+        val today = LocalDate.now(ZoneOffset.UTC)
+        val maxDate = today.plusDays(days.toLong())
+        val rows = mutableListOf<JSONObject>()
+
+        for (i in 0 until liabilities.length()) {
+            val row = liabilities.optJSONObject(i) ?: continue
+            val due = parseIsoDate(row.optString("dueDate", "")) ?: continue
+            if (due.isBefore(today) || due.isAfter(maxDate)) {
+                continue
+            }
+            rows += JSONObject()
+                .put("date", due.toString())
+                .put("type", "Zobowiązanie")
+                .put("title", row.optString("name", "Zobowiązanie"))
+                .put("priority", if (due.isBefore(today.plusDays(7))) "wysoki" else "średni")
+                .put("details", "Kwota: ${round2(num(row.opt("amount")))} ${row.optString("currency", "PLN")}")
+        }
+
+        for (i in 0 until recurring.length()) {
+            val row = recurring.optJSONObject(i) ?: continue
+            if (portfolioId.isNotBlank() && row.optString("portfolioId", "") != portfolioId) {
+                continue
+            }
+            val start = parseIsoDate(row.optString("startDate", "")) ?: continue
+            if (start.isBefore(today) || start.isAfter(maxDate)) {
+                continue
+            }
+            rows += JSONObject()
+                .put("date", start.toString())
+                .put("type", "Operacja cykliczna")
+                .put("title", row.optString("name", "Operacja cykliczna"))
+                .put("priority", "średni")
+                .put("details", "Kwota: ${round2(num(row.opt("amount")))} ${row.optString("currency", "PLN")}")
+        }
+
+        for (i in 0 until alerts.length()) {
+            val row = alerts.optJSONObject(i) ?: continue
+            rows += JSONObject()
+                .put("date", today.plusDays(1).toString())
+                .put("type", "Alert")
+                .put("title", "Alert ceny: ${row.optString("assetId", "")}")
+                .put("priority", "średni")
+                .put("details", "Warunek ${row.optString("direction", "gte")} ${round2(num(row.opt("targetPrice")))}")
+        }
+
+        rows.sortBy { it.optString("date", "9999-12-31") }
+        val out = JSONArray()
+        rows.take(250).forEach { out.put(it) }
+        return out
+    }
+
+    private suspend fun buildRecommendations(portfolioId: String): JSONArray {
+        val snapshot = calculateSnapshot(portfolioId)
+        val out = JSONArray()
+        if (snapshot.cash > 0.0) {
+            out.put(
+                JSONObject()
+                    .put("priority", "Wysoki")
+                    .put("category", "Alokacja")
+                    .put("title", "Niewykorzystana gotówka")
+                    .put("action", "Rozważ wejście etapami")
+                    .put("impact", "Gotówka ${round2(snapshot.cash)}")
+            )
+        }
+        val topShare = snapshot.holdings.maxByOrNull { it.sharePct }
+        if (topShare != null && topShare.sharePct > 35.0) {
+            out.put(
+                JSONObject()
+                    .put("priority", "Wysoki")
+                    .put("category", "Ryzyko")
+                    .put("title", "Koncentracja na ${topShare.ticker}")
+                    .put("action", "Zmniejsz wagę pozycji")
+                    .put("impact", "Udział ${round2(topShare.sharePct)}%")
+            )
+        }
+        snapshot.holdings
+            .filter { it.unrealizedPct < -10.0 }
+            .take(3)
+            .forEach { row ->
+                out.put(
+                    JSONObject()
+                        .put("priority", "Średni")
+                        .put("category", "Kontrola strat")
+                        .put("title", "Pozycja pod presją: ${row.ticker}")
+                        .put("action", "Sprawdź tezę i poziomy wyjścia")
+                        .put("impact", "P/L ${round2(row.unrealizedPct)}%")
+                )
+            }
+        if (out.length() == 0) {
+            out.put(
+                JSONObject()
+                    .put("priority", "Info")
+                    .put("category", "Portfel")
+                    .put("title", "Brak krytycznych odchyleń")
+                    .put("action", "Kontynuuj regularny przegląd")
+                    .put("impact", "Snapshot stabilny")
+            )
+        }
+        return out
+    }
+
+    private suspend fun runAlertWorkflow(payload: JSONObject): JSONObject {
+        val portfolioId = payload.optString("portfolioId", "")
+        val state = loadStateObject()
+        val assets = state.optJSONArray("assets") ?: JSONArray()
+        val alerts = state.optJSONArray("alerts") ?: JSONArray()
+        val assetById = HashMap<String, JSONObject>()
+        for (i in 0 until assets.length()) {
+            val row = assets.optJSONObject(i) ?: continue
+            assetById[row.optString("id", "")] = row
+        }
+        val now = nowIso()
+        val triggered = JSONArray()
+        val historyAppend = mutableListOf<JSONObject>()
+        var totalAlerts = 0
+        for (i in 0 until alerts.length()) {
+            val alert = alerts.optJSONObject(i) ?: continue
+            totalAlerts += 1
+            val asset = assetById[alert.optString("assetId", "")] ?: continue
             if (portfolioId.isNotBlank()) {
                 val assetPortfolioId = asset.optString("portfolioId", "")
                 if (assetPortfolioId.isNotBlank() && assetPortfolioId != portfolioId) {
-                    return@forEach
+                    continue
                 }
             }
-            val currentPrice = num(asset.opt("currentPrice"))
-            marketValue += qty * currentPrice
+            val price = num(asset.opt("currentPrice"))
+            val target = num(alert.opt("targetPrice"))
+            val direction = alert.optString("direction", "gte")
+            val matched = (direction == "gte" && price >= target) || (direction == "lte" && price <= target)
+            if (!matched) {
+                continue
+            }
+            alert.put("lastTriggerAt", now)
+            val ticker = asset.optString("ticker", "")
+            val row = JSONObject()
+                .put("eventTime", now)
+                .put("ticker", ticker)
+                .put("direction", direction)
+                .put("targetPrice", round2(target))
+                .put("currentPrice", round2(price))
+                .put("status", "triggered")
+                .put("message", "Warunek alertu spełniony")
+            historyAppend += row
+            triggered.put(
+                JSONObject()
+                    .put("ticker", ticker)
+                    .put("direction", direction)
+                    .put("targetPrice", round2(target))
+                    .put("currentPrice", round2(price))
+                    .put("currency", asset.optString("currency", "PLN"))
+            )
         }
+        persistStateObject(state)
+        if (historyAppend.isNotEmpty()) {
+            appendAlertHistory(historyAppend)
+        }
+        val history = alertHistory(80)
+        return JSONObject()
+            .put("summary", JSONObject().put("triggered", triggered.length()).put("totalAlerts", totalAlerts))
+            .put("history", history)
+            .put("triggered", triggered)
+    }
 
-        val netWorth = marketValue + cash
-        val totalPL = netWorth - contributions
+    private suspend fun alertHistory(limit: Int): JSONArray {
+        val stored = jsonConfig(KEY_ALERT_HISTORY, JSONArray()).optJSONArray("items") ?: JSONArray()
+        val out = JSONArray()
+        for (i in 0 until minOf(limit, stored.length())) {
+            out.put(stored.opt(i))
+        }
+        return out
+    }
 
-        return OfflineMetrics(
-            portfolioId = portfolioId,
-            marketValue = round2(marketValue),
-            cashTotal = round2(cash),
-            netWorth = round2(netWorth),
-            totalPL = round2(totalPL)
+    private suspend fun appendAlertHistory(items: List<JSONObject>) {
+        val stored = jsonConfig(KEY_ALERT_HISTORY, JSONArray()).optJSONArray("items") ?: JSONArray()
+        val next = JSONArray()
+        items.forEach { next.put(it) }
+        for (i in 0 until minOf(300, stored.length())) {
+            next.put(stored.opt(i))
+        }
+        saveJsonConfig(KEY_ALERT_HISTORY, JSONObject().put("items", next))
+    }
+
+    private suspend fun catalystRows(): JSONArray {
+        val state = loadStateObject()
+        val assets = state.optJSONArray("assets") ?: JSONArray()
+        val nowDate = LocalDate.now(ZoneOffset.UTC)
+        val rows = JSONArray()
+        for (i in 0 until assets.length()) {
+            val asset = assets.optJSONObject(i) ?: continue
+            val type = normalizeKey(asset.optString("type", ""))
+            if (!type.contains("obligac")) {
+                continue
+            }
+            val price = num(asset.opt("currentPrice")).coerceAtLeast(0.01)
+            val risk = num(asset.opt("risk")).coerceIn(1.0, 10.0)
+            val years = (11.0 - risk).coerceIn(1.0, 10.0)
+            val coupon = round2((10.0 - risk) * 0.7 + 1.5)
+            val ytm = round2(coupon + ((100.0 - price) / years))
+            rows.put(
+                JSONObject()
+                    .put("ticker", asset.optString("ticker", ""))
+                    .put("name", asset.optString("name", ""))
+                    .put("price", round2(price))
+                    .put("currency", asset.optString("currency", "PLN"))
+                    .put("couponRate", coupon)
+                    .put("maturityDate", nowDate.plusYears(years.toLong()).toString())
+                    .put("yearsToMaturity", round2(years))
+                    .put("ytmApproxPct", ytm)
+                    .put("durationProxy", round2(years * 0.65))
+                    .put("riskLabel", if (risk >= 8.0) "wysokie" else if (risk >= 5.0) "średnie" else "niskie")
+            )
+        }
+        return rows
+    }
+
+    private suspend fun fundsRankingRows(): JSONArray {
+        val state = loadStateObject()
+        val assets = state.optJSONArray("assets") ?: JSONArray()
+        val snapshot = calculateSnapshot("")
+        val holdingByAsset = snapshot.holdings.associateBy { it.assetId }
+        val temp = mutableListOf<JSONObject>()
+        for (i in 0 until assets.length()) {
+            val asset = assets.optJSONObject(i) ?: continue
+            val type = normalizeKey(asset.optString("type", ""))
+            if (!type.contains("fundusz") && !type.contains("etf")) {
+                continue
+            }
+            val assetId = asset.optString("id", "")
+            val holding = holdingByAsset[assetId]
+            val risk = num(asset.opt("risk")).coerceIn(1.0, 10.0)
+            val annual = holding?.unrealizedPct ?: (12.0 - risk)
+            val cumulative = annual * 1.4
+            val vol = risk * 2.3
+            val mdd = -kotlin.math.abs(cumulative * 0.6)
+            val sharpe = if (vol > 0.0) annual / vol else 0.0
+            val returnRisk = if (risk > 0) annual / risk else 0.0
+            val score = kotlin.math.max(0.0, annual * 0.6 + sharpe * 20.0 + returnRisk * 6.0)
+            temp += JSONObject()
+                .put("ticker", asset.optString("ticker", ""))
+                .put("name", asset.optString("name", ""))
+                .put("annualReturnPct", round2(annual))
+                .put("cumulativeReturnPct", round2(cumulative))
+                .put("volatilityPct", round2(vol))
+                .put("maxDrawdownPct", round2(mdd))
+                .put("sharpeApprox", round2(sharpe))
+                .put("returnRisk", round2(returnRisk))
+                .put("score", round2(score))
+        }
+        val sorted = temp.sortedByDescending { num(it.opt("score")) }
+        val out = JSONArray()
+        sorted.forEachIndexed { index, row ->
+            row.put("rank", index + 1)
+            out.put(row)
+        }
+        return out
+    }
+
+    private suspend fun espiItems(phrase: String, limit: Int): JSONArray {
+        val state = loadStateObject()
+        val assets = state.optJSONArray("assets") ?: JSONArray()
+        val normalizedPhrase = phrase.trim().lowercase()
+        val out = JSONArray()
+        var dayOffset = 0L
+        for (i in 0 until assets.length()) {
+            if (out.length() >= limit) {
+                break
+            }
+            val asset = assets.optJSONObject(i) ?: continue
+            val ticker = asset.optString("ticker", "")
+            if (ticker.isBlank()) {
+                continue
+            }
+            val title = "Aktualizacja emitenta $ticker"
+            if (normalizedPhrase.isNotBlank() && !title.lowercase().contains(normalizedPhrase) && !ticker.lowercase().contains(normalizedPhrase)) {
+                continue
+            }
+            out.put(
+                JSONObject()
+                    .put("publishedAt", OffsetDateTime.now(ZoneOffset.UTC).minusDays(dayOffset).toString())
+                    .put("ticker", ticker)
+                    .put("title", title)
+                    .put("source", "offline-feed")
+                    .put("link", "https://www.gpw.pl")
+            )
+            dayOffset += 1
+        }
+        return out
+    }
+
+    private suspend fun importBrokerCsv(broker: String, payload: JSONObject): JSONObject {
+        val csv = payload.optString("csv", "")
+        val fileName = payload.optString("fileName", "")
+        val rows = parseCsvRows(csv)
+        val state = loadStateObject()
+        val options = payload.optJSONObject("options") ?: JSONObject()
+        val portfolios = state.optJSONArray("portfolios") ?: JSONArray()
+        val accounts = state.optJSONArray("accounts") ?: JSONArray()
+        val assets = state.optJSONArray("assets") ?: JSONArray()
+        val operations = state.optJSONArray("operations") ?: JSONArray()
+        val baseCurrency = state.optJSONObject("meta")?.optString("baseCurrency", "PLN") ?: "PLN"
+        val portfolioId = ensurePortfolioId(portfolios, options.optString("portfolioId", ""))
+        val accountId = ensureAccountId(accounts, options.optString("accountId", ""), baseCurrency)
+        var imported = 0
+        var skipped = 0
+        val errors = JSONArray()
+
+        rows.forEachIndexed { index, row ->
+            try {
+                val ticker = pickValue(row, "ticker", "symbol", "asset", "walor", "instrument").uppercase()
+                val typeText = pickValue(row, "type", "typ", "operation", "transaction", "action")
+                var opType = detectOperationType(typeText, ticker, pickNumber(row, "quantity", "qty", "ilosc", "quantitydocelowa"))
+                if (opType == "unknown") {
+                    opType = "Operacja gotówkowa"
+                }
+                val date = normalizeDateText(pickValue(row, "date", "data", "tradeDate", "executionDate"))
+                var quantity = kotlin.math.abs(pickNumber(row, "quantity", "qty", "ilosc"))
+                val price = pickNumber(row, "price", "cena", "unitprice")
+                val fee = pickNumber(row, "fee", "commission", "prowizja", "koszt")
+                var amount = pickNumber(row, "amount", "kwota", "value", "netamount")
+                if (amount == 0.0 && quantity > 0.0 && price > 0.0) {
+                    amount = quantity * price
+                }
+                if (opType == "Sprzedaż waloru" && quantity <= 0.0) {
+                    quantity = kotlin.math.abs(quantity)
+                }
+                val currency = pickValue(row, "currency", "waluta").ifBlank { baseCurrency }
+                val note = pickValue(row, "note", "notatka", "description", "opis")
+                val tags = toJsonTags(pickValue(row, "tags", "tagi"))
+
+                var assetId = ""
+                if (opType == "Kupno waloru" || opType == "Sprzedaż waloru") {
+                    if (ticker.isBlank()) {
+                        skipped += 1
+                        errors.put(JSONObject().put("row", index + 2).put("message", "Brak tickera dla transakcji waloru."))
+                        return@forEachIndexed
+                    }
+                    assetId = ensureAssetId(assets, ticker, currency)
+                }
+
+                operations.put(
+                    JSONObject()
+                        .put("id", "op-${System.currentTimeMillis()}-$index")
+                        .put("date", date)
+                        .put("type", opType)
+                        .put("portfolioId", portfolioId)
+                        .put("accountId", accountId)
+                        .put("assetId", assetId)
+                        .put("targetAssetId", "")
+                        .put("quantity", round6(quantity))
+                        .put("targetQuantity", 0.0)
+                        .put("price", round6(price))
+                        .put("amount", round2(amount))
+                        .put("fee", round2(fee))
+                        .put("currency", currency)
+                        .put("tags", tags)
+                        .put("note", note)
+                        .put("createdAt", nowIso())
+                )
+                imported += 1
+            } catch (error: Exception) {
+                skipped += 1
+                errors.put(JSONObject().put("row", index + 2).put("message", error.message ?: "Import error"))
+            }
+        }
+        persistStateObject(state)
+        return JSONObject()
+            .put("broker", broker)
+            .put("fileName", fileName)
+            .put("rowCount", rows.size)
+            .put("importedCount", imported)
+            .put("skippedCount", skipped)
+            .put("errors", errors)
+            .put("offline", true)
+    }
+
+    private fun parseCsvRows(csv: String): List<Map<String, String>> {
+        val lines = csv
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .split('\n')
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+        if (lines.isEmpty()) {
+            return emptyList()
+        }
+        val delimiter = if (lines.first().count { it == ';' } > lines.first().count { it == ',' }) ';' else ','
+        val header = parseCsvLine(lines.first(), delimiter).map { normalizeKey(it) }
+        if (header.isEmpty()) {
+            return emptyList()
+        }
+        val output = mutableListOf<Map<String, String>>()
+        for (i in 1 until lines.size) {
+            val fields = parseCsvLine(lines[i], delimiter)
+            val row = HashMap<String, String>()
+            for (idx in header.indices) {
+                val key = header[idx]
+                row[key] = fields.getOrNull(idx)?.trim().orEmpty()
+            }
+            output += row
+        }
+        return output
+    }
+
+    private fun parseCsvLine(line: String, delimiter: Char): List<String> {
+        val output = mutableListOf<String>()
+        val current = StringBuilder()
+        var inQuotes = false
+        var i = 0
+        while (i < line.length) {
+            val ch = line[i]
+            if (ch == '"') {
+                if (inQuotes && i + 1 < line.length && line[i + 1] == '"') {
+                    current.append('"')
+                    i += 1
+                } else {
+                    inQuotes = !inQuotes
+                }
+            } else if (ch == delimiter && !inQuotes) {
+                output += current.toString()
+                current.setLength(0)
+            } else {
+                current.append(ch)
+            }
+            i += 1
+        }
+        output += current.toString()
+        return output
+    }
+
+    private fun pickValue(row: Map<String, String>, vararg keys: String): String {
+        for (raw in keys) {
+            val key = normalizeKey(raw)
+            val value = row[key]?.trim().orEmpty()
+            if (value.isNotBlank()) {
+                return value
+            }
+        }
+        return ""
+    }
+
+    private fun pickNumber(row: Map<String, String>, vararg keys: String): Double {
+        return num(pickValue(row, *keys))
+    }
+
+    private fun ensurePortfolioId(portfolios: JSONArray, requestedId: String): String {
+        if (requestedId.isNotBlank()) {
+            for (i in 0 until portfolios.length()) {
+                val row = portfolios.optJSONObject(i) ?: continue
+                if (row.optString("id", "") == requestedId) {
+                    return requestedId
+                }
+            }
+        }
+        if (portfolios.length() > 0) {
+            return portfolios.optJSONObject(0)?.optString("id", "ptf-main") ?: "ptf-main"
+        }
+        val id = "ptf-${System.currentTimeMillis()}"
+        portfolios.put(
+            JSONObject()
+                .put("id", id)
+                .put("name", "Główny")
+                .put("currency", "PLN")
+                .put("benchmark", "WIG20")
+                .put("goal", "Import")
+                .put("parentId", "")
+                .put("twinOf", "")
+                .put("groupName", "")
+                .put("isPublic", false)
+                .put("createdAt", nowIso())
         )
+        return id
+    }
+
+    private fun ensureAccountId(accounts: JSONArray, requestedId: String, baseCurrency: String): String {
+        if (requestedId.isNotBlank()) {
+            for (i in 0 until accounts.length()) {
+                val row = accounts.optJSONObject(i) ?: continue
+                if (row.optString("id", "") == requestedId) {
+                    return requestedId
+                }
+            }
+        }
+        if (accounts.length() > 0) {
+            return accounts.optJSONObject(0)?.optString("id", "acc-main") ?: "acc-main"
+        }
+        val id = "acc-${System.currentTimeMillis()}"
+        accounts.put(
+            JSONObject()
+                .put("id", id)
+                .put("name", "Konto import")
+                .put("type", "Broker")
+                .put("currency", baseCurrency)
+                .put("createdAt", nowIso())
+        )
+        return id
+    }
+
+    private fun ensureAssetId(assets: JSONArray, ticker: String, currency: String): String {
+        val normalizedTicker = ticker.uppercase()
+        for (i in 0 until assets.length()) {
+            val row = assets.optJSONObject(i) ?: continue
+            if (row.optString("ticker", "").uppercase() == normalizedTicker) {
+                return row.optString("id", "")
+            }
+        }
+        val id = "ast-${System.currentTimeMillis()}-${assets.length()}"
+        assets.put(
+            JSONObject()
+                .put("id", id)
+                .put("ticker", normalizedTicker)
+                .put("name", normalizedTicker)
+                .put("type", "Akcja")
+                .put("currency", currency)
+                .put("currentPrice", 0.0)
+                .put("risk", 5)
+                .put("sector", "")
+                .put("industry", "")
+                .put("tags", JSONArray())
+                .put("benchmark", "")
+                .put("createdAt", nowIso())
+        )
+        return id
+    }
+
+    private fun detectOperationType(typeText: String, ticker: String, quantity: Double): String {
+        val type = normalizeKey(typeText)
+        return when {
+            type.contains("kupno") || type.contains("buy") -> "Kupno waloru"
+            type.contains("sprzed") || type.contains("sell") -> "Sprzedaż waloru"
+            type.contains("dywidend") || type.contains("dividend") -> "Dywidenda"
+            type.contains("odsetk") || type.contains("interest") -> "Odsetki"
+            type.contains("fee") || type.contains("prowiz") || type.contains("commission") -> "Prowizja"
+            type.contains("gotowk") || type.contains("cash") || type.contains("deposit") || type.contains("withdraw") -> "Operacja gotówkowa"
+            ticker.isNotBlank() && quantity > 0.0 -> "Kupno waloru"
+            ticker.isNotBlank() && quantity < 0.0 -> "Sprzedaż waloru"
+            else -> "unknown"
+        }
+    }
+
+    private fun toJsonTags(raw: String): JSONArray {
+        val tags = raw.split(',', ';', '|').map { it.trim() }.filter { it.isNotBlank() }
+        val out = JSONArray()
+        tags.forEach { out.put(it) }
+        return out
+    }
+
+    private fun normalizeDateText(raw: String): String {
+        val date = parseIsoDate(raw)
+        return date?.toString() ?: todayIso()
+    }
+
+    private fun parseIsoDate(raw: String): LocalDate? {
+        val text = raw.trim()
+        if (text.isBlank()) {
+            return null
+        }
+        val patterns = listOf(
+            DateTimeFormatter.ISO_LOCAL_DATE,
+            DateTimeFormatter.ofPattern("dd.MM.yyyy"),
+            DateTimeFormatter.ofPattern("dd-MM-yyyy"),
+            DateTimeFormatter.ofPattern("yyyy/MM/dd")
+        )
+        for (pattern in patterns) {
+            try {
+                return LocalDate.parse(text.take(10), pattern)
+            } catch (_: Exception) {
+                continue
+            }
+        }
+        return null
     }
 
     private suspend fun realtimeStatusObject(): JSONObject {
@@ -1106,9 +1915,48 @@ class OfflineRepository(private val context: Context) {
             "Struktura kupna walorów",
             "Zysk per typ inwestycji",
             "Zysk per konto inwestycyjne",
+            "Struktura portfela w czasie",
+            "Udział walorów per konto",
+            "Wartość jednostki w czasie",
+            "Zmienność stopy zwrotu",
+            "Rolling return w czasie",
+            "Drawdown portfela w czasie",
+            "Zysk w czasie",
+            "Zmiana okresowa w czasie",
+            "Wartość inwestycji w czasie",
+            "Udział wartości portfeli w czasie",
+            "Wartość zobowiązań w czasie",
             "Wartość majątku w czasie",
+            "Struktura majątku",
+            "Ekspozycja walutowa",
+            "Bilans kontraktów",
+            "Wkład i wartość",
+            "Wkład i zysk",
+            "Analiza fundamentalna",
+            "Analiza ryzyka",
+            "Zarządzanie ryzykiem",
+            "Analiza sektorowa i branżowa",
+            "Analiza indeksowa",
+            "Struktura per tag",
+            "Udział kont inwestycyjnych w portfelu",
+            "Stopa zwrotu w czasie i benchmark",
+            "Udział walorów w czasie",
+            "Udział tagów w czasie",
+            "Udział kont inwestycyjnych w czasie",
+            "Ekspozycja walutowa w czasie",
+            "Stopa zwrotu w okresach",
+            "Ranking walorów portfela",
+            "Porównanie walorów portfela",
+            "Analiza dywidend w czasie",
+            "Prowizje w czasie",
+            "Mapa cieplna portfela",
+            "Zamknięte inwestycje - podsumowanie",
+            "Zamknięte inwestycje - szczegóły",
+            "Zamknięte inwestycje - statystyki",
             "Podsumowanie portfeli",
-            "Historia operacji"
+            "Historia operacji",
+            "Podsumowania na e-mail",
+            "Limity IKE/IKZE/PPK"
         )
         val arr = JSONArray()
         items.forEach { name -> arr.put(JSONObject().put("name", name)) }
@@ -1211,6 +2059,17 @@ class OfflineRepository(private val context: Context) {
         }
     }
 
+    private fun normalizeKey(value: String): String {
+        val noAccents = Normalizer.normalize(value, Normalizer.Form.NFD)
+            .replace("\\p{Mn}+".toRegex(), "")
+        return noAccents
+            .trim()
+            .lowercase()
+            .replace(" ", "")
+            .replace("_", "")
+            .replace("-", "")
+    }
+
     private fun nowIso(): String = Instant.now().toString()
 
     private fun todayIso(): String = OffsetDateTime.now(ZoneOffset.UTC).toLocalDate().toString()
@@ -1228,6 +2087,7 @@ class OfflineRepository(private val context: Context) {
     }
 
     private fun round2(value: Double): Double = ((value * 100.0).roundToInt()) / 100.0
+    private fun round6(value: Double): Double = ((value * 1_000_000.0).roundToInt()) / 1_000_000.0
 
     private fun ok(body: JSONObject): ApiDispatchResult = ApiDispatchResult(status = 200, body = body.toString())
 
@@ -1242,5 +2102,6 @@ class OfflineRepository(private val context: Context) {
         private const val KEY_FORUM_POSTS = "forum_posts"
         private const val KEY_OPTION_POSITIONS = "option_positions"
         private const val KEY_MODEL_PORTFOLIO = "model_portfolio"
+        private const val KEY_ALERT_HISTORY = "alert_history"
     }
 }
