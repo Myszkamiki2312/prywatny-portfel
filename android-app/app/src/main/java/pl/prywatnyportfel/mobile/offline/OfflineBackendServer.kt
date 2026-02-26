@@ -8,11 +8,12 @@ import io.ktor.server.application.call
 import io.ktor.server.engine.ApplicationEngine
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.cio.CIO
+import io.ktor.server.request.httpMethod
 import io.ktor.server.request.receiveText
 import io.ktor.server.response.respondBytes
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
-import io.ktor.server.routing.handle
+import io.ktor.server.routing.method
 import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
 import java.io.FileNotFoundException
@@ -38,7 +39,7 @@ class OfflineBackendServer(
         ) {
             routing {
                 route("/api/{apiPath...}") {
-                    handle {
+                    suspend fun processApiRequest() {
                         val pathSegments = call.parameters.getAll("apiPath") ?: emptyList()
                         val apiPath = "/" + pathSegments.joinToString("/")
                         val method = call.request.httpMethod.value
@@ -55,10 +56,15 @@ class OfflineBackendServer(
                             status = status
                         )
                     }
+                    method(HttpMethod.Get) { processApiRequest() }
+                    method(HttpMethod.Post) { processApiRequest() }
+                    method(HttpMethod.Put) { processApiRequest() }
+                    method(HttpMethod.Delete) { processApiRequest() }
+                    method(HttpMethod.Options) { processApiRequest() }
                 }
 
                 get("/") {
-                    serveAsset("index.html")
+                    call.serveAsset("index.html")
                 }
 
                 get("/{path...}") {
@@ -70,7 +76,7 @@ class OfflineBackendServer(
                         return@get
                     }
                     try {
-                        serveAsset(normalizedPath)
+                        call.serveAsset(normalizedPath)
                     } catch (_: FileNotFoundException) {
                         call.respondText("Not found", status = HttpStatusCode.NotFound)
                     }
