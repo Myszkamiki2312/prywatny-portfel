@@ -1,6 +1,6 @@
-# Prywatny Portfel Mobile (Android)
+# Prywatny Portfel Mobile (Android, offline-first)
 
-To jest osobny projekt Android, który opakowuje istniejącą aplikację web i backend.
+To jest osobny projekt Android, który uruchamia lokalny backend API bezpośrednio w telefonie.
 Desktopowa aplikacja pozostaje bez zmian.
 
 ## Wymagania
@@ -8,30 +8,30 @@ Desktopowa aplikacja pozostaje bez zmian.
 - Android Studio (Hedgehog+)
 - Android SDK 34
 - JDK 17
-- Działający backend `Prywatny Portfel`
 
-## Uruchomienie backendu
-
-Na komputerze uruchom backend:
-
-```bash
-python3 -m backend.server --host 0.0.0.0 --port 8080
-```
-
-## Uruchomienie Android app
+## Uruchomienie APK / projektu
 
 1. Otwórz w Android Studio folder: `android-app`.
 2. Poczekaj na synchronizację Gradle.
-3. Odpal apkę na emulatorze lub telefonie.
+3. Uruchom aplikację na emulatorze lub telefonie.
 
-## Adres backendu
+Nie jest wymagany backend na komputerze.
 
-- Emulator Android: domyślnie działa `http://10.0.2.2:8080`
-- Fizyczny telefon: ustaw adres komputera w LAN, np. `http://192.168.1.120:8080`
-  - w aplikacji kliknij `Backend URL` i zapisz adres
+## Jak to działa
 
-## Co daje to podejście
+- Frontend (`index.html`, `styles.css`, `app.js`, `frontend/*`) jest kopiowany do assets APK przy buildzie.
+- W aplikacji działa lokalny serwer HTTP (`127.0.0.1:18765`).
+- Endpointy `/api/*` są obsługiwane przez lokalny backend Kotlin + Room (SQLite).
+- Dane użytkownika są trwale zapisywane w bazie na telefonie.
 
-- Te same funkcje co desktop/web (to ten sam frontend i API)
-- Obsługa uploadu plików z formularzy web (`input type=file`)
-- Pull-to-refresh i status online/offline backendu
+## Status parity
+
+Ten etap daje fundament pełnego offline:
+
+- trwały stan portfela (`/api/state`),
+- metryki, raporty bazowe, notowania cache,
+- konfiguracje realtime/backup/notifications,
+- healthcheck, monitoring, logi błędów,
+- API tools z bezpiecznymi fallbackami.
+
+Kolejne iteracje domykają parity 1:1 dla zaawansowanych narzędzi.

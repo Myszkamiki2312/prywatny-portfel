@@ -1,12 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Prywatny Portfel Mobile</string>
-    <string name="default_backend_url">http://10.0.2.2:8080</string>
-    <string name="backend_online">Backend: online (%1$s)</string>
-    <string name="backend_offline">Backend: offline (%1$s)</string>
-    <string name="backend_url_title">Adres backendu</string>
-    <string name="backend_url_hint">http://10.0.2.2:8080</string>
-    <string name="backend_url_invalid">Podaj poprawny URL (http/https).</string>
+    <string name="backend_online">Offline backend: online (%1$s)</string>
+    <string name="backend_offline">Offline backend: offline (%1$s)</string>
+    <string name="reload">Reload</string>
     <string name="save">Zapisz</string>
     <string name="cancel">Anuluj</string>
 </resources>

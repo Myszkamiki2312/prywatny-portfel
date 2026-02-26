@@ -1,24 +1,22 @@
 package pl.prywatnyportfel.mobile
 
 import android.annotation.SuppressLint
-import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
-import android.widget.Button
-import android.widget.EditText
-import android.widget.TextView
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.widget.Toast
+import android.widget.Button
+import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+import pl.prywatnyportfel.mobile.offline.OfflineBackendServer
+import pl.prywatnyportfel.mobile.offline.OfflineRepository
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -26,8 +24,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var swipeRefresh: SwipeRefreshLayout
     private lateinit var backendStatusText: TextView
-    private lateinit var changeBackendBtn: Button
     private lateinit var reloadBtn: Button
+
+    private lateinit var offlineServer: OfflineBackendServer
 
     private var fileChooserCallback: android.webkit.ValueCallback<Array<Uri>>? = null
 
@@ -39,8 +38,6 @@ class MainActivity : AppCompatActivity() {
             fileChooserCallback = null
         }
 
-    private val prefs by lazy { getSharedPreferences(PREFS_NAME, MODE_PRIVATE) }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -48,8 +45,10 @@ class MainActivity : AppCompatActivity() {
         webView = findViewById(R.id.webView)
         swipeRefresh = findViewById(R.id.swipeRefresh)
         backendStatusText = findViewById(R.id.backendStatusText)
-        changeBackendBtn = findViewById(R.id.changeBackendBtn)
         reloadBtn = findViewById(R.id.reloadBtn)
+
+        offlineServer = OfflineBackendServer(applicationContext, OfflineRepository(applicationContext))
+        offlineServer.start()
 
         configureWebView()
 
@@ -59,10 +58,6 @@ class MainActivity : AppCompatActivity() {
 
         reloadBtn.setOnClickListener {
             webView.reload()
-        }
-
-        changeBackendBtn.setOnClickListener {
-            showBackendUrlDialog()
         }
 
         onBackPressedDispatcher.addCallback(
@@ -78,7 +73,7 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
-        webView.loadUrl(currentBackendUrl())
+        webView.loadUrl("${offlineServer.baseUrl}/")
         pingBackendAsync()
     }
 
@@ -91,6 +86,7 @@ class MainActivity : AppCompatActivity() {
         fileChooserCallback?.onReceiveValue(null)
         fileChooserCallback = null
         webView.destroy()
+        offlineServer.stop()
         super.onDestroy()
     }
 
@@ -149,49 +145,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showBackendUrlDialog() {
-        val input = EditText(this)
-        input.setText(currentBackendUrl())
-        input.hint = getString(R.string.backend_url_hint)
-
-        AlertDialog.Builder(this)
-            .setTitle(R.string.backend_url_title)
-            .setView(input)
-            .setPositiveButton(R.string.save) { _, _ ->
-                val normalized = normalizeBackendUrl(input.text?.toString().orEmpty())
-                if (normalized == null) {
-                    Toast.makeText(this, getString(R.string.backend_url_invalid), Toast.LENGTH_SHORT).show()
-                    return@setPositiveButton
-                }
-                prefs.edit().putString(KEY_BACKEND_URL, normalized).apply()
-                webView.loadUrl(normalized)
-                pingBackendAsync()
-            }
-            .setNegativeButton(R.string.cancel, null)
-            .show()
-    }
-
-    private fun normalizeBackendUrl(raw: String): String? {
-        val trimmed = raw.trim().trimEnd('/')
-        if (!(trimmed.startsWith("http://") || trimmed.startsWith("https://"))) {
-            return null
-        }
-        return trimmed
-    }
-
-    private fun currentBackendUrl(): String {
-        return prefs.getString(KEY_BACKEND_URL, getString(R.string.default_backend_url))
-            ?: getString(R.string.default_backend_url)
-    }
-
     private fun pingBackendAsync() {
         Thread {
-            val url = "${currentBackendUrl()}/api/health"
+            val url = "${offlineServer.baseUrl}/api/health"
             val online = try {
                 val conn = URL(url).openConnection() as HttpURLConnection
                 conn.requestMethod = "GET"
-                conn.connectTimeout = 3000
-                conn.readTimeout = 3000
+                conn.connectTimeout = 2500
+                conn.readTimeout = 2500
                 conn.instanceFollowRedirects = true
                 conn.connect()
                 val ok = conn.responseCode in 200..299
@@ -207,7 +168,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateBackendStatus(online: Boolean) {
-        val backendUrl = currentBackendUrl()
+        val backendUrl = offlineServer.baseUrl
         backendStatusText.text = if (online) {
             getString(R.string.backend_online, backendUrl)
         } else {
@@ -219,10 +180,5 @@ class MainActivity : AppCompatActivity() {
             ContextCompat.getColor(this, R.color.status_offline)
         }
         backendStatusText.setTextColor(color)
-    }
-
-    companion object {
-        private const val PREFS_NAME = "mobile_config"
-        private const val KEY_BACKEND_URL = "backend_url"
     }
 }

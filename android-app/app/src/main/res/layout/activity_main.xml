@@ -18,16 +18,8 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:maxLines="2"
-            android:text="Backend: offline"
+            android:text="Offline backend: starting..."
             android:textAppearance="@style/TextAppearance.Material3.BodySmall" />
-
-        <Button
-            android:id="@+id/changeBackendBtn"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:minWidth="0dp"
-            android:text="Backend URL" />
 
         <Button
             android:id="@+id/reloadBtn"
@@ -35,7 +27,7 @@
             android:layout_height="wrap_content"
             android:layout_marginStart="8dp"
             android:minWidth="0dp"
-            android:text="Reload" />
+            android:text="@string/reload" />
     </LinearLayout>
 
     <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
