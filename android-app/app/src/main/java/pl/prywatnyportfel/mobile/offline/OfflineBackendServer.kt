@@ -13,9 +13,11 @@ import io.ktor.server.request.httpMethod
 import io.ktor.server.request.receiveText
 import io.ktor.server.response.respondBytes
 import io.ktor.server.response.respondText
+import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
-import io.ktor.server.routing.method
-import io.ktor.server.routing.route
+import io.ktor.server.routing.options
+import io.ktor.server.routing.post
+import io.ktor.server.routing.put
 import io.ktor.server.routing.routing
 import java.io.FileNotFoundException
 
@@ -39,13 +41,11 @@ class OfflineBackendServer(
             port = port
         ) {
             routing {
-                route("/api/{apiPath...}") {
-                    method(HttpMethod.Get) { processApiRequest(call) }
-                    method(HttpMethod.Post) { processApiRequest(call) }
-                    method(HttpMethod.Put) { processApiRequest(call) }
-                    method(HttpMethod.Delete) { processApiRequest(call) }
-                    method(HttpMethod.Options) { processApiRequest(call) }
-                }
+                get("/api/{apiPath...}") { processApiRequest(call) }
+                post("/api/{apiPath...}") { processApiRequest(call) }
+                put("/api/{apiPath...}") { processApiRequest(call) }
+                delete("/api/{apiPath...}") { processApiRequest(call) }
+                options("/api/{apiPath...}") { processApiRequest(call) }
 
                 get("/") {
                     call.serveAsset("index.html")
