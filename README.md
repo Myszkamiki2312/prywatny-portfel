@@ -1,4 +1,22 @@
 
+## Android APK (pobieranie)
+
+Aplikacja mobilna jest w katalogu:
+
+- `/Users/bartlomiejprzybycien/Documents/New project/android-app`
+
+Automatyczny build APK działa w GitHub Actions (`Android APK`):
+
+- po pushu zmian do `android-app/` dostajesz artefakt `prywatny-portfel-mobile-apk`,
+- po wypchnięciu taga `android-v...` workflow tworzy GitHub Release z plikiem `prywatny-portfel-mobile.apk` (publiczny download).
+
+Przykład publikacji APK jako release:
+
+```bash
+git tag android-v1.0.0
+git push origin android-v1.0.0
+```
+
 ## Testy
 
 Uruchom testy backendu:
