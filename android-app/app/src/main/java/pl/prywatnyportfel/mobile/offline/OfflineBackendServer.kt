@@ -5,6 +5,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.call
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.engine.ApplicationEngine
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.cio.CIO
@@ -39,28 +40,11 @@ class OfflineBackendServer(
         ) {
             routing {
                 route("/api/{apiPath...}") {
-                    suspend fun processApiRequest() {
-                        val pathSegments = call.parameters.getAll("apiPath") ?: emptyList()
-                        val apiPath = "/" + pathSegments.joinToString("/")
-                        val method = call.request.httpMethod.value
-                        val body = if (call.request.httpMethod in listOf(HttpMethod.Post, HttpMethod.Put, HttpMethod.Delete)) {
-                            call.receiveText()
-                        } else {
-                            ""
-                        }
-                        val result = repository.dispatch(method, apiPath, call.request.queryParameters, body)
-                        val status = HttpStatusCode.fromValue(result.status)
-                        call.respondText(
-                            text = result.body,
-                            contentType = ContentType.Application.Json,
-                            status = status
-                        )
-                    }
-                    method(HttpMethod.Get) { processApiRequest() }
-                    method(HttpMethod.Post) { processApiRequest() }
-                    method(HttpMethod.Put) { processApiRequest() }
-                    method(HttpMethod.Delete) { processApiRequest() }
-                    method(HttpMethod.Options) { processApiRequest() }
+                    method(HttpMethod.Get) { processApiRequest(call) }
+                    method(HttpMethod.Post) { processApiRequest(call) }
+                    method(HttpMethod.Put) { processApiRequest(call) }
+                    method(HttpMethod.Delete) { processApiRequest(call) }
+                    method(HttpMethod.Options) { processApiRequest(call) }
                 }
 
                 get("/") {
@@ -94,6 +78,24 @@ class OfflineBackendServer(
         val assetPath = "www/$path"
         val bytes = context.assets.open(assetPath).use { it.readBytes() }
         respondBytes(bytes = bytes, contentType = contentTypeFor(path), status = HttpStatusCode.OK)
+    }
+
+    private suspend fun processApiRequest(call: ApplicationCall) {
+        val pathSegments = call.parameters.getAll("apiPath") ?: emptyList()
+        val apiPath = "/" + pathSegments.joinToString("/")
+        val method = call.request.httpMethod.value
+        val body = if (call.request.httpMethod in listOf(HttpMethod.Post, HttpMethod.Put, HttpMethod.Delete)) {
+            call.receiveText()
+        } else {
+            ""
+        }
+        val result = repository.dispatch(method, apiPath, call.request.queryParameters, body)
+        val status = HttpStatusCode.fromValue(result.status)
+        call.respondText(
+            text = result.body,
+            contentType = ContentType.Application.Json,
+            status = status
+        )
     }
 
     private fun contentTypeFor(path: String): ContentType {
