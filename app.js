@@ -945,6 +945,18 @@ function scheduleMetricsRefresh(portfolioId) {
   }, 220);
 }
 
+function shouldUseBackendMetrics(localMetrics, backendMetrics) {
+  const local = localMetrics || {};
+  const backend = backendMetrics || {};
+  const localMarketValue = toNum(local.marketValue);
+  const backendMarketValue = toNum(backend.marketValue);
+  const hasLocalHoldings = Array.isArray(local.holdings) && local.holdings.length > 0;
+  if (hasLocalHoldings && localMarketValue > 0 && backendMarketValue <= 0) {
+    return false;
+  }
+  return true;
+}
+
 async function refreshMetricsFromBackend(portfolioId) {
   if (!backendSync.available || backendSync.pushInFlight) {
     return;
@@ -958,6 +970,10 @@ async function refreshMetricsFromBackend(portfolioId) {
     }
     const metrics = payload.metrics || {};
     if ((dom.dashboardPortfolioSelect.value || "") !== (metrics.portfolioId || portfolioId || "")) {
+      return;
+    }
+    const localMetrics = computeMetrics(portfolioId || "");
+    if (!shouldUseBackendMetrics(localMetrics, metrics)) {
       return;
     }
     if (typeof metrics.marketValue === "number") {
@@ -6597,6 +6613,7 @@ if (typeof globalThis !== "undefined" && globalThis.__MYFUND_ENABLE_TEST_HOOKS__
     onAlertSubmit,
     onLiabilitySubmit,
     onActionClick,
-    syncEditingForms
+    syncEditingForms,
+    shouldUseBackendMetrics
   };
 }
