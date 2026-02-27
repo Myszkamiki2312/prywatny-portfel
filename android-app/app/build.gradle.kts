@@ -5,6 +5,18 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
+val defaultVersionName = "1.2.3"
+val defaultVersionCode = 10203
+val appVersionName = providers.gradleProperty("appVersionName")
+    .orElse(providers.environmentVariable("APP_VERSION_NAME"))
+    .orElse(defaultVersionName)
+    .get()
+val appVersionCode = providers.gradleProperty("appVersionCode")
+    .orElse(providers.environmentVariable("APP_VERSION_CODE"))
+    .map { raw -> raw.toIntOrNull() ?: defaultVersionCode }
+    .orElse(defaultVersionCode)
+    .get()
+
 android {
     namespace = "pl.prywatnyportfel.mobile"
     compileSdk = 34
@@ -13,8 +25,8 @@ android {
         applicationId = "pl.prywatnyportfel.mobile"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
