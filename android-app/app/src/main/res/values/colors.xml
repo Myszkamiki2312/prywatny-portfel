@@ -2,4 +2,5 @@
 <resources>
     <color name="status_online">#0B8A63</color>
     <color name="status_offline">#AA2A2A</color>
+    <color name="ic_launcher_background">#0E3D33</color>
 </resources>
