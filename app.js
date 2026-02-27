@@ -5628,7 +5628,10 @@ function drawLineChart(canvas, labels, values, options = {}) {
 
   const minVal = Math.min(...values);
   const maxVal = Math.max(...values);
-  const range = maxVal - minVal || 1;
+  const isFlat = Math.abs(maxVal - minVal) < 1e-9;
+  const flatPadding = isFlat ? Math.max(1, Math.abs(maxVal) * 0.02) : 0;
+  const plotMin = minVal - flatPadding;
+  const plotRange = (maxVal + flatPadding - plotMin) || 1;
 
   ctx.strokeStyle = "rgba(168, 185, 163, 0.6)";
   ctx.lineWidth = 1;
@@ -5643,7 +5646,7 @@ function drawLineChart(canvas, labels, values, options = {}) {
 
   const points = values.map((value, idx) => {
     const x = padding.left + (chartWidth * idx) / Math.max(1, values.length - 1);
-    const y = padding.top + chartHeight - ((value - minVal) / range) * chartHeight;
+    const y = padding.top + chartHeight - ((value - plotMin) / plotRange) * chartHeight;
     return { x, y, value, label: labels[idx] || "" };
   });
 
