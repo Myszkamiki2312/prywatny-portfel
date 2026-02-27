@@ -504,6 +504,7 @@ class OfflineRepository(private val context: Context) {
 
         val qtyByAsset = HashMap<String, Double>()
         val costByAsset = HashMap<String, Double>()
+        val lastPriceByAsset = HashMap<String, Double>()
         var cash = 0.0
         var contributions = 0.0
 
@@ -520,6 +521,9 @@ class OfflineRepository(private val context: Context) {
             val fee = num(if (op.has("fee")) op.opt("fee") else op.opt("commission"))
             val amount = if (amountRaw != 0.0) kotlin.math.abs(amountRaw) else quantity * price
             val assetId = op.optString("assetId", "")
+            if (assetId.isNotBlank() && price > 0.0) {
+                lastPriceByAsset[assetId] = price
+            }
 
             when {
                 type.contains("gotowk") || type.contains("wplata") || type.contains("cash") || type.contains("transfer") -> {
@@ -570,7 +574,9 @@ class OfflineRepository(private val context: Context) {
                 continue
             }
             val asset = assetsById[assetId] ?: continue
-            val currentPrice = num(asset.opt("currentPrice"))
+            val assetPrice = num(asset.opt("currentPrice"))
+            val fallbackPrice = lastPriceByAsset[assetId] ?: 0.0
+            val currentPrice = if (assetPrice > 0.0) assetPrice else fallbackPrice
             val costValue = (costByAsset[assetId] ?: 0.0).coerceAtLeast(0.0)
             val value = quantity * currentPrice
             val unrealized = value - costValue
@@ -705,7 +711,11 @@ class OfflineRepository(private val context: Context) {
             val asset = assets.optJSONObject(i) ?: continue
             val assetId = asset.optString("id", "")
             val holding = holdingByAsset[assetId]
-            val price = num(asset.opt("currentPrice"))
+            val price = if (holding != null && holding.currentPrice > 0.0) {
+                holding.currentPrice
+            } else {
+                num(asset.opt("currentPrice"))
+            }
             val risk = num(asset.opt("risk")).coerceIn(1.0, 10.0)
             val share = holding?.sharePct ?: 0.0
             val unrealizedPct = holding?.unrealizedPct ?: 0.0
