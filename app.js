@@ -168,7 +168,8 @@ const backendSync = {
   reportRequestSeq: 0,
   metricsTimer: 0,
   metricsRequestSeq: 0,
-  healthProbe: null
+  healthProbe: null,
+  resizeTimer: 0
 };
 const candlesView = {
   all: [],
@@ -445,6 +446,7 @@ function bindEvents() {
   dom.baseCurrencySelect.addEventListener("change", onBaseCurrencyChange);
   dom.dashboardPortfolioSelect.addEventListener("change", renderDashboard);
   dom.reportPortfolioSelect.addEventListener("change", renderReportCurrent);
+  window.addEventListener("resize", scheduleResponsiveChartRefresh);
 
   dom.portfolioForm.addEventListener("submit", onPortfolioSubmit);
   dom.portfolioCancelEditBtn.addEventListener("click", () => {
@@ -1751,6 +1753,23 @@ function renderScannerRows(items) {
     ["Ticker", "Nazwa", "Sygnał", "Score", "Ryzyko", "Cena", "Udział %", "P/L %", "Sektor", "Uzasadnienie"],
     rows
   );
+}
+
+function scheduleResponsiveChartRefresh() {
+  if (backendSync.resizeTimer) {
+    window.clearTimeout(backendSync.resizeTimer);
+  }
+  backendSync.resizeTimer = window.setTimeout(() => {
+    if (isViewActive("dashboardView")) {
+      renderDashboard();
+    }
+    if (isViewActive("reportsView")) {
+      void renderReportCurrent({ force: true });
+    }
+    if (isViewActive("toolsView") && candlesView.all.length) {
+      renderCandlesViewport();
+    }
+  }, 120);
 }
 
 function renderSignalsRows(items) {
@@ -3153,6 +3172,10 @@ function onTabClick(event) {
   const targetView = document.getElementById(target);
   if (targetView) {
     targetView.classList.add("active");
+  }
+  if (target === "dashboardView") {
+    renderDashboard();
+    return;
   }
   if (target === "reportsView") {
     void renderReportCurrent({ force: true });
@@ -5681,24 +5704,61 @@ function aggregateOpsByDate(operations, valueFn) {
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
-function drawLineChart(canvas, labels, values, options = {}) {
+function prepareCanvasFrame(canvas) {
   if (!canvas || !canvas.getContext) {
-    return;
+    return null;
+  }
+  const baseWidth = Math.max(1, Number(canvas.getAttribute("width")) || 1200);
+  const baseHeight = Math.max(180, Number(canvas.getAttribute("height")) || 280);
+  const measuredWidth = Math.round(
+    canvas.clientWidth ||
+      (canvas.parentElement ? canvas.parentElement.clientWidth : 0) ||
+      baseWidth
+  );
+  const cssWidth = Math.max(280, measuredWidth);
+  const cssHeight = Math.max(220, Math.min(baseHeight, Math.round(cssWidth * 0.62)));
+  const pixelRatio = Math.max(1, window.devicePixelRatio || 1);
+  const pixelWidth = Math.max(1, Math.round(cssWidth * pixelRatio));
+  const pixelHeight = Math.max(1, Math.round(cssHeight * pixelRatio));
+  if (canvas.width !== pixelWidth) {
+    canvas.width = pixelWidth;
+  }
+  if (canvas.height !== pixelHeight) {
+    canvas.height = pixelHeight;
+  }
+  if (canvas.style.height !== `${cssHeight}px`) {
+    canvas.style.height = `${cssHeight}px`;
   }
   const ctx = canvas.getContext("2d");
-  const width = canvas.width;
-  const height = canvas.height;
-  ctx.clearRect(0, 0, width, height);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+  return {
+    ctx,
+    width: cssWidth,
+    height: cssHeight,
+    compact: cssWidth < 520
+  };
+}
+
+function drawLineChart(canvas, labels, values, options = {}) {
+  const frame = prepareCanvasFrame(canvas);
+  if (!frame) {
+    return;
+  }
+  const { ctx, width, height, compact } = frame;
 
   if (!values || values.length === 0) {
     ctx.fillStyle = "#4b6056";
-    ctx.font = "14px Space Grotesk";
+    ctx.font = compact ? "13px Space Grotesk" : "14px Space Grotesk";
     ctx.fillText("Brak danych do wykresu.", 20, 26);
     return;
   }
 
   const color = options.color || "#0e7a64";
-  const padding = { left: 44, right: 14, top: 14, bottom: 26 };
+  const padding = compact
+    ? { left: 38, right: 10, top: 14, bottom: 24 }
+    : { left: 44, right: 14, top: 14, bottom: 26 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
 
@@ -5763,35 +5823,28 @@ function drawLineChart(canvas, labels, values, options = {}) {
   ctx.fill();
 
   ctx.fillStyle = "#30473e";
-  ctx.font = "12px IBM Plex Mono";
+  ctx.font = compact ? "10px IBM Plex Mono" : "12px IBM Plex Mono";
   ctx.fillText(formatMoney(maxVal), 4, padding.top + 10);
   ctx.fillText(formatMoney(minVal), 4, height - padding.bottom);
 
-  ctx.font = "12px Space Grotesk";
-  ctx.fillText(
-    labels[0] || "",
-    padding.left,
-    height - 7
-  );
-  ctx.fillText(
-    labels[labels.length - 1] || "",
-    width - padding.right - 90,
-    height - 7
-  );
+  ctx.font = compact ? "10px Space Grotesk" : "12px Space Grotesk";
+  const firstLabel = labels[0] || "";
+  const lastLabel = labels[labels.length - 1] || "";
+  ctx.fillText(firstLabel, padding.left, height - 7);
+  const lastLabelWidth = ctx.measureText(lastLabel).width;
+  ctx.fillText(lastLabel, Math.max(padding.left, width - padding.right - lastLabelWidth), height - 7);
 }
 
 function drawCandlestickChart(canvas, candles) {
-  if (!canvas || !canvas.getContext) {
+  const frame = prepareCanvasFrame(canvas);
+  if (!frame) {
     return;
   }
-  const ctx = canvas.getContext("2d");
-  const width = canvas.width;
-  const height = canvas.height;
-  ctx.clearRect(0, 0, width, height);
+  const { ctx, width, height, compact } = frame;
 
   if (!candles || candles.length === 0) {
     ctx.fillStyle = "#4b6056";
-    ctx.font = "14px Space Grotesk";
+    ctx.font = compact ? "13px Space Grotesk" : "14px Space Grotesk";
     ctx.fillText("Brak danych świecowych.", 20, 26);
     return;
   }
@@ -5803,7 +5856,9 @@ function drawCandlestickChart(canvas, candles) {
   const maxVal = Math.max(...highs);
   const range = maxVal - minVal || 1;
 
-  const pad = { left: 44, right: 12, top: 12, bottom: 24 };
+  const pad = compact
+    ? { left: 38, right: 10, top: 12, bottom: 22 }
+    : { left: 44, right: 12, top: 12, bottom: 24 };
   const chartWidth = width - pad.left - pad.right;
   const chartHeight = height - pad.top - pad.bottom;
   const candleSpace = chartWidth / sample.length;
@@ -5842,15 +5897,17 @@ function drawCandlestickChart(canvas, candles) {
   });
 
   ctx.fillStyle = "#30473e";
-  ctx.font = "12px IBM Plex Mono";
+  ctx.font = compact ? "10px IBM Plex Mono" : "12px IBM Plex Mono";
   ctx.fillText(formatFloat(maxVal), 4, pad.top + 10);
   ctx.fillText(formatFloat(minVal), 4, height - pad.bottom);
 
   const first = sample[0];
   const last = sample[sample.length - 1];
-  ctx.font = "12px Space Grotesk";
+  ctx.font = compact ? "10px Space Grotesk" : "12px Space Grotesk";
   ctx.fillText(first.date || "", pad.left, height - 6);
-  ctx.fillText(last.date || "", width - pad.right - 96, height - 6);
+  const lastLabel = last.date || "";
+  const lastLabelWidth = ctx.measureText(lastLabel).width;
+  ctx.fillText(lastLabel, Math.max(pad.left, width - pad.right - lastLabelWidth), height - 6);
 }
 
 function renderTable(container, headers, rows) {
