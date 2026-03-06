@@ -274,9 +274,13 @@ function cacheDom() {
   dom.operationAssetSelect = document.getElementById("operationAssetSelect");
   dom.operationTargetAssetSelect = document.getElementById("operationTargetAssetSelect");
   dom.operationHistorySearchInput = document.getElementById("operationHistorySearchInput");
+  dom.operationHistoryDateFromInput = document.getElementById("operationHistoryDateFromInput");
+  dom.operationHistoryDateToInput = document.getElementById("operationHistoryDateToInput");
   dom.operationHistoryTypeSelect = document.getElementById("operationHistoryTypeSelect");
   dom.operationHistoryPortfolioSelect = document.getElementById("operationHistoryPortfolioSelect");
   dom.operationHistoryAccountSelect = document.getElementById("operationHistoryAccountSelect");
+  dom.operationHistoryAmountMinInput = document.getElementById("operationHistoryAmountMinInput");
+  dom.operationHistoryAmountMaxInput = document.getElementById("operationHistoryAmountMaxInput");
   dom.operationHistoryResetBtn = document.getElementById("operationHistoryResetBtn");
   dom.operationHistoryInfo = document.getElementById("operationHistoryInfo");
   dom.csvImportInput = document.getElementById("csvImportInput");
@@ -459,9 +463,13 @@ function bindEvents() {
     resetOperationForm();
   });
   dom.operationHistorySearchInput.addEventListener("input", renderOperations);
+  dom.operationHistoryDateFromInput.addEventListener("change", renderOperations);
+  dom.operationHistoryDateToInput.addEventListener("change", renderOperations);
   dom.operationHistoryTypeSelect.addEventListener("change", renderOperations);
   dom.operationHistoryPortfolioSelect.addEventListener("change", renderOperations);
   dom.operationHistoryAccountSelect.addEventListener("change", renderOperations);
+  dom.operationHistoryAmountMinInput.addEventListener("input", renderOperations);
+  dom.operationHistoryAmountMaxInput.addEventListener("input", renderOperations);
   dom.operationHistoryResetBtn.addEventListener("click", () => {
     resetOperationHistoryFilters();
     renderOperations();
@@ -3515,6 +3523,12 @@ function resetOperationHistoryFilters() {
   if (dom.operationHistorySearchInput) {
     dom.operationHistorySearchInput.value = "";
   }
+  if (dom.operationHistoryDateFromInput) {
+    dom.operationHistoryDateFromInput.value = "";
+  }
+  if (dom.operationHistoryDateToInput) {
+    dom.operationHistoryDateToInput.value = "";
+  }
   if (dom.operationHistoryTypeSelect) {
     dom.operationHistoryTypeSelect.value = "";
   }
@@ -3523,6 +3537,12 @@ function resetOperationHistoryFilters() {
   }
   if (dom.operationHistoryAccountSelect) {
     dom.operationHistoryAccountSelect.value = "";
+  }
+  if (dom.operationHistoryAmountMinInput) {
+    dom.operationHistoryAmountMinInput.value = "";
+  }
+  if (dom.operationHistoryAmountMaxInput) {
+    dom.operationHistoryAmountMaxInput.value = "";
   }
 }
 

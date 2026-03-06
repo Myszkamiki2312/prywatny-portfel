@@ -443,6 +443,14 @@
               <input id="operationHistorySearchInput" type="search" placeholder="Ticker, typ, notatka, tag..." />
             </label>
             <label class="control inline">
+              <span>Data od</span>
+              <input id="operationHistoryDateFromInput" type="date" />
+            </label>
+            <label class="control inline">
+              <span>Data do</span>
+              <input id="operationHistoryDateToInput" type="date" />
+            </label>
+            <label class="control inline">
               <span>Typ</span>
               <select id="operationHistoryTypeSelect"></select>
             </label>
@@ -453,6 +461,14 @@
             <label class="control inline">
               <span>Konto</span>
               <select id="operationHistoryAccountSelect"></select>
+            </label>
+            <label class="control inline">
+              <span>Kwota od</span>
+              <input id="operationHistoryAmountMinInput" type="number" step="0.01" placeholder="0.00" />
+            </label>
+            <label class="control inline">
+              <span>Kwota do</span>
+              <input id="operationHistoryAmountMaxInput" type="number" step="0.01" placeholder="0.00" />
             </label>
             <button id="operationHistoryResetBtn" type="button" class="btn secondary">Wyczyść filtry</button>
           </div>

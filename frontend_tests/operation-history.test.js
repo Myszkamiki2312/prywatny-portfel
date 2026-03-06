@@ -200,9 +200,13 @@ test("filterOperations filters by text and exact selectors", () => {
     state.operations,
     {
       search: "cdr",
+      dateFrom: "",
+      dateTo: "",
       type: "Kupno waloru",
       portfolioId: "ptf_1",
-      accountId: "acc_1"
+      accountId: "acc_1",
+      amountMin: "",
+      amountMax: ""
     },
     {
       state,
@@ -221,9 +225,13 @@ test("filterOperations returns empty list when filters exclude rows", () => {
     state.operations,
     {
       search: "apple",
+      dateFrom: "",
+      dateTo: "",
       type: "Kupno waloru",
       portfolioId: "ptf_1",
-      accountId: "acc_1"
+      accountId: "acc_1",
+      amountMin: "",
+      amountMax: ""
     },
     {
       state,
@@ -233,6 +241,56 @@ test("filterOperations returns empty list when filters exclude rows", () => {
   );
 
   assert.equal(result.length, 0);
+});
+
+test("filterOperations filters by date range", () => {
+  const state = buildState();
+  const result = filterOperations(
+    state.operations,
+    {
+      search: "",
+      dateFrom: "2026-02-21",
+      dateTo: "2026-02-21",
+      type: "",
+      portfolioId: "",
+      accountId: "",
+      amountMin: "",
+      amountMax: ""
+    },
+    {
+      state,
+      lookupName,
+      lookupAssetLabel: lookupAssetLabelFactory(state)
+    }
+  );
+
+  assert.equal(result.length, 1);
+  assert.equal(result[0].id, "op_2");
+});
+
+test("filterOperations filters by amount range", () => {
+  const state = buildState();
+  const result = filterOperations(
+    state.operations,
+    {
+      search: "",
+      dateFrom: "",
+      dateTo: "",
+      type: "",
+      portfolioId: "",
+      accountId: "",
+      amountMin: "300",
+      amountMax: "1500"
+    },
+    {
+      state,
+      lookupName,
+      lookupAssetLabel: lookupAssetLabelFactory(state)
+    }
+  );
+
+  assert.equal(result.length, 1);
+  assert.equal(result[0].id, "op_2");
 });
 
 test("delete-operation asks for confirmation and aborts when declined", () => {
