@@ -31,7 +31,7 @@
 
   <Fragment>
     <ComponentGroup Id="AppComponents" Directory="INSTALLFOLDER">
-      <Component Id="MainExecutable" Guid="*">
+      <Component Id="MainExecutable" Guid="7F0F7A6B-91EA-46E6-8A19-8A7D713E6E6A">
         <RegistryValue
           Root="HKCU"
           Key="Software\PrywatnyPortfel\Desktop"
@@ -63,7 +63,7 @@
         </File>
       </Component>
 
-      <Component Id="ShortcutCleanup" Directory="AppProgramMenuDir" Guid="*">
+      <Component Id="ShortcutCleanup" Directory="AppProgramMenuDir" Guid="B46C1EBE-EA7B-4D84-BD09-5C485B4BF76A">
         <RemoveFolder Id="RemoveAppProgramMenuDir" Directory="AppProgramMenuDir" On="uninstall" />
         <RegistryValue
           Root="HKCU"
