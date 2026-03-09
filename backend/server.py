@@ -34,6 +34,7 @@ from .utils import now_iso, to_int
 APP_NAME = "Prywatny Portfel"
 PROJECT_ROOT_ENV = "PRYWATNY_PORTFEL_PROJECT_ROOT"
 DATA_ROOT_ENV = "PRYWATNY_PORTFEL_DATA_ROOT"
+SERVER_LOG_ENV = "PRYWATNY_PORTFEL_SERVER_LOG"
 
 
 def default_project_root() -> Path:
@@ -124,11 +125,35 @@ class ApiQuoteRow(TypedDict):
     source: str
 
 
+def append_server_log(message: str) -> None:
+    log_target = str(os.environ.get(SERVER_LOG_ENV) or "").strip()
+    if not log_target:
+        return
+    try:
+        path = Path(log_target).expanduser()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(f"[{timestamp}] {message}\n")
+    except OSError:
+        return
+
+
+class LoggingThreadingHTTPServer(ThreadingHTTPServer):
+    def handle_error(self, request, client_address) -> None:  # noqa: ANN001
+        append_server_log(
+            f"HTTP server error for {client_address}: {traceback.format_exc(limit=12)}"
+        )
+
+
 class AppHandler(SimpleHTTPRequestHandler):
     context: AppContext
 
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, directory=str(self.context.project_root), **kwargs)
+        handler_context = getattr(type(self), "context", None)
+        if handler_context is None:
+            raise RuntimeError("App context is not initialized.")
+        super().__init__(*args, directory=str(handler_context.project_root), **kwargs)
 
     def end_headers(self) -> None:
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -949,8 +974,8 @@ def create_runtime(
         project_root=static_root,
         data_root=storage_root,
     )
-    AppHandler.context = context
-    server = ThreadingHTTPServer((host, port), AppHandler)
+    handler_cls = type("BoundAppHandler", (AppHandler,), {"context": context})
+    server = LoggingThreadingHTTPServer((host, port), handler_cls)
     return AppRuntime(server=server, realtime=realtime, database=database)
 
 

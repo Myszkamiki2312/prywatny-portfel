@@ -91,6 +91,7 @@ def wait_for_health(base_url: str, startup_state: dict[str, str], timeout_second
 def start_runtime(static_root: Path, storage_root: Path, port: int, log_file: Path):
     os.environ["PRYWATNY_PORTFEL_PROJECT_ROOT"] = str(static_root)
     os.environ["PRYWATNY_PORTFEL_DATA_ROOT"] = str(storage_root)
+    os.environ["PRYWATNY_PORTFEL_SERVER_LOG"] = str(log_file)
 
     from backend.server import create_runtime
 
