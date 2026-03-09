@@ -3,4 +3,5 @@ __pycache__/
 data/
 *.sqlite
 *.db
-
+build/
+dist/

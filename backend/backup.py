@@ -25,10 +25,10 @@ def _parse_iso(value: str) -> float | None:
 
 
 class BackupService:
-    def __init__(self, *, database: Database, project_root: Path):
+    def __init__(self, *, database: Database, data_root: Path):
         self.database = database
-        self.project_root = Path(project_root)
-        self.backup_dir = self.project_root / "data" / "backups"
+        self.data_root = Path(data_root)
+        self.backup_dir = self.data_root / "backups"
         self.backup_dir.mkdir(parents=True, exist_ok=True)
 
     def get_config(self) -> Dict[str, Any]:

@@ -7,10 +7,11 @@ Run:
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import json
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+import os
 import shutil
 from pathlib import Path
 import traceback
@@ -30,10 +31,30 @@ from .reports import ReportService
 from .utils import now_iso, to_int
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
 APP_NAME = "Prywatny Portfel"
-DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "prywatny_portfel.db"
-LEGACY_DB_PATH = PROJECT_ROOT / "data" / "myfund_solo.db"
+PROJECT_ROOT_ENV = "PRYWATNY_PORTFEL_PROJECT_ROOT"
+DATA_ROOT_ENV = "PRYWATNY_PORTFEL_DATA_ROOT"
+
+
+def default_project_root() -> Path:
+    env_value = str(os.environ.get(PROJECT_ROOT_ENV) or "").strip()
+    if env_value:
+        return Path(env_value).expanduser().resolve()
+    return Path(__file__).resolve().parent.parent
+
+
+def default_data_root(project_root: Path | None = None) -> Path:
+    env_value = str(os.environ.get(DATA_ROOT_ENV) or "").strip()
+    if env_value:
+        return Path(env_value).expanduser().resolve()
+    root = Path(project_root or default_project_root())
+    return root / "data"
+
+
+PROJECT_ROOT = default_project_root()
+DATA_ROOT = default_data_root(PROJECT_ROOT)
+DEFAULT_DB_PATH = DATA_ROOT / "prywatny_portfel.db"
+LEGACY_DB_PATH = DATA_ROOT / "myfund_solo.db"
 
 
 class ApiError(Exception):
@@ -55,6 +76,29 @@ class AppContext:
     realtime: RealtimeRunner
     backup_service: BackupService
     project_root: Path
+    data_root: Path
+
+
+@dataclass
+class AppRuntime:
+    server: ThreadingHTTPServer
+    realtime: RealtimeRunner
+    database: Database
+    _stopped: bool = field(default=False, init=False, repr=False)
+
+    def serve_forever(self) -> None:
+        try:
+            self.server.serve_forever()
+        finally:
+            self.stop()
+
+    def stop(self) -> None:
+        if self._stopped:
+            return
+        self._stopped = True
+        self.realtime.stop()
+        self.server.server_close()
+        self.database.close()
 
 
 RouteKey = Tuple[str, str]
@@ -315,7 +359,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             )
 
             try:
-                disk = shutil.disk_usage(str(PROJECT_ROOT))
+                disk = shutil.disk_usage(str(self.context.data_root))
                 free_gb = round(disk.free / (1024**3), 2)
                 disk_status = "warn" if free_gb < 2 else "ok"
                 disk_msg = f"Wolne miejsce: {free_gb} GB."
@@ -843,22 +887,41 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=f"{APP_NAME} backend server")
     parser.add_argument("--host", default="127.0.0.1", help="Bind host")
     parser.add_argument("--port", default=8080, type=int, help="Bind port")
-    parser.add_argument("--db", default=str(DEFAULT_DB_PATH), help="SQLite database path")
+    parser.add_argument("--db", default="", help="SQLite database path")
+    parser.add_argument("--project-root", default=str(PROJECT_ROOT), help="Static files root")
+    parser.add_argument("--data-root", default=str(DATA_ROOT), help="App data root")
     return parser.parse_args()
 
 
-def resolve_db_path(arg_db: str) -> Path:
-    db_path = Path(arg_db)
-    if db_path == DEFAULT_DB_PATH and not db_path.exists() and LEGACY_DB_PATH.exists():
-        return LEGACY_DB_PATH
+def resolve_roots(arg_project_root: str, arg_data_root: str) -> Tuple[Path, Path]:
+    project_root = Path(arg_project_root or PROJECT_ROOT).expanduser().resolve()
+    data_root = Path(arg_data_root or DATA_ROOT).expanduser().resolve()
+    return project_root, data_root
+
+
+def resolve_db_path(arg_db: str, data_root: Path | None = None) -> Path:
+    root = Path(data_root or DATA_ROOT)
+    default_db_path = root / "prywatny_portfel.db"
+    legacy_db_path = root / "myfund_solo.db"
+    db_path = Path(arg_db).expanduser() if str(arg_db or "").strip() else default_db_path
+    if db_path == default_db_path and not db_path.exists() and legacy_db_path.exists():
+        return legacy_db_path
     return db_path
 
 
-def main() -> None:
-    args = parse_args()
-    database = Database(resolve_db_path(args.db))
+def create_runtime(
+    *,
+    host: str,
+    port: int,
+    db_path: str = "",
+    project_root: Path | None = None,
+    data_root: Path | None = None,
+) -> AppRuntime:
+    static_root = Path(project_root or PROJECT_ROOT)
+    storage_root = Path(data_root or DATA_ROOT)
+    database = Database(resolve_db_path(db_path, storage_root))
     quote_service = QuoteService()
-    backup_service = BackupService(database=database, project_root=PROJECT_ROOT)
+    backup_service = BackupService(database=database, data_root=storage_root)
     expert_tools = ExpertToolsService(database)
     parity_tools = ParityToolsService(database, quote_service)
     notifications = NotificationService(database)
@@ -883,20 +946,34 @@ def main() -> None:
         notifications=notifications,
         realtime=realtime,
         backup_service=backup_service,
-        project_root=PROJECT_ROOT,
+        project_root=static_root,
+        data_root=storage_root,
     )
     AppHandler.context = context
-    server = ThreadingHTTPServer((args.host, args.port), AppHandler)
+    server = ThreadingHTTPServer((host, port), AppHandler)
+    return AppRuntime(server=server, realtime=realtime, database=database)
+
+
+def main() -> None:
+    args = parse_args()
+    project_root, data_root = resolve_roots(args.project_root, args.data_root)
+    runtime = create_runtime(
+        host=args.host,
+        port=args.port,
+        db_path=args.db,
+        project_root=project_root,
+        data_root=data_root,
+    )
     print(f"{APP_NAME} running at http://{args.host}:{args.port}")
-    print(f"Database: {database.db_path}")
+    print(f"Static root: {project_root}")
+    print(f"Data root: {data_root}")
+    print(f"Database: {runtime.database.db_path}")
     try:
-        server.serve_forever()
+        runtime.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
-        realtime.stop()
-        server.server_close()
-        database.close()
+        runtime.stop()
 
 
 if __name__ == "__main__":

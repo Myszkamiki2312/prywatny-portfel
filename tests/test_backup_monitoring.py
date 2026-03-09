@@ -38,13 +38,14 @@ class BackupMonitoringTests(unittest.TestCase):
         self.database = Database(Path(self.tmp.name) / "backup.db")
         self.backup_service = BackupService(
             database=self.database,
-            project_root=Path(self.tmp.name),
+            data_root=Path(self.tmp.name) / "data",
         )
         self.handler = FakeHandler(
             SimpleNamespace(
                 database=self.database,
                 backup_service=self.backup_service,
                 realtime=FakeRealtime(),
+                data_root=Path(self.tmp.name) / "data",
             )
         )
 

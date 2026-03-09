@@ -19,6 +19,24 @@ git tag android-v1.0.0
 git push origin android-v1.0.0
 ```
 
+## Desktop EXE (Windows)
+
+Desktop build jest publikowany z GitHub Actions (`Desktop EXE`).
+
+- artifact po pushu: `prywatny-portfel-desktop-exe`
+- release asset po tagu `v...`:
+  - `prywatny-portfel-desktop.exe`
+  - `prywatny-portfel-desktop-win.zip`
+
+Przyklad publikacji desktop release:
+
+```bash
+git tag v0.6.1
+git push origin v0.6.1
+```
+
+Windows `.exe` uruchamia lokalny backend i otwiera aplikacje w natywnym oknie. Dane aplikacji sa trzymane w katalogu użytkownika, a nie w folderze tymczasowym bundla.
+
 ## Testy
 
 Uruchom testy backendu:
