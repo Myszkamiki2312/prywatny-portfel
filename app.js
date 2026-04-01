@@ -367,6 +367,8 @@ function cacheDom() {
   dom.backendStatus = document.getElementById("backendStatus");
 
   dom.dashboardPortfolioSelect = document.getElementById("dashboardPortfolioSelect");
+  dom.dashboardInflationEnabled = document.getElementById("dashboardInflationEnabled");
+  dom.dashboardInflationRateInput = document.getElementById("dashboardInflationRateInput");
   dom.statMarketValue = document.getElementById("statMarketValue");
   dom.statCash = document.getElementById("statCash");
   dom.statNetWorth = document.getElementById("statNetWorth");
@@ -611,6 +613,13 @@ function bindEvents() {
     dom.appearanceResetBtn.addEventListener("click", onAppearanceReset);
   }
   dom.dashboardPortfolioSelect.addEventListener("change", renderDashboard);
+  if (dom.dashboardInflationEnabled) {
+    dom.dashboardInflationEnabled.addEventListener("change", onDashboardInflationChange);
+  }
+  if (dom.dashboardInflationRateInput) {
+    dom.dashboardInflationRateInput.addEventListener("input", onDashboardInflationChange);
+    dom.dashboardInflationRateInput.addEventListener("change", onDashboardInflationChange);
+  }
   dom.reportPortfolioSelect.addEventListener("change", renderReportCurrent);
   window.addEventListener("resize", scheduleResponsiveChartRefresh);
   bindLineChartRangeControls("dashboard", dom.dashboardChartRangeControls, () => {
@@ -3846,6 +3855,18 @@ function onBaseCurrencyChange() {
   void renderReportCurrent();
 }
 
+function onDashboardInflationChange() {
+  state.meta.dashboardInflationEnabled = Boolean(dom.dashboardInflationEnabled && dom.dashboardInflationEnabled.checked);
+  state.meta.dashboardInflationRatePct = normalizeInflationRatePct(
+    dom.dashboardInflationRateInput ? dom.dashboardInflationRateInput.value : state.meta.dashboardInflationRatePct
+  );
+  if (dom.dashboardInflationRateInput) {
+    dom.dashboardInflationRateInput.value = formatInflationRateInput(state.meta.dashboardInflationRatePct);
+  }
+  saveState();
+  renderDashboard();
+}
+
 function onAppearanceThemeClick(event) {
   const button = event.target.closest("[data-theme-option]");
   if (!button) {
@@ -5417,10 +5438,16 @@ function renderAll() {
   state = normalizeState(state);
   syncEditingForms();
   applyAppearanceSettings();
-  saveState();
+  saveState({ preserveHistoryCache: true });
 
   dom.planSelect.value = state.meta.activePlan;
   dom.baseCurrencySelect.value = state.meta.baseCurrency;
+  if (dom.dashboardInflationEnabled) {
+    dom.dashboardInflationEnabled.checked = Boolean(state.meta.dashboardInflationEnabled);
+  }
+  if (dom.dashboardInflationRateInput) {
+    dom.dashboardInflationRateInput.value = formatInflationRateInput(state.meta.dashboardInflationRatePct);
+  }
 
   fillPortfolioDependentSelects();
   fillAccountDependentSelects();
@@ -5633,11 +5660,73 @@ function computeDashboardHistoryChange(series, days) {
   };
 }
 
-function computeDashboardHistorySummary(series) {
+function inflationMultiplierBetweenDates(fromDate, toDate, annualRatePct) {
+  const start = parseSeriesIsoDate(fromDate);
+  const end = parseSeriesIsoDate(toDate);
+  const rate = normalizeInflationRatePct(annualRatePct);
+  if (!start || !end || rate <= 0) {
+    return 1;
+  }
+  const diffDays = Math.max(0, Math.round((end.getTime() - start.getTime()) / 86400000));
+  if (diffDays <= 0) {
+    return 1;
+  }
+  return (1 + rate / 100) ** (diffDays / 365.25);
+}
+
+function applyInflationToSeries(series, annualRatePct) {
+  if (!Array.isArray(series) || !series.length) {
+    return [];
+  }
+  const lastDate = String(series[series.length - 1].date || "");
+  return series.map((point) => {
+    const multiplier = inflationMultiplierBetweenDates(point.date, lastDate, annualRatePct);
+    const next = { ...point };
+    if (next.value != null) {
+      next.value = toNum(next.value) * multiplier;
+    }
+    if (next.netWorth != null) {
+      next.netWorth = toNum(next.netWorth) * multiplier;
+    }
+    if (next.marketValue != null) {
+      next.marketValue = toNum(next.marketValue) * multiplier;
+    }
+    return next;
+  });
+}
+
+function computeDashboardHistorySummary(series, options = {}) {
+  const inflationEnabled = Boolean(options.inflationEnabled);
+  const inflationRatePct = normalizeInflationRatePct(options.inflationRatePct);
+  const adjust = (days) => {
+    const nominal = computeDashboardHistoryChange(series, days);
+    if (!nominal.available || !inflationEnabled || inflationRatePct <= 0) {
+      return nominal;
+    }
+    const baselineMultiplier = inflationMultiplierBetweenDates(
+      nominal.fromDate,
+      nominal.toDate,
+      inflationRatePct
+    );
+    const current = Array.isArray(series) && series.length ? series[series.length - 1] : null;
+    const baseline = Array.isArray(series)
+      ? series.find((item) => String(item.date || "") === String(nominal.fromDate || ""))
+      : null;
+    const currentValue = toNum(current && (current.netWorth != null ? current.netWorth : current.value));
+    const baseValue = toNum(baseline && (baseline.netWorth != null ? baseline.netWorth : baseline.value));
+    const inflationAdjustedBase = baseValue * baselineMultiplier;
+    const amount = currentValue - inflationAdjustedBase;
+    return {
+      ...nominal,
+      amount,
+      pct: inflationAdjustedBase !== 0 ? (amount / inflationAdjustedBase) * 100 : 0
+    };
+  };
+
   return {
-    daily: computeDashboardHistoryChange(series, 1),
-    monthly: computeDashboardHistoryChange(series, 30),
-    yearly: computeDashboardHistoryChange(series, 365)
+    daily: adjust(1),
+    monthly: adjust(30),
+    yearly: adjust(365)
   };
 }
 
@@ -5825,6 +5914,8 @@ function renderDashboard() {
       dashboardSeries,
       dashboardSummary,
       dashboardComparisonSeries,
+      applyInflationToSeries,
+      computeDashboardHistorySummary,
       formatMoney,
       formatPercent,
       drawLineChart,
@@ -8440,6 +8531,23 @@ function canAddPortfolio() {
   return state.portfolios.length < currentPlanLimit().portfolios;
 }
 
+function normalizeInflationEnabled(value) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  const text = String(value || "").trim().toLowerCase();
+  return text === "1" || text === "true" || text === "yes" || text === "on";
+}
+
+function normalizeInflationRatePct(value) {
+  return clamp(toNum(value), 0, 100);
+}
+
+function formatInflationRateInput(value) {
+  const safeValue = normalizeInflationRatePct(value);
+  return Number.isInteger(safeValue) ? String(safeValue) : String(safeValue).replace(/\.0+$/, "");
+}
+
 function defaultState() {
   return {
     meta: {
@@ -8450,7 +8558,9 @@ function defaultState() {
       theme: APPEARANCE_DEFAULTS.theme,
       lastLightTheme: APPEARANCE_DEFAULTS.lastLightTheme,
       iconSet: APPEARANCE_DEFAULTS.iconSet,
-      fontScale: APPEARANCE_DEFAULTS.fontScale
+      fontScale: APPEARANCE_DEFAULTS.fontScale,
+      dashboardInflationEnabled: false,
+      dashboardInflationRatePct: 0
     },
     portfolios: [
       {
@@ -8521,7 +8631,13 @@ function normalizeState(input) {
       theme: normalizeTheme(stateValue.meta && stateValue.meta.theme),
       lastLightTheme: resolveLastLightTheme(stateValue.meta && stateValue.meta.lastLightTheme),
       iconSet: normalizeIconSet(stateValue.meta && stateValue.meta.iconSet),
-      fontScale: normalizeFontScale(stateValue.meta && stateValue.meta.fontScale)
+      fontScale: normalizeFontScale(stateValue.meta && stateValue.meta.fontScale),
+      dashboardInflationEnabled: normalizeInflationEnabled(
+        stateValue.meta && stateValue.meta.dashboardInflationEnabled
+      ),
+      dashboardInflationRatePct: normalizeInflationRatePct(
+        stateValue.meta && stateValue.meta.dashboardInflationRatePct
+      )
     },
     portfolios: Array.isArray(stateValue.portfolios) && stateValue.portfolios.length
       ? stateValue.portfolios.map((portfolio) => ({
@@ -8646,7 +8762,9 @@ function normalizeState(input) {
 }
 
 function saveState(options = {}) {
-  invalidateDashboardHistoryCache();
+  if (!options.preserveHistoryCache) {
+    invalidateDashboardHistoryCache();
+  }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   if (!options.skipBackend) {
     scheduleBackendPush();
@@ -8940,6 +9058,7 @@ if (typeof globalThis !== "undefined" && globalThis.__MYFUND_ENABLE_TEST_HOOKS__
     sliceLineChartSeriesByRange,
     computeReturnSeries,
     densifySeriesByDay,
+    applyInflationToSeries,
     computeDashboardHistorySummary,
     extractBenchmarkSeriesFromRows,
     alignBenchmarkHistoryToSeries,

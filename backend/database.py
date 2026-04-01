@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .state_model import default_state, normalize_state
-from .utils import now_iso, to_int as _to_int
+from .utils import now_iso, to_int as _to_int, to_num
 
 
 class Database:
@@ -575,6 +575,8 @@ class Database:
                 "lastLightTheme": meta.get("lastLightTheme", "forest"),
                 "iconSet": meta.get("iconSet", "classic"),
                 "fontScale": meta.get("fontScale", "comfortable"),
+                "dashboardInflationEnabled": str(meta.get("dashboardInflationEnabled", "False")).lower() in {"1", "true", "yes", "on"},
+                "dashboardInflationRatePct": to_num(meta.get("dashboardInflationRatePct", 0)),
             },
             "portfolios": portfolios,
             "accounts": accounts,
@@ -608,6 +610,8 @@ class Database:
                     "lastLightTheme",
                     "iconSet",
                     "fontScale",
+                    "dashboardInflationEnabled",
+                    "dashboardInflationRatePct",
                 }
             }
             for table in [

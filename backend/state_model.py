@@ -62,6 +62,8 @@ def default_state() -> Dict[str, Any]:
             "lastLightTheme": "forest",
             "iconSet": "classic",
             "fontScale": "comfortable",
+            "dashboardInflationEnabled": False,
+            "dashboardInflationRatePct": 0.0,
         },
         "portfolios": [
             {
@@ -115,6 +117,8 @@ def normalize_state(state_value: Any) -> Dict[str, Any]:
             "lastLightTheme": _normalize_light_theme(meta.get("lastLightTheme"), fallback["meta"]["lastLightTheme"]),
             "iconSet": _normalize_icon_set(meta.get("iconSet"), fallback["meta"]["iconSet"]),
             "fontScale": _normalize_font_scale(meta.get("fontScale"), fallback["meta"]["fontScale"]),
+            "dashboardInflationEnabled": bool(meta.get("dashboardInflationEnabled")),
+            "dashboardInflationRatePct": max(0.0, min(100.0, to_num(meta.get("dashboardInflationRatePct")))),
         },
         "portfolios": _normalize_portfolios(value.get("portfolios"), fallback),
         "accounts": _normalize_accounts(value.get("accounts"), fallback),

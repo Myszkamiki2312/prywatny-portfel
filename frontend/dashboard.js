@@ -6,6 +6,8 @@ export function renderDashboard(deps) {
     dashboardSeries,
     dashboardSummary,
     dashboardComparisonSeries,
+    applyInflationToSeries,
+    computeDashboardHistorySummary,
     formatMoney,
     formatPercent,
     drawLineChart,
@@ -18,8 +20,18 @@ export function renderDashboard(deps) {
 
   const portfolioId = dom.dashboardPortfolioSelect.value || "";
   const metrics = computeMetrics(portfolioId);
-  const series = Array.isArray(dashboardSeries) ? dashboardSeries : [];
-  const summary = dashboardSummary && typeof dashboardSummary === "object" ? dashboardSummary : {};
+  const nominalSeries = Array.isArray(dashboardSeries) ? dashboardSeries : [];
+  const inflationEnabled = Boolean(state.meta && state.meta.dashboardInflationEnabled);
+  const inflationRatePct = Number(state.meta && state.meta.dashboardInflationRatePct) || 0;
+  const chartSeries =
+    inflationEnabled && inflationRatePct > 0
+      ? applyInflationToSeries(nominalSeries, inflationRatePct)
+      : nominalSeries;
+  const summary =
+    computeDashboardHistorySummary(
+      nominalSeries,
+      inflationEnabled ? { inflationEnabled: true, inflationRatePct } : {}
+    ) || (dashboardSummary && typeof dashboardSummary === "object" ? dashboardSummary : {});
 
   dom.statMarketValue.textContent = formatMoney(metrics.marketValue);
   dom.statCash.textContent = formatMoney(metrics.cashTotal);
@@ -33,8 +45,8 @@ export function renderDashboard(deps) {
 
   const chartView = getVisibleLineChartModel(
     "dashboard",
-    series.map((point) => point.date),
-    series.map((point) => point.netWorth ?? point.value ?? point.marketValue),
+    chartSeries.map((point) => point.date),
+    chartSeries.map((point) => point.netWorth ?? point.value ?? point.marketValue),
     {
       comparisonSeries: Array.isArray(dashboardComparisonSeries) ? dashboardComparisonSeries : [],
       comparisonVisibility: "return-only"

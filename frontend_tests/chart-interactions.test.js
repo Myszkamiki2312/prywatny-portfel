@@ -163,6 +163,35 @@ test("computeDashboardHistorySummary returns daily monthly and missing yearly ch
   assert.equal(result.yearly.available, false);
 });
 
+test("computeDashboardHistorySummary can adjust yearly change for inflation", () => {
+  const hooks = createHarness();
+  const result = hooks.computeDashboardHistorySummary(
+    [
+      { date: "2025-03-31", netWorth: 1000 },
+      { date: "2026-03-31", netWorth: 1200 }
+    ],
+    { inflationEnabled: true, inflationRatePct: 10 }
+  );
+
+  assert.equal(result.yearly.available, true);
+  assert.equal(Math.round(result.yearly.amount), 100);
+  assert.equal(Math.round(result.yearly.pct), 9);
+});
+
+test("applyInflationToSeries inflates older points to latest date terms", () => {
+  const hooks = createHarness();
+  const result = hooks.applyInflationToSeries(
+    [
+      { date: "2025-03-31", netWorth: 1000, value: 1000, marketValue: 1000 },
+      { date: "2026-03-31", netWorth: 1200, value: 1200, marketValue: 1200 }
+    ],
+    10
+  );
+
+  assert.equal(Math.round(result[0].netWorth), 1100);
+  assert.equal(Math.round(result[1].netWorth), 1200);
+});
+
 test("extractBenchmarkSeriesFromRows parses benchmark column from report rows", () => {
   const hooks = createHarness();
   const result = hooks.extractBenchmarkSeriesFromRows(
