@@ -130,6 +130,39 @@ test("computeReturnSeries normalizes window to cumulative percent", () => {
   assert.deepEqual(result, [0, 10, -10]);
 });
 
+test("densifySeriesByDay fills missing calendar days with last known values", () => {
+  const hooks = createHarness();
+  const result = hooks.densifySeriesByDay([
+    { date: "2026-03-01", value: 100, marketValue: 100, netWorth: 100, pl: 0 },
+    { date: "2026-03-03", value: 120, marketValue: 120, netWorth: 120, pl: 20 }
+  ]);
+
+  assert.equal(result.length, 3);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(result.map((point) => [point.date, point.value]))),
+    [
+      ["2026-03-01", 100],
+      ["2026-03-02", 100],
+      ["2026-03-03", 120]
+    ]
+  );
+});
+
+test("computeDashboardHistorySummary returns daily monthly and missing yearly change", () => {
+  const hooks = createHarness();
+  const result = hooks.computeDashboardHistorySummary([
+    { date: "2026-03-01", netWorth: 1000 },
+    { date: "2026-03-02", netWorth: 1010 },
+    { date: "2026-03-30", netWorth: 1180 },
+    { date: "2026-03-31", netWorth: 1200 }
+  ]);
+
+  assert.equal(result.daily.available, true);
+  assert.equal(Math.round(result.daily.amount), 20);
+  assert.equal(Math.round(result.monthly.amount), 200);
+  assert.equal(result.yearly.available, false);
+});
+
 test("extractBenchmarkSeriesFromRows parses benchmark column from report rows", () => {
   const hooks = createHarness();
   const result = hooks.extractBenchmarkSeriesFromRows(

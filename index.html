@@ -34,6 +34,7 @@
             <option value="CHF">CHF</option>
           </select>
         </label>
+        <button id="themeToggleBtn" class="btn secondary" type="button" aria-pressed="false">Tryb ciemny</button>
         <button id="exportBackupBtn" class="btn secondary">Eksport kopii</button>
         <label class="btn secondary file-btn">
           Import kopii
@@ -45,13 +46,38 @@
     </header>
 
     <nav class="tabs" id="tabs">
-      <button class="tab active" data-view="dashboardView">Kokpit</button>
-      <button class="tab" data-view="portfoliosView">Portfele</button>
-      <button class="tab" data-view="accountsView">Konta i walory</button>
-      <button class="tab" data-view="operationsView">Operacje</button>
-      <button class="tab" data-view="reportsView">Raporty</button>
-      <button class="tab" data-view="toolsView">Narzędzia</button>
-      <button class="tab" data-view="featuresView">Matryca funkcji</button>
+      <button class="tab active" data-view="dashboardView" data-icon-key="dashboard">
+        <span class="tab-icon" aria-hidden="true">◌</span>
+        <span class="tab-label">Kokpit</span>
+      </button>
+      <button class="tab" data-view="portfoliosView" data-icon-key="portfolios">
+        <span class="tab-icon" aria-hidden="true">◌</span>
+        <span class="tab-label">Portfele</span>
+      </button>
+      <button class="tab" data-view="accountsView" data-icon-key="accounts">
+        <span class="tab-icon" aria-hidden="true">◌</span>
+        <span class="tab-label">Konta i walory</span>
+      </button>
+      <button class="tab" data-view="operationsView" data-icon-key="operations">
+        <span class="tab-icon" aria-hidden="true">◌</span>
+        <span class="tab-label">Operacje</span>
+      </button>
+      <button class="tab" data-view="reportsView" data-icon-key="reports">
+        <span class="tab-icon" aria-hidden="true">◌</span>
+        <span class="tab-label">Raporty</span>
+      </button>
+      <button class="tab" data-view="toolsView" data-icon-key="tools">
+        <span class="tab-icon" aria-hidden="true">◌</span>
+        <span class="tab-label">Narzędzia</span>
+      </button>
+      <button class="tab" data-view="appearanceView" data-icon-key="appearance">
+        <span class="tab-icon" aria-hidden="true">◌</span>
+        <span class="tab-label">Wygląd</span>
+      </button>
+      <button class="tab" data-view="featuresView" data-icon-key="features">
+        <span class="tab-icon" aria-hidden="true">◌</span>
+        <span class="tab-label">Matryca funkcji</span>
+      </button>
     </nav>
 
     <main class="container">
@@ -80,6 +106,21 @@
             <article class="stat-card">
               <p>Całkowity zysk/strata</p>
               <strong id="statTotalPl">0,00 PLN</strong>
+            </article>
+            <article class="stat-card stat-card-trend">
+              <p>Zmiana dzienna</p>
+              <strong id="statDailyChangePct">—</strong>
+              <span id="statDailyChangeValue" class="stat-card-meta">Brak pełnego zakresu</span>
+            </article>
+            <article class="stat-card stat-card-trend">
+              <p>Zmiana miesięczna</p>
+              <strong id="statMonthlyChangePct">—</strong>
+              <span id="statMonthlyChangeValue" class="stat-card-meta">Brak pełnego zakresu</span>
+            </article>
+            <article class="stat-card stat-card-trend">
+              <p>Zmiana roczna</p>
+              <strong id="statYearlyChangePct">—</strong>
+              <span id="statYearlyChangeValue" class="stat-card-meta">Brak pełnego zakresu</span>
             </article>
           </div>
           <div class="chart-toolbar">
@@ -1201,6 +1242,36 @@
             </div>
             <div id="publicPortfoliosInfo" class="hint"></div>
             <div id="publicPortfoliosTable" class="table-wrap"></div>
+          </article>
+        </div>
+      </section>
+
+      <section id="appearanceView" class="view">
+        <div class="grid-two">
+          <article class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Skórki i czytelność</h2>
+                <p class="muted">
+                  Dopasuj aplikację pod siebie. Zmiany zapisują się lokalnie i są przenoszone razem z kopią danych.
+                </p>
+              </div>
+              <button id="appearanceResetBtn" type="button" class="btn secondary">Przywróć domyślne</button>
+            </div>
+            <h3>Wybór skórki</h3>
+            <div id="appearanceThemeGrid" class="appearance-grid"></div>
+            <h3>Zestaw ikon</h3>
+            <div id="appearanceIconGrid" class="appearance-grid compact"></div>
+            <h3>Rozmiar czcionki</h3>
+            <div id="appearanceFontGrid" class="appearance-grid compact"></div>
+            <p id="appearanceSummary" class="hint"></p>
+          </article>
+          <article class="panel">
+            <h2>Podgląd na żywo</h2>
+            <p class="muted">
+              Podgląd pokazuje zakładki, przyciski, badge i fragment kokpitu w aktualnie wybranej stylistyce.
+            </p>
+            <div id="appearancePreview" class="appearance-preview-shell"></div>
           </article>
         </div>
       </section>

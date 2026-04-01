@@ -174,6 +174,20 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(ctx.exception.status, 400)
         self.assertIn("Missing reportName", ctx.exception.message)
 
+    def test_metrics_history_endpoint_returns_series_and_summary(self):
+        response = self.handler.dispatch(
+            "GET",
+            "/api/metrics/history",
+            query={"portfolioId": ["ptf_1"]},
+        )
+
+        history = response["history"]
+        self.assertEqual(history["portfolioId"], "ptf_1")
+        self.assertTrue(len(history["series"]) >= 1)
+        self.assertIn("daily", history["summary"])
+        self.assertIn("monthly", history["summary"])
+        self.assertIn("yearly", history["summary"])
+
     def test_tax_optimize_endpoint(self):
         response = self.handler.dispatch(
             "POST",

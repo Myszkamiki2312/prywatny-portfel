@@ -570,6 +570,11 @@ class Database:
                 "activePlan": meta.get("activePlan", "Expert"),
                 "baseCurrency": meta.get("baseCurrency", "PLN"),
                 "createdAt": meta.get("createdAt", ""),
+                "fxRates": self.get_meta_json("fxRates", {}),
+                "theme": meta.get("theme", "forest"),
+                "lastLightTheme": meta.get("lastLightTheme", "forest"),
+                "iconSet": meta.get("iconSet", "classic"),
+                "fontScale": meta.get("fontScale", "comfortable"),
             },
             "portfolios": portfolios,
             "accounts": accounts,
@@ -593,7 +598,17 @@ class Database:
             preserved_meta = {
                 row["key"]: row["value"]
                 for row in meta_rows
-                if row["key"] not in {"activePlan", "baseCurrency", "createdAt"}
+                if row["key"]
+                not in {
+                    "activePlan",
+                    "baseCurrency",
+                    "createdAt",
+                    "fxRates",
+                    "theme",
+                    "lastLightTheme",
+                    "iconSet",
+                    "fontScale",
+                }
             }
             for table in [
                 "meta",
@@ -611,7 +626,8 @@ class Database:
                 cursor.execute(f"DELETE FROM {table}")
 
             for key, value in state["meta"].items():
-                cursor.execute("INSERT INTO meta (key, value) VALUES (?, ?)", (key, str(value)))
+                stored = json.dumps(value, ensure_ascii=False) if key == "fxRates" else str(value)
+                cursor.execute("INSERT INTO meta (key, value) VALUES (?, ?)", (key, stored))
             for key, value in preserved_meta.items():
                 cursor.execute("INSERT INTO meta (key, value) VALUES (?, ?)", (key, str(value)))
 

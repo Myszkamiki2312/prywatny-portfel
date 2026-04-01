@@ -14,7 +14,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from .utils import now_iso
+from .utils import normalize_currency, normalize_fx_pair_key, now_iso
 
 
 class QuoteRow(TypedDict):
@@ -75,15 +75,31 @@ class QuoteService:
                 missing.append(ticker)
 
         fetched: Dict[str, QuoteRow] = {}
-        if missing:
-            for row in self._fetch_yahoo(missing):
+        missing_fx = [ticker for ticker in missing if _is_fx_ticker(ticker)]
+        missing_market = [ticker for ticker in missing if not _is_fx_ticker(ticker)]
+
+        if missing_market:
+            for row in self._fetch_yahoo(missing_market):
                 normalized = self._normalize_quote_row(row)
                 if normalized:
                     fetched[normalized["ticker"]] = normalized
 
-        unresolved = [ticker for ticker in missing if ticker not in fetched]
-        if unresolved:
-            for row in self._fetch_stooq(unresolved):
+        unresolved_market = [ticker for ticker in missing_market if ticker not in fetched]
+        if unresolved_market:
+            for row in self._fetch_stooq(unresolved_market):
+                normalized = self._normalize_quote_row(row)
+                if normalized:
+                    fetched[normalized["ticker"]] = normalized
+
+        if missing_fx:
+            for row in self._fetch_yahoo_fx(missing_fx):
+                normalized = self._normalize_quote_row(row)
+                if normalized:
+                    fetched[normalized["ticker"]] = normalized
+
+        unresolved_fx = [ticker for ticker in missing_fx if ticker not in fetched]
+        if unresolved_fx:
+            for row in self._fetch_stooq_fx(unresolved_fx):
                 normalized = self._normalize_quote_row(row)
                 if normalized:
                     fetched[normalized["ticker"]] = normalized
@@ -173,6 +189,51 @@ class QuoteService:
             )
         return output
 
+    def _fetch_yahoo_fx(self, tickers: List[str]) -> List[QuoteRow]:
+        mapping = {
+            ticker: _fx_provider_symbol(ticker)
+            for ticker in tickers
+            if _fx_provider_symbol(ticker)
+        }
+        if not mapping:
+            return []
+        query = urllib.parse.urlencode({"symbols": ",".join(mapping.values())})
+        url = f"https://query1.finance.yahoo.com/v7/finance/quote?{query}"
+        request = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "PrywatnyPortfel/1.0",
+                "Accept": "application/json",
+            },
+        )
+        try:
+            raw = self._urlopen_bytes(request)
+            payload = json.loads(raw.decode("utf-8", errors="ignore"))
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ssl.SSLError):
+            return []
+
+        reverse_mapping = {symbol: ticker for ticker, symbol in mapping.items()}
+        rows = payload.get("quoteResponse", {}).get("result", [])
+        output: List[QuoteRow] = []
+        for row in rows:
+            provider_symbol = str(row.get("symbol") or "").upper().strip()
+            ticker = reverse_mapping.get(provider_symbol)
+            pair_key = normalize_fx_pair_key(ticker)
+            price = row.get("regularMarketPrice")
+            if not ticker or not pair_key or not isinstance(price, (float, int)):
+                continue
+            _, quote_currency = pair_key.split("/", 1)
+            output.append(
+                {
+                    "ticker": ticker,
+                    "price": float(price),
+                    "currency": quote_currency,
+                    "provider": "yahoo-fx",
+                    "fetched_at": now_iso(),
+                }
+            )
+        return output
+
     def _fetch_stooq(self, tickers: List[str]) -> List[QuoteRow]:
         output: List[QuoteRow] = []
         for ticker in tickers:
@@ -229,6 +290,49 @@ class QuoteService:
                 "fetched_at": now_iso(),
             }
         return None
+
+    def _fetch_stooq_fx(self, tickers: List[str]) -> List[QuoteRow]:
+        output: List[QuoteRow] = []
+        for ticker in tickers:
+            row = self._fetch_single_stooq_fx(ticker)
+            if row:
+                output.append(row)
+        return output
+
+    def _fetch_single_stooq_fx(self, ticker: str) -> QuoteRow | None:
+        pair_key = normalize_fx_pair_key(ticker)
+        if not pair_key:
+            return None
+        base_currency, quote_currency = pair_key.split("/", 1)
+        symbol = f"{base_currency.lower()}{quote_currency.lower()}"
+        url = (
+            "https://stooq.com/q/l/?"
+            + urllib.parse.urlencode({"s": symbol, "f": "sd2t2ohlcv", "h": "", "e": "csv"})
+        )
+        request = urllib.request.Request(
+            url,
+            headers={"User-Agent": "PrywatnyPortfel/1.0", "Accept": "text/csv"},
+        )
+        try:
+            text = self._urlopen_bytes(request).decode("utf-8", errors="ignore")
+        except (urllib.error.URLError, TimeoutError, ssl.SSLError):
+            return None
+
+        parsed = _parse_stooq_csv(text)
+        close_val = parsed.get("Close")
+        if not close_val or close_val == "N/D":
+            return None
+        try:
+            price = float(close_val)
+        except ValueError:
+            return None
+        return {
+            "ticker": ticker,
+            "price": price,
+            "currency": quote_currency,
+            "provider": "stooq-fx",
+            "fetched_at": now_iso(),
+        }
 
     def _urlopen_bytes(self, request: urllib.request.Request) -> bytes:
         attempts = self.max_retry_attempts + 1
@@ -370,6 +474,18 @@ def _normalize_tickers(tickers: Iterable[str]) -> List[str]:
     return output
 
 
+def _is_fx_ticker(ticker: str) -> bool:
+    return bool(normalize_fx_pair_key(ticker))
+
+
+def _fx_provider_symbol(ticker: str) -> str:
+    pair_key = normalize_fx_pair_key(ticker)
+    if not pair_key:
+        return ""
+    base_currency, quote_currency = pair_key.split("/", 1)
+    return f"{normalize_currency(base_currency)}{normalize_currency(quote_currency)}=X"
+
+
 def _parse_stooq_history_csv(text: str) -> List[HistoryRow]:
     stream = io.StringIO(text)
     reader = csv.DictReader(stream)
@@ -402,6 +518,10 @@ def _stooq_history_candidates(ticker: str) -> List[str]:
     raw = str(ticker or "").strip()
     if not raw:
         return []
+    pair_key = normalize_fx_pair_key(raw)
+    if pair_key:
+        base_currency, quote_currency = pair_key.split("/", 1)
+        return [f"{base_currency.lower()}{quote_currency.lower()}"]
     alias_map = {
         "WIG20": "wig20",
         "WIG": "wig",

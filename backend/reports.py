@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import math
 from statistics import fmean
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
-from .utils import norm
+from .utils import convert_currency, norm
+from .utils import normalize_currency as _normalize_currency
+from .utils import normalize_fx_rates
 from .utils import now_iso as _now_iso
+from .utils import parse_date as _parse_date
 from .utils import to_num as _to_num
 
 
@@ -76,6 +79,39 @@ def _today_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
+def _densify_daily_series(series: List[Dict[str, float]]) -> List[Dict[str, float]]:
+    if len(series) < 2:
+        return list(series)
+
+    normalized = []
+    for row in series:
+        date_text = str(row.get("date") or "").strip()[:10]
+        if not date_text:
+            continue
+        normalized.append({**row, "date": date_text})
+    if len(normalized) < 2:
+        return normalized
+
+    first_day = _parse_date(normalized[0].get("date"))
+    last_day = _parse_date(normalized[-1].get("date"))
+    if (last_day - first_day).days > 4000:
+        return normalized
+
+    output: List[Dict[str, float]] = [dict(normalized[0])]
+    previous = dict(normalized[0])
+    previous_day = _parse_date(previous.get("date"))
+    for current in normalized[1:]:
+        current_day = _parse_date(current.get("date"))
+        cursor = previous_day + timedelta(days=1)
+        while cursor < current_day:
+            output.append({**previous, "date": cursor.isoformat()})
+            cursor += timedelta(days=1)
+        output.append(dict(current))
+        previous = dict(current)
+        previous_day = current_day
+    return output
+
+
 def _safe_div(a: float, b: float) -> float:
     return a / b if abs(b) > 1e-12 else 0.0
 
@@ -134,6 +170,7 @@ class AnalyticsEngine:
         self.operations = state.get("operations", [])
         self.liabilities = state.get("liabilities", [])
         self.base_currency = state.get("meta", {}).get("baseCurrency", "PLN")
+        self.fx_rates = normalize_fx_rates(state.get("meta", {}).get("fxRates"))
 
         self.asset_by_id = {row.get("id", ""): row for row in self.assets}
         self.account_by_id = {row.get("id", ""): row for row in self.accounts}
@@ -154,7 +191,7 @@ class AnalyticsEngine:
 
     def _compute_metrics(self) -> Dict[str, Any]:
         holdings: Dict[str, Dict[str, float]] = {}
-        cash_by_account: Dict[str, float] = defaultdict(float)
+        cash_buckets: Dict[tuple[str, str], float] = defaultdict(float)
         account_stats: Dict[str, Dict[str, float]] = {}
         last_price_by_asset: Dict[str, float] = {}
 
@@ -194,18 +231,36 @@ class AnalyticsEngine:
                 }
             return account_stats[key]
 
-        def add_cash(account_id: str, amount: float) -> None:
+        def op_currency(op: Dict[str, Any], *, asset_id: str = "") -> str:
+            asset = self.asset_by_id.get(asset_id or str(op.get("assetId") or ""), {})
+            account = self.account_by_id.get(str(op.get("accountId") or ""), {})
+            return _normalize_currency(
+                asset.get("currency") or account.get("currency") or op.get("currency") or self.base_currency,
+                self.base_currency,
+            )
+
+        def to_base(amount: float, currency: str) -> float:
+            return convert_currency(amount, currency, self.base_currency, self.fx_rates)
+
+        def add_cash(account_id: str, amount: float, currency: str) -> None:
             key = account_id or "__global"
-            cash_by_account[key] += amount
+            normalized_currency = _normalize_currency(currency, self.base_currency)
+            cash_buckets[(key, normalized_currency)] += amount
             stats = ensure_account(key)
-            stats["cash"] += amount
-            stats["balance"] += amount
+            amount_base = to_base(amount, normalized_currency)
+            stats["cash"] += amount_base
+            stats["balance"] += amount_base
+
+        def add_account_stat(account_id: str, field: str, amount: float, currency: str) -> None:
+            stats = ensure_account(account_id)
+            stats[field] += to_base(amount, currency)
 
         for op in self._iter_operations():
             op_type = _norm(op.get("type", ""))
             account_id = str(op.get("accountId") or "")
             asset_id = str(op.get("assetId") or "")
             target_asset_id = str(op.get("targetAssetId") or "")
+            currency = op_currency(op, asset_id=asset_id)
 
             qty = _to_num(op.get("quantity"))
             target_qty = _to_num(op.get("targetQuantity"))
@@ -221,16 +276,15 @@ class AnalyticsEngine:
                 total = gross + fee
                 row = ensure_holding(asset_id)
                 row["qty"] += qty
-                row["cost"] += total
-                add_cash(account_id, -total)
-                stats = ensure_account(account_id)
-                stats["buyGross"] += gross
-                stats["fees"] += fee
-                fees += fee
+                row["cost"] += to_base(total, currency)
+                add_cash(account_id, -total, currency)
+                add_account_stat(account_id, "buyGross", gross, currency)
+                add_account_stat(account_id, "fees", fee, currency)
+                fees += to_base(fee, currency)
                 buy_by_asset[asset_id]["qty"] += qty
-                buy_by_asset[asset_id]["amount"] += total
+                buy_by_asset[asset_id]["amount"] += to_base(total, currency)
                 closed_agg[asset_id]["buyQty"] += qty
-                closed_agg[asset_id]["buyCost"] += total
+                closed_agg[asset_id]["buyCost"] += to_base(total, currency)
                 continue
 
             if _contains(op_type, "sprzedaz") or _contains(op_type, "sell"):
@@ -247,32 +301,31 @@ class AnalyticsEngine:
                     row["qty"] = 0.0
                 if abs(row["cost"]) < 1e-10:
                     row["cost"] = 0.0
-                add_cash(account_id, net_proceeds)
-                stats = ensure_account(account_id)
-                stats["sellGross"] += gross
-                stats["fees"] += fee
-                realized_delta = net_proceeds - cost_out
-                stats["realized"] += realized_delta
+                add_cash(account_id, net_proceeds, currency)
+                add_account_stat(account_id, "sellGross", gross, currency)
+                add_account_stat(account_id, "fees", fee, currency)
+                realized_delta = to_base(net_proceeds, currency) - cost_out
+                add_account_stat(account_id, "realized", realized_delta, self.base_currency)
                 realized += realized_delta
-                fees += fee
+                fees += to_base(fee, currency)
                 sales_records.append(
                     {
                         "date": str(op.get("date", "")),
                         "assetId": asset_id,
                         "qty": sold_qty,
                         "price": price,
-                        "gross": gross,
-                        "fee": fee,
+                        "gross": to_base(gross, currency),
+                        "fee": to_base(fee, currency),
                         "costOut": cost_out,
                         "realizedPL": realized_delta,
-                        "currency": str(op.get("currency") or self.base_currency),
+                        "currency": self.base_currency,
                     }
                 )
                 agg = closed_agg[asset_id]
                 agg["sellQty"] += sold_qty
-                agg["sellValue"] += net_proceeds
+                agg["sellValue"] += to_base(net_proceeds, currency)
                 agg["realizedPL"] += realized_delta
-                agg["fees"] += fee
+                agg["fees"] += to_base(fee, currency)
                 agg["trades"] += 1
                 continue
 
@@ -287,23 +340,23 @@ class AnalyticsEngine:
                 target = ensure_holding(target_asset_id)
                 received = target_qty if target_qty > 0 else source_qty
                 target["qty"] += received
-                target["cost"] += source_cost_out + fee
+                target["cost"] += source_cost_out + to_base(fee, currency)
                 if fee > 0:
-                    add_cash(account_id, -fee)
-                    ensure_account(account_id)["fees"] += fee
-                    fees += fee
+                    add_cash(account_id, -fee, currency)
+                    add_account_stat(account_id, "fees", fee, currency)
+                    fees += to_base(fee, currency)
                 continue
 
             if _contains(op_type, "dywid") or _contains(op_type, "dividend"):
-                add_cash(account_id, amount)
-                dividends += amount
+                add_cash(account_id, amount, currency)
+                dividends += to_base(amount, currency)
                 continue
 
             if _contains(op_type, "prowiz") or _contains(op_type, "commission"):
                 fee_amount = fee if fee > 0 else abs(amount)
-                add_cash(account_id, -fee_amount)
-                ensure_account(account_id)["fees"] += fee_amount
-                fees += fee_amount
+                add_cash(account_id, -fee_amount, currency)
+                add_account_stat(account_id, "fees", fee_amount, currency)
+                fees += to_base(fee_amount, currency)
                 continue
 
             is_contribution = any(
@@ -318,13 +371,13 @@ class AnalyticsEngine:
                     "withdraw",
                 ]
             )
-            add_cash(account_id, amount)
+            add_cash(account_id, amount, currency)
             if is_contribution:
-                net_contribution += amount
+                net_contribution += to_base(amount, currency)
             if fee > 0:
-                add_cash(account_id, -fee)
-                ensure_account(account_id)["fees"] += fee
-                fees += fee
+                add_cash(account_id, -fee, currency)
+                add_account_stat(account_id, "fees", fee, currency)
+                fees += to_base(fee, currency)
 
         holdings_list: List[HoldingsRow] = []
         market_value = 0.0
@@ -339,13 +392,15 @@ class AnalyticsEngine:
                 continue
             asset = self.asset_by_id.get(asset_id, {})
             ticker = str(asset.get("ticker") or "N/A")
+            asset_currency = _normalize_currency(asset.get("currency"), self.base_currency)
             current = _to_num(asset.get("currentPrice"))
             price = (
                 current
                 if self.use_current_prices and current > 0
                 else _to_num(last_price_by_asset.get(asset_id))
             )
-            value = qty * price
+            native_value = qty * price
+            value = to_base(native_value, asset_currency)
             unrealized = value - cost
             unrealized_pct = _safe_div(unrealized, cost) * 100.0 if cost != 0 else 0.0
             row = HoldingsRow(
@@ -353,7 +408,7 @@ class AnalyticsEngine:
                 ticker=ticker,
                 name=str(asset.get("name") or "Usunięty walor"),
                 asset_type=str(asset.get("type") or "Inny"),
-                currency=str(asset.get("currency") or self.base_currency),
+                currency=asset_currency,
                 risk=_to_num(asset.get("risk") or 5.0),
                 sector=str(asset.get("sector") or ""),
                 industry=str(asset.get("industry") or ""),
@@ -370,18 +425,25 @@ class AnalyticsEngine:
             holdings_list.append(row)
             market_value += value
             book_value += cost
-            by_currency_map[row.currency] += value
+            by_currency_map[row.currency] += native_value
             tags = row.tags if row.tags else ["brak-tagu"]
             for tag in tags:
                 by_tag_map[str(tag)] += value
 
-        cash_total = _sum(cash_by_account.values())
-        for account_id, amount in cash_by_account.items():
-            account = self.account_by_id.get(account_id, {})
-            currency = str(account.get("currency") or self.base_currency)
+        cash_total = 0.0
+        for (account_id, currency), amount in cash_buckets.items():
+            cash_total += to_base(amount, currency)
             by_currency_map[currency] += amount
 
-        liabilities_total = _sum(_to_num(item.get("amount")) for item in self.liabilities)
+        liabilities_total = _sum(
+            convert_currency(
+                _to_num(item.get("amount")),
+                item.get("currency") or self.base_currency,
+                self.base_currency,
+                self.fx_rates,
+            )
+            for item in self.liabilities
+        )
         unrealized = market_value - book_value
         total_pl = unrealized + realized + dividends - fees
         net_worth = market_value + cash_total - liabilities_total
@@ -393,14 +455,16 @@ class AnalyticsEngine:
 
         by_currency = []
         for currency, value in by_currency_map.items():
+            base_value = to_base(value, currency)
             by_currency.append(
                 {
                     "currency": currency,
                     "value": value,
-                    "share": _safe_div(value, net_worth) * 100.0 if net_worth else 0.0,
+                    "baseValue": base_value,
+                    "share": _safe_div(base_value, net_worth) * 100.0 if net_worth else 0.0,
                 }
             )
-        by_currency.sort(key=lambda item: item["value"], reverse=True)
+        by_currency.sort(key=lambda item: item["baseValue"], reverse=True)
 
         by_tag = []
         for tag, value in by_tag_map.items():
@@ -511,6 +575,15 @@ class ReportService:
             "totalPL": metrics["totalPL"],
             "returnPct": metrics["returnPct"],
             "holdingsCount": len(metrics["holdings"]),
+        }
+
+    def metrics_history(self, *, portfolio_id: str = "") -> Dict[str, Any]:
+        state = self.state_provider()
+        series = self._build_series(state, portfolio_id)
+        return {
+            "portfolioId": portfolio_id,
+            "series": series,
+            "summary": self._history_summary(series),
         }
 
     def generate(self, *, report_name: str, portfolio_id: str = "") -> Dict[str, Any]:
@@ -699,6 +772,10 @@ class ReportService:
         return self._report_structure(report_name, metrics, info_base + " | Fallback raportu")
 
     def _build_series(self, state: Dict[str, Any], portfolio_id: str) -> List[Dict[str, float]]:
+        historical = self._build_historical_daily_series(state, portfolio_id)
+        if historical:
+            return historical
+
         operations = []
         for op in state.get("operations", []):
             if portfolio_id and op.get("portfolioId") != portfolio_id:
@@ -740,7 +817,210 @@ class ReportService:
                     "unitValue": _safe_div(current["netWorth"], current["units"]),
                 }
             )
+        return _densify_daily_series(output)
+
+    def _build_historical_daily_series(
+        self,
+        state: Dict[str, Any],
+        portfolio_id: str,
+    ) -> List[Dict[str, float]]:
+        if not callable(self.benchmark_history_provider):
+            return []
+
+        operations = []
+        for op in state.get("operations", []):
+            if portfolio_id and op.get("portfolioId") != portfolio_id:
+                continue
+            date_text = str(op.get("date") or "").strip()[:10]
+            if not date_text:
+                continue
+            operations.append(op)
+        if not operations:
+            return []
+
+        operations.sort(key=lambda item: (str(item.get("date", "")), str(item.get("createdAt", ""))))
+        start_day = _parse_date(str(operations[0].get("date") or ""))
+        end_day = _parse_date(_today_iso())
+        if end_day < start_day:
+            end_day = start_day
+        date_labels = [
+            (start_day + timedelta(days=offset)).isoformat()
+            for offset in range((end_day - start_day).days + 1)
+        ]
+        if not date_labels:
+            return []
+
+        assets = [dict(item) for item in state.get("assets", [])]
+        asset_by_id = {
+            str(item.get("id") or ""): item
+            for item in assets
+            if str(item.get("id") or "").strip()
+        }
+        original_prices = {
+            asset_id: _to_num(item.get("currentPrice"))
+            for asset_id, item in asset_by_id.items()
+        }
+        relevant_asset_ids = []
+        seen_assets = set()
+        for op in operations:
+            for key in ("assetId", "targetAssetId"):
+                asset_id = str(op.get(key) or "").strip()
+                if asset_id and asset_id not in seen_assets and asset_id in asset_by_id:
+                    seen_assets.add(asset_id)
+                    relevant_asset_ids.append(asset_id)
+
+        history_limit = max(240, len(date_labels) + 40)
+        aligned_asset_prices: Dict[str, List[Optional[float]]] = {}
+        for asset_id in relevant_asset_ids:
+            asset = asset_by_id.get(asset_id, {})
+            ticker = str(asset.get("ticker") or "").strip()
+            if not ticker:
+                continue
+            try:
+                history = self.benchmark_history_provider(ticker, history_limit)
+            except Exception:  # noqa: BLE001
+                history = []
+            aligned = self._align_close_history_to_dates(date_labels, history)
+            if any(value is not None for value in aligned):
+                aligned_asset_prices[asset_id] = aligned
+
+        base_currency = _normalize_currency(state.get("meta", {}).get("baseCurrency"), "PLN")
+        relevant_currencies = {base_currency}
+        for account in state.get("accounts", []):
+            relevant_currencies.add(_normalize_currency(account.get("currency"), base_currency))
+        for liability in state.get("liabilities", []):
+            relevant_currencies.add(_normalize_currency(liability.get("currency"), base_currency))
+        for op in operations:
+            relevant_currencies.add(_normalize_currency(op.get("currency"), base_currency))
+        for asset_id in relevant_asset_ids:
+            asset = asset_by_id.get(asset_id, {})
+            relevant_currencies.add(_normalize_currency(asset.get("currency"), base_currency))
+
+        aligned_fx_rates: Dict[str, List[Optional[float]]] = {}
+        for currency in sorted(relevant_currencies):
+            if not currency or currency == base_currency:
+                continue
+            pair_key = f"{currency}/{base_currency}"
+            try:
+                history = self.benchmark_history_provider(f"FX:{pair_key}", history_limit)
+            except Exception:  # noqa: BLE001
+                history = []
+            aligned = self._align_close_history_to_dates(date_labels, history)
+            if any(value is not None for value in aligned):
+                aligned_fx_rates[pair_key] = aligned
+
+        state_view = dict(state)
+        state_view["meta"] = dict(state.get("meta", {}))
+        state_view["assets"] = assets
+        fallback_fx_rates = normalize_fx_rates(state_view["meta"].get("fxRates"))
+        last_date = date_labels[-1]
+        output: List[Dict[str, float]] = []
+        for index, date_text in enumerate(date_labels):
+            fx_rates = dict(fallback_fx_rates)
+            for pair_key, aligned in aligned_fx_rates.items():
+                rate = aligned[index] if index < len(aligned) else None
+                if rate and rate > 0:
+                    fx_rates[pair_key] = rate
+            state_view["meta"]["fxRates"] = fx_rates
+
+            for asset_id in relevant_asset_ids:
+                asset = asset_by_id.get(asset_id)
+                if not asset:
+                    continue
+                aligned = aligned_asset_prices.get(asset_id, [])
+                rate = aligned[index] if index < len(aligned) else None
+                if rate and rate > 0:
+                    asset["currentPrice"] = rate
+                elif date_text == last_date:
+                    asset["currentPrice"] = original_prices.get(asset_id, 0.0)
+                else:
+                    asset["currentPrice"] = 0.0
+
+            metrics = AnalyticsEngine(
+                state_view,
+                portfolio_id=portfolio_id,
+                until_date=date_text,
+                use_current_prices=True,
+            ).metrics
+            output.append(
+                {
+                    "date": date_text,
+                    "netWorth": metrics["netWorth"],
+                    "marketValue": metrics["marketValue"],
+                    "cashTotal": metrics["cashTotal"],
+                    "liabilitiesTotal": metrics["liabilitiesTotal"],
+                    "totalPL": metrics["totalPL"],
+                    "returnPct": metrics["returnPct"],
+                    "unitValue": _safe_div(metrics["netWorth"], metrics["units"]),
+                }
+            )
         return output
+
+    def _align_close_history_to_dates(
+        self,
+        date_labels: List[str],
+        history: List[Dict[str, Any]],
+    ) -> List[Optional[float]]:
+        if not date_labels or not history:
+            return [None for _ in date_labels]
+        normalized_history = []
+        for item in history:
+            date_text = str(item.get("date") or "").strip()[:10]
+            close_val = _to_num(item.get("close"))
+            if date_text and close_val > 0:
+                normalized_history.append({"date": date_text, "close": close_val})
+        if not normalized_history:
+            return [None for _ in date_labels]
+        normalized_history.sort(key=lambda row: row["date"])
+        output: List[Optional[float]] = []
+        idx = 0
+        last_close: Optional[float] = None
+        for date_text in date_labels:
+            while idx < len(normalized_history) and normalized_history[idx]["date"] <= date_text:
+                last_close = normalized_history[idx]["close"]
+                idx += 1
+            output.append(last_close)
+        return output
+
+    def _history_summary(self, series: List[Dict[str, float]]) -> Dict[str, Any]:
+        if not series:
+            empty = {"available": False, "amount": 0.0, "pct": 0.0, "fromDate": "", "toDate": ""}
+            return {
+                "daily": dict(empty),
+                "monthly": dict(empty),
+                "yearly": dict(empty),
+            }
+        return {
+            "daily": self._history_change(series, 1),
+            "monthly": self._history_change(series, 30),
+            "yearly": self._history_change(series, 365),
+        }
+
+    def _history_change(self, series: List[Dict[str, float]], days: int) -> Dict[str, Any]:
+        if not series:
+            return {"available": False, "amount": 0.0, "pct": 0.0, "fromDate": "", "toDate": ""}
+        current = series[-1]
+        current_value = _to_num(current.get("netWorth"))
+        current_day = _parse_date(current.get("date"))
+        target_day = current_day - timedelta(days=max(1, int(days)))
+        baseline = None
+        for row in reversed(series):
+            row_day = _parse_date(row.get("date"))
+            if row_day <= target_day:
+                baseline = row
+                break
+        if baseline is None:
+            return {"available": False, "amount": 0.0, "pct": 0.0, "fromDate": "", "toDate": str(current.get("date") or "")}
+        base_value = _to_num(baseline.get("netWorth"))
+        amount = current_value - base_value
+        pct = _safe_div(amount, base_value) * 100.0 if base_value else 0.0
+        return {
+            "available": True,
+            "amount": amount,
+            "pct": pct,
+            "fromDate": str(baseline.get("date") or ""),
+            "toDate": str(current.get("date") or ""),
+        }
 
     def _portfolio_label(self, state: Dict[str, Any], portfolio_id: str) -> str:
         if not portfolio_id:

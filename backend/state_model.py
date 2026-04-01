@@ -6,10 +6,13 @@ from datetime import datetime, timezone
 import random
 import string
 from typing import Any, Dict, Iterable, List
-from .utils import now_iso, parse_date, to_num
+from .utils import normalize_fx_rates, now_iso, parse_date, to_num
 
 
 PLAN_ORDER = ["Brak", "Basic", "Standard", "Pro", "Expert"]
+THEME_KEYS = {"forest", "midnight", "gold", "ice"}
+ICON_SET_KEYS = {"minimal", "classic", "market"}
+FONT_SCALE_KEYS = {"compact", "comfortable", "large"}
 
 def today_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -54,6 +57,11 @@ def default_state() -> Dict[str, Any]:
             "activePlan": "Expert",
             "baseCurrency": "PLN",
             "createdAt": created_at,
+            "fxRates": {},
+            "theme": "forest",
+            "lastLightTheme": "forest",
+            "iconSet": "classic",
+            "fontScale": "comfortable",
         },
         "portfolios": [
             {
@@ -102,6 +110,11 @@ def normalize_state(state_value: Any) -> Dict[str, Any]:
             "activePlan": active_plan,
             "baseCurrency": text_or_fallback(meta.get("baseCurrency"), fallback["meta"]["baseCurrency"]),
             "createdAt": text_or_fallback(meta.get("createdAt"), fallback["meta"]["createdAt"]),
+            "fxRates": normalize_fx_rates(meta.get("fxRates")),
+            "theme": _normalize_theme(meta.get("theme"), fallback["meta"]["theme"]),
+            "lastLightTheme": _normalize_light_theme(meta.get("lastLightTheme"), fallback["meta"]["lastLightTheme"]),
+            "iconSet": _normalize_icon_set(meta.get("iconSet"), fallback["meta"]["iconSet"]),
+            "fontScale": _normalize_font_scale(meta.get("fontScale"), fallback["meta"]["fontScale"]),
         },
         "portfolios": _normalize_portfolios(value.get("portfolios"), fallback),
         "accounts": _normalize_accounts(value.get("accounts"), fallback),
@@ -119,6 +132,26 @@ def normalize_state(state_value: Any) -> Dict[str, Any]:
     if not normalized["accounts"]:
         normalized["accounts"] = fallback["accounts"]
     return normalized
+
+
+def _normalize_theme(value: Any, fallback: str) -> str:
+    text = str(value or "").strip()
+    return text if text in THEME_KEYS else fallback
+
+
+def _normalize_light_theme(value: Any, fallback: str) -> str:
+    text = str(value or "").strip()
+    return text if text in THEME_KEYS and text != "midnight" else fallback
+
+
+def _normalize_icon_set(value: Any, fallback: str) -> str:
+    text = str(value or "").strip()
+    return text if text in ICON_SET_KEYS else fallback
+
+
+def _normalize_font_scale(value: Any, fallback: str) -> str:
+    text = str(value or "").strip()
+    return text if text in FONT_SCALE_KEYS else fallback
 
 
 def _normalize_portfolios(raw: Any, fallback: Dict[str, Any]) -> List[Dict[str, Any]]:

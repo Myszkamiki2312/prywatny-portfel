@@ -1,7 +1,7 @@
 import unittest
 import urllib.request
 
-from backend.quotes import QuoteService, now_iso
+from backend.quotes import QuoteService, _stooq_history_candidates, now_iso
 
 
 class StubQuoteService(QuoteService):
@@ -106,6 +106,10 @@ class QuoteQualityTests(unittest.TestCase):
         self.assertEqual(service.history_calls, 1)
         self.assertEqual(first, second)
         self.assertEqual(first, [{"date": "2026-02-21", "close": 101.0}, {"date": "2026-02-22", "close": 102.0}])
+
+    def test_fx_history_candidates_use_stooq_pair_symbol(self):
+        self.assertEqual(_stooq_history_candidates("FX:USD/PLN"), ["usdpln"])
+        self.assertEqual(_stooq_history_candidates("USD/PLN"), ["usdpln"])
 
     def test_urlopen_retries_after_transient_error(self):
         service = RetryQuoteService()

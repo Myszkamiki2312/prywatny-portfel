@@ -165,6 +165,99 @@ const LINE_CHART_RANGES = [
   { key: "all", days: null }
 ];
 
+const APPEARANCE_DEFAULTS = {
+  theme: "forest",
+  lastLightTheme: "forest",
+  iconSet: "classic",
+  fontScale: "comfortable"
+};
+
+const APPEARANCE_THEMES = {
+  forest: {
+    label: "Leśny klasyk",
+    description: "Spokojny zielony motyw do codziennej pracy nad portfelem.",
+    swatches: ["#0e7a64", "#ff7f32", "#f3f6f1"]
+  },
+  midnight: {
+    label: "Giełdowa noc",
+    description: "Ciemny, kontrastowy układ pod dłuższe sesje i wykresy.",
+    swatches: ["#7ad8c7", "#f5b24d", "#0d1319"]
+  },
+  gold: {
+    label: "Złoty parkiet",
+    description: "Jaśniejsza skórka z mocniejszym akcentem premium i ciepłą typografią.",
+    swatches: ["#c69212", "#2146c7", "#f7f0dd"]
+  },
+  ice: {
+    label: "Polarna sesja",
+    description: "Chłodny, czysty interfejs z dobrą czytelnością tabel i raportów.",
+    swatches: ["#2a7ab6", "#ff9152", "#eef5fb"]
+  }
+};
+
+const APPEARANCE_ICON_SETS = {
+  minimal: {
+    label: "Minimalne",
+    description: "Lekkie, spokojne znaki bez wizualnego szumu.",
+    icons: {
+      dashboard: "◌",
+      portfolios: "▤",
+      accounts: "◫",
+      operations: "↻",
+      reports: "◔",
+      tools: "✦",
+      appearance: "◐",
+      features: "▦"
+    }
+  },
+  classic: {
+    label: "Klasyczne",
+    description: "Bardziej wyraźne ikony do codziennej pracy na desktopie.",
+    icons: {
+      dashboard: "◎",
+      portfolios: "▥",
+      accounts: "⌘",
+      operations: "⇄",
+      reports: "◉",
+      tools: "✶",
+      appearance: "✺",
+      features: "▧"
+    }
+  },
+  market: {
+    label: "Giełdowe",
+    description: "Mocniejszy, bardziej techniczny zestaw pod raporty i analitykę.",
+    icons: {
+      dashboard: "◈",
+      portfolios: "▣",
+      accounts: "⌬",
+      operations: "⇆",
+      reports: "◪",
+      tools: "✹",
+      appearance: "✷",
+      features: "▩"
+    }
+  }
+};
+
+const APPEARANCE_FONT_SCALES = {
+  compact: {
+    label: "Kompaktowa",
+    description: "Więcej danych na ekranie, ciaśniejszy rytm interfejsu.",
+    rootPx: 15
+  },
+  comfortable: {
+    label: "Podstawowa",
+    description: "Najbardziej zbalansowany układ do codziennej pracy.",
+    rootPx: 16
+  },
+  large: {
+    label: "Duża",
+    description: "Wygodniejszy tekst i większe elementy klikalne.",
+    rootPx: 17.5
+  }
+};
+
 let state = loadState();
 const dom = {};
 const backendSync = {
@@ -172,6 +265,8 @@ const backendSync = {
   checked: false,
   pushTimer: 0,
   pushInFlight: false,
+  fxSyncTimer: 0,
+  fxSyncInFlight: false,
   suspendPush: false,
   reportRequestSeq: 0,
   metricsTimer: 0,
@@ -192,6 +287,11 @@ const lineChartViews = {
     rangeKey: "all",
     mode: "value",
     manualViewport: null,
+    historySeries: [],
+    historySummary: null,
+    historyKey: "",
+    historyLoading: false,
+    historyResolvedKey: "",
     comparisonSeries: [],
     comparisonKey: "",
     comparisonLoading: false,
@@ -236,6 +336,7 @@ async function init() {
   await loadUiModules();
   setupGlobalErrorReporting();
   cacheDom();
+  applyAppearanceSettings();
   seedStaticSelects();
   bindEvents();
   resetOperationForm();
@@ -258,6 +359,7 @@ function cacheDom() {
   dom.tabs = document.getElementById("tabs");
   dom.planSelect = document.getElementById("planSelect");
   dom.baseCurrencySelect = document.getElementById("baseCurrencySelect");
+  dom.themeToggleBtn = document.getElementById("themeToggleBtn");
   dom.exportBackupBtn = document.getElementById("exportBackupBtn");
   dom.importBackupInput = document.getElementById("importBackupInput");
   dom.resetStateBtn = document.getElementById("resetStateBtn");
@@ -269,6 +371,12 @@ function cacheDom() {
   dom.statCash = document.getElementById("statCash");
   dom.statNetWorth = document.getElementById("statNetWorth");
   dom.statTotalPl = document.getElementById("statTotalPl");
+  dom.statDailyChangePct = document.getElementById("statDailyChangePct");
+  dom.statDailyChangeValue = document.getElementById("statDailyChangeValue");
+  dom.statMonthlyChangePct = document.getElementById("statMonthlyChangePct");
+  dom.statMonthlyChangeValue = document.getElementById("statMonthlyChangeValue");
+  dom.statYearlyChangePct = document.getElementById("statYearlyChangePct");
+  dom.statYearlyChangeValue = document.getElementById("statYearlyChangeValue");
   dom.dashboardChart = document.getElementById("dashboardChart");
   dom.dashboardChartRangeControls = document.getElementById("dashboardChartRangeControls");
   dom.dashboardChartModeControls = document.getElementById("dashboardChartModeControls");
@@ -457,6 +565,12 @@ function cacheDom() {
   dom.publicPortfoliosTable = document.getElementById("publicPortfoliosTable");
 
   dom.featureMatrix = document.getElementById("featureMatrix");
+  dom.appearanceThemeGrid = document.getElementById("appearanceThemeGrid");
+  dom.appearanceIconGrid = document.getElementById("appearanceIconGrid");
+  dom.appearanceFontGrid = document.getElementById("appearanceFontGrid");
+  dom.appearanceSummary = document.getElementById("appearanceSummary");
+  dom.appearancePreview = document.getElementById("appearancePreview");
+  dom.appearanceResetBtn = document.getElementById("appearanceResetBtn");
 }
 
 function seedStaticSelects() {
@@ -481,6 +595,21 @@ function bindEvents() {
   dom.tabs.addEventListener("click", onTabClick);
   dom.planSelect.addEventListener("change", onPlanChange);
   dom.baseCurrencySelect.addEventListener("change", onBaseCurrencyChange);
+  if (dom.themeToggleBtn) {
+    dom.themeToggleBtn.addEventListener("click", onThemeToggle);
+  }
+  if (dom.appearanceThemeGrid) {
+    dom.appearanceThemeGrid.addEventListener("click", onAppearanceThemeClick);
+  }
+  if (dom.appearanceIconGrid) {
+    dom.appearanceIconGrid.addEventListener("click", onAppearanceIconClick);
+  }
+  if (dom.appearanceFontGrid) {
+    dom.appearanceFontGrid.addEventListener("click", onAppearanceFontScaleClick);
+  }
+  if (dom.appearanceResetBtn) {
+    dom.appearanceResetBtn.addEventListener("click", onAppearanceReset);
+  }
   dom.dashboardPortfolioSelect.addEventListener("change", renderDashboard);
   dom.reportPortfolioSelect.addEventListener("change", renderReportCurrent);
   window.addEventListener("resize", scheduleResponsiveChartRefresh);
@@ -880,9 +1009,12 @@ async function onRefreshQuotes() {
     });
     const quotes = Array.isArray(payload.quotes) ? payload.quotes : [];
     applyQuotes(quotes);
+    applyFxRates(payload.fxRates || extractFxRatesFromQuotes(quotes));
     saveState({ skipBackend: true });
     renderAll();
-    window.alert(`Zaktualizowano notowania: ${quotes.length} walorów.`);
+    window.alert(
+      `Zaktualizowano notowania: ${quotes.length} walorów.${payload.fxUpdated ? ` Kursy FX: ${payload.fxUpdated}.` : ""}`
+    );
   } catch (error) {
     backendSync.available = false;
     updateBackendStatus();
@@ -890,6 +1022,56 @@ async function onRefreshQuotes() {
   } finally {
     backendSync.pushInFlight = false;
     updateBackendStatus();
+  }
+}
+
+function scheduleFxRefresh() {
+  if (!backendSync.available || backendSync.suspendPush) {
+    return;
+  }
+  const fxTickers = requiredFxQuoteTickers();
+  const assetTickers = state.assets.map((asset) => String(asset.ticker || "").trim()).filter(Boolean);
+  if (!fxTickers.length && !assetTickers.length) {
+    return;
+  }
+  if (backendSync.fxSyncTimer) {
+    window.clearTimeout(backendSync.fxSyncTimer);
+  }
+  backendSync.fxSyncTimer = window.setTimeout(() => {
+    void refreshQuotesAndFxSilently();
+  }, 420);
+}
+
+async function refreshQuotesAndFxSilently() {
+  if (!backendSync.available || backendSync.pushInFlight || backendSync.fxSyncInFlight) {
+    return;
+  }
+  const tickers = state.assets.map((asset) => String(asset.ticker || "").trim()).filter(Boolean);
+  const fxTickers = requiredFxQuoteTickers();
+  if (!tickers.length && !fxTickers.length) {
+    return;
+  }
+  backendSync.fxSyncInFlight = true;
+  try {
+    await apiRequest("/state", {
+      method: "PUT",
+      body: { state },
+      timeoutMs: 10000
+    });
+    const payload = await apiRequest("/quotes/refresh", {
+      method: "POST",
+      body: { tickers },
+      timeoutMs: 10000
+    });
+    const quotes = Array.isArray(payload.quotes) ? payload.quotes : [];
+    applyQuotes(quotes);
+    applyFxRates(payload.fxRates || extractFxRatesFromQuotes(quotes));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    renderAll();
+  } catch (error) {
+    // Silent fallback. The manual refresh button still remains available.
+  } finally {
+    backendSync.fxSyncInFlight = false;
   }
 }
 
@@ -945,7 +1127,7 @@ function applyQuotes(quotes) {
   const quoteByTicker = {};
   quotes.forEach((row) => {
     const ticker = String(row.ticker || "").toUpperCase();
-    if (!ticker) {
+    if (!ticker || normalizeFxPairKey(ticker)) {
       return;
     }
     quoteByTicker[ticker] = row;
@@ -960,16 +1142,22 @@ function applyQuotes(quotes) {
   });
 }
 
+function applyFxRates(rates) {
+  const merged = { ...normalizeFxRates(state.meta.fxRates), ...normalizeFxRates(rates) };
+  state.meta.fxRates = merged;
+}
+
 async function pullQuotesFromBackend() {
   if (!backendSync.available || !state.assets.length) {
     return;
   }
   const tickers = state.assets.map((asset) => asset.ticker).filter(Boolean);
+  const requestTickers = tickers.concat(requiredFxQuoteTickers()).filter((ticker, index, array) => array.indexOf(ticker) === index);
   if (!tickers.length) {
     return;
   }
   try {
-    const payload = await apiRequest(`/quotes?tickers=${encodeURIComponent(tickers.join(","))}`, {
+    const payload = await apiRequest(`/quotes?tickers=${encodeURIComponent(requestTickers.join(","))}`, {
       timeoutMs: 3500
     });
     const quotes = Array.isArray(payload.quotes) ? payload.quotes : [];
@@ -977,6 +1165,7 @@ async function pullQuotesFromBackend() {
       return;
     }
     applyQuotes(quotes);
+    applyFxRates(extractFxRatesFromQuotes(quotes));
     saveState({ skipBackend: true });
   } catch (error) {
     // Silent fallback to local state when backend is unavailable.
@@ -3652,8 +3841,318 @@ function onPlanChange() {
 function onBaseCurrencyChange() {
   state.meta.baseCurrency = dom.baseCurrencySelect.value;
   saveState();
+  scheduleFxRefresh();
   renderDashboard();
   void renderReportCurrent();
+}
+
+function onAppearanceThemeClick(event) {
+  const button = event.target.closest("[data-theme-option]");
+  if (!button) {
+    return;
+  }
+  updateAppearanceSetting("theme", button.dataset.themeOption);
+}
+
+function onAppearanceIconClick(event) {
+  const button = event.target.closest("[data-icon-option]");
+  if (!button) {
+    return;
+  }
+  updateAppearanceSetting("iconSet", button.dataset.iconOption);
+}
+
+function onAppearanceFontScaleClick(event) {
+  const button = event.target.closest("[data-font-scale-option]");
+  if (!button) {
+    return;
+  }
+  updateAppearanceSetting("fontScale", button.dataset.fontScaleOption);
+}
+
+function onAppearanceReset() {
+  state.meta.theme = APPEARANCE_DEFAULTS.theme;
+  state.meta.lastLightTheme = APPEARANCE_DEFAULTS.lastLightTheme;
+  state.meta.iconSet = APPEARANCE_DEFAULTS.iconSet;
+  state.meta.fontScale = APPEARANCE_DEFAULTS.fontScale;
+  renderAll();
+}
+
+function updateAppearanceSetting(key, value) {
+  if (key === "theme") {
+    const normalized = normalizeTheme(value);
+    if (normalized === state.meta.theme) {
+      return;
+    }
+    if (!isDarkTheme(normalized)) {
+      state.meta.lastLightTheme = normalized;
+    }
+    state.meta.theme = normalized;
+    renderAll();
+    return;
+  }
+  if (key === "iconSet") {
+    const normalized = normalizeIconSet(value);
+    if (normalized === state.meta.iconSet) {
+      return;
+    }
+    state.meta.iconSet = normalized;
+    renderAll();
+    return;
+  }
+  if (key === "fontScale") {
+    const normalized = normalizeFontScale(value);
+    if (normalized === state.meta.fontScale) {
+      return;
+    }
+    state.meta.fontScale = normalized;
+    renderAll();
+  }
+}
+
+function onThemeToggle() {
+  const currentTheme = normalizeTheme(state.meta.theme);
+  if (isDarkTheme(currentTheme)) {
+    state.meta.theme = resolveLastLightTheme(state.meta.lastLightTheme);
+  } else {
+    state.meta.lastLightTheme = currentTheme;
+    state.meta.theme = "midnight";
+  }
+  renderAll();
+}
+
+function normalizeTheme(value) {
+  return Object.prototype.hasOwnProperty.call(APPEARANCE_THEMES, value) ? value : APPEARANCE_DEFAULTS.theme;
+}
+
+function isDarkTheme(value) {
+  return normalizeTheme(value) === "midnight";
+}
+
+function resolveLastLightTheme(value) {
+  const normalized = normalizeTheme(value);
+  return isDarkTheme(normalized) ? APPEARANCE_DEFAULTS.lastLightTheme : normalized;
+}
+
+function normalizeIconSet(value) {
+  return Object.prototype.hasOwnProperty.call(APPEARANCE_ICON_SETS, value) ? value : APPEARANCE_DEFAULTS.iconSet;
+}
+
+function normalizeFontScale(value) {
+  return Object.prototype.hasOwnProperty.call(APPEARANCE_FONT_SCALES, value)
+    ? value
+    : APPEARANCE_DEFAULTS.fontScale;
+}
+
+function appearanceThemeConfig(themeKey = state.meta.theme) {
+  return APPEARANCE_THEMES[normalizeTheme(themeKey)] || APPEARANCE_THEMES[APPEARANCE_DEFAULTS.theme];
+}
+
+function appearanceIconSetConfig(iconSetKey = state.meta.iconSet) {
+  return APPEARANCE_ICON_SETS[normalizeIconSet(iconSetKey)] || APPEARANCE_ICON_SETS[APPEARANCE_DEFAULTS.iconSet];
+}
+
+function appearanceFontScaleConfig(fontScaleKey = state.meta.fontScale) {
+  return (
+    APPEARANCE_FONT_SCALES[normalizeFontScale(fontScaleKey)] ||
+    APPEARANCE_FONT_SCALES[APPEARANCE_DEFAULTS.fontScale]
+  );
+}
+
+function applyAppearanceSettings() {
+  const theme = normalizeTheme(state?.meta?.theme);
+  const iconSet = normalizeIconSet(state?.meta?.iconSet);
+  const fontScale = normalizeFontScale(state?.meta?.fontScale);
+
+  if (typeof document !== "undefined" && document.body) {
+    if (typeof document.body.setAttribute === "function") {
+      document.body.setAttribute("data-theme", theme);
+      document.body.setAttribute("data-icon-set", iconSet);
+      document.body.setAttribute("data-font-scale", fontScale);
+    } else {
+      document.body.dataset = document.body.dataset || {};
+      document.body.dataset.theme = theme;
+      document.body.dataset.iconSet = iconSet;
+      document.body.dataset.fontScale = fontScale;
+    }
+  }
+  if (typeof document !== "undefined" && document.documentElement && document.documentElement.style) {
+    document.documentElement.style.fontSize = `${appearanceFontScaleConfig(fontScale).rootPx}px`;
+  }
+  updateTabIcons(iconSet);
+  renderThemeToggleButton();
+}
+
+function renderThemeToggleButton() {
+  if (!dom.themeToggleBtn) {
+    return;
+  }
+  const darkActive = isDarkTheme(state?.meta?.theme);
+  dom.themeToggleBtn.textContent = darkActive ? "Tryb jasny" : "Tryb ciemny";
+  dom.themeToggleBtn.setAttribute("aria-pressed", darkActive ? "true" : "false");
+  dom.themeToggleBtn.classList.toggle("is-active", darkActive);
+}
+
+function updateTabIcons(iconSetKey) {
+  if (typeof document === "undefined") {
+    return;
+  }
+  const icons = appearanceIconSetConfig(iconSetKey).icons;
+  document.querySelectorAll(".tab[data-icon-key]").forEach((tab) => {
+    const iconNode = tab.querySelector(".tab-icon");
+    const iconKey = tab.dataset.iconKey || "";
+    if (!iconNode) {
+      return;
+    }
+    iconNode.textContent = icons[iconKey] || "◌";
+  });
+}
+
+function renderAppearanceSettings() {
+  if (!dom.appearanceThemeGrid || !dom.appearanceIconGrid || !dom.appearanceFontGrid || !dom.appearancePreview) {
+    return;
+  }
+  const themeKey = normalizeTheme(state.meta.theme);
+  const iconSetKey = normalizeIconSet(state.meta.iconSet);
+  const fontScaleKey = normalizeFontScale(state.meta.fontScale);
+  const theme = appearanceThemeConfig(themeKey);
+  const iconSet = appearanceIconSetConfig(iconSetKey);
+  const fontScale = appearanceFontScaleConfig(fontScaleKey);
+
+  dom.appearanceThemeGrid.innerHTML = Object.entries(APPEARANCE_THEMES)
+    .map(([key, item]) => {
+      const active = key === themeKey;
+      return `
+        <button type="button" class="appearance-card${active ? " active" : ""}" data-theme-option="${escapeHtml(key)}" aria-pressed="${active ? "true" : "false"}">
+          <div class="appearance-card-head">
+            <div>
+              <span class="appearance-card-title">${escapeHtml(item.label)}</span>
+              <span class="appearance-card-copy">${escapeHtml(item.description)}</span>
+            </div>
+            <span class="appearance-card-check">${active ? "✓" : ""}</span>
+          </div>
+          <div class="appearance-swatches">
+            ${item.swatches
+              .map((color) => `<span class="appearance-swatch" style="background:${escapeHtml(color)}"></span>`)
+              .join("")}
+          </div>
+        </button>
+      `;
+    })
+    .join("");
+
+  dom.appearanceIconGrid.innerHTML = Object.entries(APPEARANCE_ICON_SETS)
+    .map(([key, item]) => {
+      const active = key === iconSetKey;
+      return `
+        <button type="button" class="appearance-card compact${active ? " active" : ""}" data-icon-option="${escapeHtml(key)}" aria-pressed="${active ? "true" : "false"}">
+          <div class="appearance-card-head">
+            <div>
+              <span class="appearance-card-title">${escapeHtml(item.label)}</span>
+              <span class="appearance-card-copy">${escapeHtml(item.description)}</span>
+            </div>
+            <span class="appearance-card-check">${active ? "✓" : ""}</span>
+          </div>
+          <div class="appearance-icons">
+            <span>${escapeHtml(item.icons.dashboard)}</span>
+            <span>${escapeHtml(item.icons.portfolios)}</span>
+            <span>${escapeHtml(item.icons.reports)}</span>
+            <span>${escapeHtml(item.icons.tools)}</span>
+          </div>
+        </button>
+      `;
+    })
+    .join("");
+
+  dom.appearanceFontGrid.innerHTML = Object.entries(APPEARANCE_FONT_SCALES)
+    .map(([key, item]) => {
+      const active = key === fontScaleKey;
+      return `
+        <button type="button" class="appearance-card compact${active ? " active" : ""}" data-font-scale-option="${escapeHtml(key)}" aria-pressed="${active ? "true" : "false"}">
+          <div class="appearance-card-head">
+            <div>
+              <span class="appearance-card-title">${escapeHtml(item.label)}</span>
+              <span class="appearance-card-copy">${escapeHtml(item.description)}</span>
+            </div>
+            <span class="appearance-card-check">${active ? "✓" : ""}</span>
+          </div>
+          <div class="appearance-icons" style="font-size:${key === "compact" ? "0.92rem" : key === "large" ? "1.18rem" : "1.04rem"}">
+            <span>Aa</span>
+            <span>12%</span>
+            <span>${escapeHtml(iconSet.icons.reports)}</span>
+          </div>
+        </button>
+      `;
+    })
+    .join("");
+
+  if (dom.appearanceSummary) {
+    dom.appearanceSummary.textContent = `Aktywna skórka: ${theme.label} | Ikony: ${iconSet.label} | Czcionka: ${fontScale.label}`;
+  }
+  dom.appearancePreview.innerHTML = buildAppearancePreviewMarkup(theme, iconSet, fontScale);
+}
+
+function buildAppearancePreviewMarkup(theme, iconSet, fontScale) {
+  const icons = iconSet.icons;
+  return `
+    <div class="appearance-preview">
+      <div class="appearance-preview-bar">
+        <div class="appearance-preview-brand">
+          <strong>${escapeHtml(icons.dashboard)} Prywatny Portfel</strong>
+          <span>${escapeHtml(theme.label)} • ${escapeHtml(fontScale.label)}</span>
+        </div>
+        <div class="appearance-preview-controls">
+          <span class="appearance-pill active">${escapeHtml(icons.dashboard)} Kokpit</span>
+          <span class="appearance-pill">${escapeHtml(icons.reports)} Raporty</span>
+          <span class="appearance-pill">${escapeHtml(icons.tools)} Narzędzia</span>
+        </div>
+      </div>
+      <div class="appearance-preview-body">
+        <div class="appearance-preview-card">
+          <h4>Kokpit inwestora</h4>
+          <div class="appearance-preview-stats">
+            <div class="appearance-mini-stat">
+              <span>Wartość rynkowa</span>
+              <strong>124 900 zł</strong>
+            </div>
+            <div class="appearance-mini-stat">
+              <span>Gotówka</span>
+              <strong>18 240 zł</strong>
+            </div>
+            <div class="appearance-mini-stat">
+              <span>Zysk YTD</span>
+              <strong>+12,4%</strong>
+            </div>
+            <div class="appearance-mini-stat">
+              <span>Benchmark</span>
+              <strong>WIG20</strong>
+            </div>
+          </div>
+          <div class="appearance-preview-actions">
+            <span class="appearance-mini-btn">${escapeHtml(icons.operations)} Dodaj operację</span>
+            <span class="appearance-mini-btn secondary">${escapeHtml(icons.reports)} Eksport PNG</span>
+          </div>
+        </div>
+        <div class="appearance-preview-card">
+          <h4>Status i oznaczenia</h4>
+          <div class="appearance-preview-list">
+            <div class="appearance-mini-row">
+              <span>Notowania</span>
+              <strong><span class="badge ok">online</span></strong>
+            </div>
+            <div class="appearance-mini-row">
+              <span>Alerty</span>
+              <strong><span class="badge off">2 oczekujące</span></strong>
+            </div>
+            <div class="appearance-mini-row">
+              <span>Portfel</span>
+              <strong>${escapeHtml(icons.portfolios)} Główny</strong>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 function resetPortfolioForm() {
@@ -3851,6 +4350,7 @@ function onAccountSubmit(event) {
     });
   }
   saveState();
+  scheduleFxRefresh();
   resetAccountForm();
   renderAll();
 }
@@ -3964,6 +4464,7 @@ function onAssetSubmit(event) {
     });
   }
   saveState();
+  scheduleFxRefresh();
   resetAssetForm();
   renderAll();
 }
@@ -4143,6 +4644,7 @@ function onOperationSubmit(event) {
     });
   }
   saveState();
+  scheduleFxRefresh();
   resetOperationForm();
   renderAll();
 }
@@ -4555,6 +5057,7 @@ function onLiabilitySubmit(event) {
     });
   }
   saveState();
+  scheduleFxRefresh();
   resetLiabilityForm();
   renderLiabilities();
   renderDashboard();
@@ -4612,7 +5115,7 @@ function exportCanvasAsPng(canvas, fileName) {
   if (!exportCtx) {
     return;
   }
-  exportCtx.fillStyle = "#f4f8f5";
+  exportCtx.fillStyle = readCssVarValue("--bg", "#f4f8f5");
   exportCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
   exportCtx.drawImage(canvas, 0, 0);
   const link = document.createElement("a");
@@ -4913,6 +5416,7 @@ function syncEditingForms() {
 function renderAll() {
   state = normalizeState(state);
   syncEditingForms();
+  applyAppearanceSettings();
   saveState();
 
   dom.planSelect.value = state.meta.activePlan;
@@ -4934,6 +5438,7 @@ function renderAll() {
   renderDashboard();
   renderToolCatalog();
   renderFeatureMatrix();
+  renderAppearanceSettings();
   void renderReportCurrent();
   if (isViewActive("toolsView")) {
     void refreshExpertTools();
@@ -5089,6 +5594,77 @@ function currentPortfolioBenchmark(portfolioId) {
   return portfolio ? String(portfolio.benchmark || "").trim() : "";
 }
 
+function dashboardHistoryCacheKey(portfolioId) {
+  return `${portfolioId || ""}|${normalizeCurrency(state.meta.baseCurrency, "PLN")}`;
+}
+
+function computeDashboardHistoryChange(series, days) {
+  if (!Array.isArray(series) || !series.length) {
+    return { available: false, amount: 0, pct: 0, fromDate: "", toDate: "" };
+  }
+  const current = series[series.length - 1];
+  const currentValue = toNum(current.netWorth != null ? current.netWorth : current.value);
+  const currentDate = parseSeriesIsoDate(current.date);
+  if (!currentDate) {
+    return { available: false, amount: 0, pct: 0, fromDate: "", toDate: String(current.date || "") };
+  }
+  const targetDate = new Date(currentDate.getTime());
+  targetDate.setUTCDate(targetDate.getUTCDate() - Math.max(1, Math.round(toNum(days) || 1)));
+  let baseline = null;
+  for (let index = series.length - 1; index >= 0; index -= 1) {
+    const candidate = series[index];
+    const candidateDate = parseSeriesIsoDate(candidate.date);
+    if (candidateDate && candidateDate <= targetDate) {
+      baseline = candidate;
+      break;
+    }
+  }
+  if (!baseline) {
+    return { available: false, amount: 0, pct: 0, fromDate: "", toDate: String(current.date || "") };
+  }
+  const baseValue = toNum(baseline.netWorth != null ? baseline.netWorth : baseline.value);
+  const amount = currentValue - baseValue;
+  return {
+    available: true,
+    amount,
+    pct: baseValue !== 0 ? (amount / baseValue) * 100 : 0,
+    fromDate: String(baseline.date || ""),
+    toDate: String(current.date || "")
+  };
+}
+
+function computeDashboardHistorySummary(series) {
+  return {
+    daily: computeDashboardHistoryChange(series, 1),
+    monthly: computeDashboardHistoryChange(series, 30),
+    yearly: computeDashboardHistoryChange(series, 365)
+  };
+}
+
+function currentDashboardHistorySeries(portfolioId, fallbackSeries) {
+  const cacheKey = dashboardHistoryCacheKey(portfolioId);
+  if (
+    lineChartViews.dashboard.historyResolvedKey === cacheKey &&
+    Array.isArray(lineChartViews.dashboard.historySeries) &&
+    lineChartViews.dashboard.historySeries.length
+  ) {
+    return lineChartViews.dashboard.historySeries;
+  }
+  return fallbackSeries;
+}
+
+function currentDashboardHistorySummary(portfolioId, series) {
+  const cacheKey = dashboardHistoryCacheKey(portfolioId);
+  if (
+    lineChartViews.dashboard.historyResolvedKey === cacheKey &&
+    lineChartViews.dashboard.historySummary &&
+    typeof lineChartViews.dashboard.historySummary === "object"
+  ) {
+    return lineChartViews.dashboard.historySummary;
+  }
+  return computeDashboardHistorySummary(series);
+}
+
 function alignBenchmarkHistoryToSeries(series, history) {
   if (!Array.isArray(series) || !series.length || !Array.isArray(history) || !history.length) {
     return [];
@@ -5115,6 +5691,60 @@ function alignBenchmarkHistoryToSeries(series, history) {
     output.push(lastClose);
   });
   return output.filter((value) => value != null).length >= 2 ? output : [];
+}
+
+async function warmDashboardHistorySeries(portfolioId) {
+  const historyKey = dashboardHistoryCacheKey(portfolioId);
+  if (
+    lineChartViews.dashboard.historyLoading ||
+    lineChartViews.dashboard.historyResolvedKey === historyKey
+  ) {
+    return;
+  }
+
+  lineChartViews.dashboard.historyKey = historyKey;
+  lineChartViews.dashboard.historyLoading = true;
+  try {
+    if (!backendSync.available) {
+      throw new Error("backend offline");
+    }
+    const query = portfolioId ? `?portfolioId=${encodeURIComponent(portfolioId)}` : "";
+    const payload = await apiRequest(`/metrics/history${query}`, { timeoutMs: 20000 });
+    const history = payload.history && typeof payload.history === "object" ? payload.history : {};
+    const nextSeries = Array.isArray(history.series)
+      ? history.series
+          .map((item) => ({
+            date: String(item.date || "").slice(0, 10),
+            value: toNum(item.netWorth != null ? item.netWorth : item.value),
+            marketValue: toNum(item.marketValue),
+            netWorth: toNum(item.netWorth != null ? item.netWorth : item.value),
+            cashTotal: toNum(item.cashTotal),
+            liabilitiesTotal: toNum(item.liabilitiesTotal),
+            pl: toNum(item.totalPL)
+          }))
+          .filter((item) => item.date)
+      : [];
+    if (nextSeries.length) {
+      lineChartViews.dashboard.historySeries = nextSeries;
+      lineChartViews.dashboard.historySummary =
+        history.summary && typeof history.summary === "object"
+          ? history.summary
+          : computeDashboardHistorySummary(nextSeries);
+    }
+    lineChartViews.dashboard.historyResolvedKey = historyKey;
+  } catch (error) {
+    lineChartViews.dashboard.historySeries = [];
+    lineChartViews.dashboard.historySummary = null;
+    lineChartViews.dashboard.historyResolvedKey = historyKey;
+  } finally {
+    lineChartViews.dashboard.historyLoading = false;
+    const stillActive =
+      (dom.dashboardPortfolioSelect ? dom.dashboardPortfolioSelect.value || "" : "") === portfolioId &&
+      lineChartViews.dashboard.historyKey === historyKey;
+    if (stillActive) {
+      renderDashboard();
+    }
+  }
 }
 
 async function warmDashboardBenchmarkSeries(portfolioId, dashboardSeries) {
@@ -5177,19 +5807,23 @@ async function warmDashboardBenchmarkSeries(portfolioId, dashboardSeries) {
 function renderDashboard() {
   if (uiModules.dashboard && typeof uiModules.dashboard.renderDashboard === "function") {
     const portfolioId = dom.dashboardPortfolioSelect ? dom.dashboardPortfolioSelect.value || "" : "";
-    const dashboardSeries = buildSeries(portfolioId);
+    const fallbackDashboardSeries = buildSeries(portfolioId);
+    const dashboardSeries = currentDashboardHistorySeries(portfolioId, fallbackDashboardSeries);
+    const dashboardSummary = currentDashboardHistorySummary(portfolioId, dashboardSeries);
     const benchmarkName = currentPortfolioBenchmark(portfolioId);
     const expectedComparisonPrefix = portfolioId && benchmarkName ? `${portfolioId}|${benchmarkName.toUpperCase()}|` : "";
     const dashboardComparisonSeries =
       expectedComparisonPrefix && lineChartViews.dashboard.comparisonKey.startsWith(expectedComparisonPrefix)
         ? lineChartViews.dashboard.comparisonSeries
         : [];
+    void warmDashboardHistorySeries(portfolioId);
     void warmDashboardBenchmarkSeries(portfolioId, dashboardSeries);
     uiModules.dashboard.renderDashboard({
       dom,
       state,
       computeMetrics,
       dashboardSeries,
+      dashboardSummary,
       dashboardComparisonSeries,
       formatMoney,
       formatPercent,
@@ -5937,9 +6571,150 @@ function buildReport(reportName, portfolioId) {
   };
 }
 
+function normalizeCurrency(value, fallback = "PLN") {
+  const text = String(value || "").toUpperCase().trim();
+  return /^[A-Z]{3}$/.test(text) ? text : fallback;
+}
+
+function normalizeFxPairKey(value, quoteCurrency) {
+  if (quoteCurrency !== undefined) {
+    const base = normalizeCurrency(value, "");
+    const quote = normalizeCurrency(quoteCurrency, "");
+    return base && quote && base !== quote ? `${base}/${quote}` : "";
+  }
+  const text = String(value || "").toUpperCase().trim().replace(/^FX:/, "");
+  if (!text) {
+    return "";
+  }
+  let match = /^([A-Z]{3})\/([A-Z]{3})$/.exec(text);
+  if (match && match[1] !== match[2]) {
+    return `${match[1]}/${match[2]}`;
+  }
+  match = /^([A-Z]{3})([A-Z]{3})(?:=X)?$/.exec(text);
+  if (match && match[1] !== match[2]) {
+    return `${match[1]}/${match[2]}`;
+  }
+  return "";
+}
+
+function normalizeFxRates(raw) {
+  let payload = raw;
+  if (typeof raw === "string") {
+    try {
+      payload = JSON.parse(raw);
+    } catch (error) {
+      payload = {};
+    }
+  }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return {};
+  }
+  const output = {};
+  Object.entries(payload).forEach(([key, value]) => {
+    const pairKey = normalizeFxPairKey(key);
+    const rate = toNum(value);
+    if (pairKey && rate > 0) {
+      output[pairKey] = rate;
+    }
+  });
+  return output;
+}
+
+function findCurrencyConversionRate(fromCurrency, toCurrency, fxRates) {
+  const base = normalizeCurrency(fromCurrency, "");
+  const quote = normalizeCurrency(toCurrency, "");
+  if (!base || !quote) {
+    return 0;
+  }
+  if (base === quote) {
+    return 1;
+  }
+  const rates = normalizeFxRates(fxRates);
+  const queue = [{ currency: base, rate: 1 }];
+  const visited = new Set([base]);
+  while (queue.length) {
+    const current = queue.shift();
+    if (!current) {
+      continue;
+    }
+    if (current.currency === quote) {
+      return current.rate;
+    }
+    Object.entries(rates).forEach(([pairKey, pairRate]) => {
+      const [src, dst] = pairKey.split("/");
+      if (src === current.currency && !visited.has(dst)) {
+        visited.add(dst);
+        queue.push({ currency: dst, rate: current.rate * pairRate });
+      } else if (dst === current.currency && !visited.has(src)) {
+        visited.add(src);
+        queue.push({ currency: src, rate: current.rate / pairRate });
+      }
+    });
+  }
+  return 0;
+}
+
+function convertCurrencyValue(amount, fromCurrency, toCurrency, fxRates) {
+  const numeric = toNum(amount);
+  const base = normalizeCurrency(fromCurrency, "");
+  const quote = normalizeCurrency(toCurrency, "");
+  if (!base || !quote || base === quote) {
+    return numeric;
+  }
+  const rate = findCurrencyConversionRate(base, quote, fxRates);
+  return rate > 0 ? numeric * rate : numeric;
+}
+
+function buildFxQuoteTicker(fromCurrency, toCurrency) {
+  const pairKey = normalizeFxPairKey(fromCurrency, toCurrency);
+  return pairKey ? `FX:${pairKey}` : "";
+}
+
+function extractFxRatesFromQuotes(quotes) {
+  const output = {};
+  if (!Array.isArray(quotes)) {
+    return output;
+  }
+  quotes.forEach((row) => {
+    const pairKey = normalizeFxPairKey(row && row.ticker);
+    const price = toNum(row && row.price);
+    if (pairKey && price > 0) {
+      output[pairKey] = price;
+    }
+  });
+  return output;
+}
+
+function relevantCurrenciesForState() {
+  const currencies = new Set([normalizeCurrency(state.meta.baseCurrency, "PLN")]);
+  state.assets.forEach((asset) => {
+    currencies.add(normalizeCurrency(asset.currency, state.meta.baseCurrency));
+  });
+  state.accounts.forEach((account) => {
+    currencies.add(normalizeCurrency(account.currency, state.meta.baseCurrency));
+  });
+  state.operations.forEach((operation) => {
+    currencies.add(normalizeCurrency(operation.currency, state.meta.baseCurrency));
+  });
+  state.liabilities.forEach((item) => {
+    currencies.add(normalizeCurrency(item.currency, state.meta.baseCurrency));
+  });
+  return Array.from(currencies).filter(Boolean);
+}
+
+function requiredFxQuoteTickers() {
+  const baseCurrency = normalizeCurrency(state.meta.baseCurrency, "PLN");
+  return relevantCurrenciesForState()
+    .filter((currency) => currency !== baseCurrency)
+    .map((currency) => buildFxQuoteTicker(currency, baseCurrency))
+    .filter(Boolean);
+}
+
 function computeMetrics(portfolioId, options = {}) {
   const untilDate = options.untilDate || "";
   const useCurrentPrices = options.useCurrentPrices !== false;
+  const baseCurrency = normalizeCurrency(state.meta.baseCurrency, "PLN");
+  const fxRates = normalizeFxRates(state.meta.fxRates);
   const operations = state.operations
     .filter((operation) => {
       if (portfolioId && operation.portfolioId !== portfolioId) {
@@ -5954,7 +6729,7 @@ function computeMetrics(portfolioId, options = {}) {
     .sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
   const holdings = new Map();
-  const cashByAccount = new Map();
+  const cashBuckets = new Map();
   const accountStats = new Map();
   const lastPriceByAsset = new Map();
 
@@ -5963,33 +6738,26 @@ function computeMetrics(portfolioId, options = {}) {
   let fees = 0;
   let netContribution = 0;
 
-  const addCash = (accountId, amount) => {
-    if (!accountId) {
-      accountId = "__global";
-    }
-    cashByAccount.set(accountId, (cashByAccount.get(accountId) || 0) + amount);
-    const stat = accountStats.get(accountId) || {
-      accountId,
-      name: accountId === "__global" ? "N/D" : lookupName(state.accounts, accountId),
-      cash: 0,
-      buyGross: 0,
-      sellGross: 0,
-      fees: 0,
-      realized: 0,
-      balance: 0
-    };
-    stat.cash += amount;
-    stat.balance += amount;
-    accountStats.set(accountId, stat);
+  const toBase = (amount, currency) => convertCurrencyValue(amount, currency, baseCurrency, fxRates);
+
+  const resolveOperationCurrency = (operation) => {
+    const asset = findById(state.assets, operation.assetId || "");
+    const account = findById(state.accounts, operation.accountId || "");
+    return normalizeCurrency(
+      (asset && asset.currency) || (account && account.currency) || operation.currency || baseCurrency,
+      baseCurrency
+    );
   };
 
-  const addAccountStat = (accountId, field, amount) => {
-    if (!accountId) {
-      accountId = "__global";
+  const ensureAccountStat = (accountId) => {
+    const key = accountId || "__global";
+    const existing = accountStats.get(key);
+    if (existing) {
+      return existing;
     }
-    const stat = accountStats.get(accountId) || {
-      accountId,
-      name: accountId === "__global" ? "N/D" : lookupName(state.accounts, accountId),
+    const next = {
+      accountId: key,
+      name: key === "__global" ? "N/D" : lookupName(state.accounts, key),
       cash: 0,
       buyGross: 0,
       sellGross: 0,
@@ -5997,8 +6765,28 @@ function computeMetrics(portfolioId, options = {}) {
       realized: 0,
       balance: 0
     };
-    stat[field] = (stat[field] || 0) + amount;
-    accountStats.set(accountId, stat);
+    accountStats.set(key, next);
+    return next;
+  };
+
+  const addCash = (accountId, amount, currency) => {
+    const key = accountId || "__global";
+    const normalizedCurrency = normalizeCurrency(currency, baseCurrency);
+    const bucketKey = `${key}::${normalizedCurrency}`;
+    cashBuckets.set(bucketKey, {
+      accountId: key,
+      currency: normalizedCurrency,
+      amount: (cashBuckets.get(bucketKey)?.amount || 0) + amount
+    });
+    const stat = ensureAccountStat(key);
+    const baseAmount = toBase(amount, normalizedCurrency);
+    stat.cash += baseAmount;
+    stat.balance += baseAmount;
+  };
+
+  const addAccountStat = (accountId, field, amount, currency) => {
+    const stat = ensureAccountStat(accountId);
+    stat[field] = (stat[field] || 0) + toBase(amount, currency);
   };
 
   const ensureHolding = (assetId) => {
@@ -6026,6 +6814,7 @@ function computeMetrics(portfolioId, options = {}) {
   operations.forEach((operation) => {
     const type = (operation.type || "").toLowerCase();
     const accountId = operation.accountId || "";
+    const currency = resolveOperationCurrency(operation);
     const qty = toNum(operation.quantity);
     const targetQty = toNum(operation.targetQuantity);
     const price = toNum(operation.price);
@@ -6037,13 +6826,13 @@ function computeMetrics(portfolioId, options = {}) {
     }
 
     if (type.includes("kupno")) {
-      const gross = qty * price;
+      const gross = qty * price || Math.abs(amount);
       const total = gross + fee;
-      addHolding(operation.assetId, qty, total);
-      addCash(accountId, -total);
-      addAccountStat(accountId, "buyGross", gross);
-      addAccountStat(accountId, "fees", fee);
-      fees += fee;
+      addHolding(operation.assetId, qty, toBase(total, currency));
+      addCash(accountId, -total, currency);
+      addAccountStat(accountId, "buyGross", gross, currency);
+      addAccountStat(accountId, "fees", fee, currency);
+      fees += toBase(fee, currency);
       return;
     }
 
@@ -6052,15 +6841,16 @@ function computeMetrics(portfolioId, options = {}) {
       const avg = holding.qty > 0 ? holding.cost / holding.qty : 0;
       const soldQty = qty;
       const costOut = avg * soldQty;
-      const proceeds = soldQty * price - fee;
+      const gross = soldQty * price || Math.abs(amount);
+      const netProceeds = (amount !== 0 ? amount : gross) - fee;
       addHolding(operation.assetId, -soldQty, -costOut);
-      addCash(accountId, proceeds);
-      addAccountStat(accountId, "sellGross", soldQty * price);
-      addAccountStat(accountId, "fees", fee);
-      const realizedDelta = proceeds - costOut;
-      addAccountStat(accountId, "realized", realizedDelta);
+      addCash(accountId, netProceeds, currency);
+      addAccountStat(accountId, "sellGross", gross, currency);
+      addAccountStat(accountId, "fees", fee, currency);
+      const realizedDelta = toBase(netProceeds, currency) - costOut;
+      addAccountStat(accountId, "realized", realizedDelta, baseCurrency);
       realized += realizedDelta;
-      fees += fee;
+      fees += toBase(fee, currency);
       return;
     }
 
@@ -6071,26 +6861,26 @@ function computeMetrics(portfolioId, options = {}) {
       const costOut = avg * sourceQty;
       addHolding(operation.assetId, -sourceQty, -costOut);
       const receivedQty = targetQty || sourceQty;
-      addHolding(operation.targetAssetId, receivedQty, costOut);
+      addHolding(operation.targetAssetId, receivedQty, costOut + toBase(fee, currency));
       if (fee > 0) {
-        addCash(accountId, -fee);
-        addAccountStat(accountId, "fees", fee);
-        fees += fee;
+        addCash(accountId, -fee, currency);
+        addAccountStat(accountId, "fees", fee, currency);
+        fees += toBase(fee, currency);
       }
       return;
     }
 
     if (type.includes("dywid")) {
-      addCash(accountId, amount);
-      dividends += amount;
+      addCash(accountId, amount, currency);
+      dividends += toBase(amount, currency);
       return;
     }
 
     if (type.includes("prowiz")) {
       const feeAmount = Math.max(Math.abs(amount), fee);
-      addCash(accountId, -feeAmount);
-      addAccountStat(accountId, "fees", feeAmount);
-      fees += feeAmount;
+      addCash(accountId, -feeAmount, currency);
+      addAccountStat(accountId, "fees", feeAmount, currency);
+      fees += toBase(feeAmount, currency);
       return;
     }
 
@@ -6101,24 +6891,24 @@ function computeMetrics(portfolioId, options = {}) {
       type.includes("pożyczk") ||
       type.includes("zobowiąz")
     ) {
-      addCash(accountId, amount);
-      netContribution += amount;
+      addCash(accountId, amount, currency);
+      netContribution += toBase(amount, currency);
       if (fee > 0) {
-        addCash(accountId, -fee);
-        addAccountStat(accountId, "fees", fee);
-        fees += fee;
+        addCash(accountId, -fee, currency);
+        addAccountStat(accountId, "fees", fee, currency);
+        fees += toBase(fee, currency);
       }
       return;
     }
 
     if (amount !== 0) {
-      addCash(accountId, amount);
-      netContribution += amount;
+      addCash(accountId, amount, currency);
+      netContribution += toBase(amount, currency);
     }
     if (fee > 0) {
-      addCash(accountId, -fee);
-      addAccountStat(accountId, "fees", fee);
-      fees += fee;
+      addCash(accountId, -fee, currency);
+      addAccountStat(accountId, "fees", fee, currency);
+      fees += toBase(fee, currency);
     }
   });
 
@@ -6134,7 +6924,9 @@ function computeMetrics(portfolioId, options = {}) {
     const fallbackPrice = lastPriceByAsset.get(holding.assetId) || 0;
     const currentPrice = useCurrentPrices ? toNum(asset ? asset.currentPrice : fallbackPrice) : fallbackPrice;
     const price = currentPrice || fallbackPrice || 0;
-    const value = holding.qty * price;
+    const assetCurrency = normalizeCurrency(asset ? asset.currency : baseCurrency, baseCurrency);
+    const nativeValue = holding.qty * price;
+    const value = toBase(nativeValue, assetCurrency);
     const unrealized = value - holding.cost;
     bookValue += holding.cost;
     marketValue += value;
@@ -6143,7 +6935,7 @@ function computeMetrics(portfolioId, options = {}) {
       ticker: asset ? asset.ticker : "N/A",
       name: asset ? asset.name : "Usunięty walor",
       type: asset ? asset.type : "Inny",
-      currency: asset ? asset.currency : state.meta.baseCurrency,
+      currency: assetCurrency,
       risk: asset ? asset.risk : 5,
       sector: asset ? asset.sector : "",
       industry: asset ? asset.industry : "",
@@ -6152,6 +6944,7 @@ function computeMetrics(portfolioId, options = {}) {
       qty: holding.qty,
       price,
       value,
+      nativeValue,
       cost: holding.cost,
       unrealized,
       unrealizedPct: holding.cost !== 0 ? (unrealized / holding.cost) * 100 : 0,
@@ -6159,8 +6952,10 @@ function computeMetrics(portfolioId, options = {}) {
     });
   });
 
-  const cashTotal = sum(Array.from(cashByAccount.values()));
-  const liabilitiesTotal = sum(state.liabilities.map((item) => toNum(item.amount)));
+  const cashTotal = sum(Array.from(cashBuckets.values()).map((bucket) => toBase(bucket.amount, bucket.currency)));
+  const liabilitiesTotal = sum(
+    state.liabilities.map((item) => toBase(toNum(item.amount), normalizeCurrency(item.currency, baseCurrency)))
+  );
   const unrealized = marketValue - bookValue;
   const totalPL = unrealized + realized + dividends - fees;
   const netWorth = marketValue + cashTotal - liabilitiesTotal;
@@ -6171,18 +6966,21 @@ function computeMetrics(portfolioId, options = {}) {
 
   const byCurrencyMap = {};
   holdingsList.forEach((holding) => {
-    byCurrencyMap[holding.currency] = (byCurrencyMap[holding.currency] || 0) + holding.value;
+    byCurrencyMap[holding.currency] = byCurrencyMap[holding.currency] || { value: 0, baseValue: 0 };
+    byCurrencyMap[holding.currency].value += holding.nativeValue;
+    byCurrencyMap[holding.currency].baseValue += holding.value;
   });
-  Array.from(cashByAccount.entries()).forEach(([accountId, value]) => {
-    const account = findById(state.accounts, accountId);
-    const currency = account ? account.currency : state.meta.baseCurrency;
-    byCurrencyMap[currency] = (byCurrencyMap[currency] || 0) + value;
+  Array.from(cashBuckets.values()).forEach((bucket) => {
+    byCurrencyMap[bucket.currency] = byCurrencyMap[bucket.currency] || { value: 0, baseValue: 0 };
+    byCurrencyMap[bucket.currency].value += bucket.amount;
+    byCurrencyMap[bucket.currency].baseValue += toBase(bucket.amount, bucket.currency);
   });
-  const byCurrency = Object.entries(byCurrencyMap).map(([currency, value]) => ({
+  const byCurrency = Object.entries(byCurrencyMap).map(([currency, item]) => ({
     currency,
-    value,
-    share: netWorth !== 0 ? (value / netWorth) * 100 : 0
-  }));
+    value: item.value,
+    baseValue: item.baseValue,
+    share: netWorth !== 0 ? (item.baseValue / netWorth) * 100 : 0
+  })).sort((left, right) => right.baseValue - left.baseValue);
 
   const byTagMap = {};
   holdingsList.forEach((holding) => {
@@ -6253,7 +7051,7 @@ function buildSeries(portfolioId) {
       pl: current.totalPL
     });
   }
-  return series;
+  return densifySeriesByDay(series);
 }
 
 function computeDrawdownSeries(series) {
@@ -6287,6 +7085,66 @@ function computePeriodReturns(series) {
     const curr = series[i].value;
     const value = prev !== 0 ? ((curr - prev) / prev) * 100 : 0;
     output.push({ date: series[i].date, value });
+  }
+  return output;
+}
+
+function parseSeriesIsoDate(value) {
+  const text = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    return null;
+  }
+  const parsed = new Date(`${text}T00:00:00Z`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function densifySeriesByDay(series) {
+  if (!Array.isArray(series) || series.length < 2) {
+    return Array.isArray(series) ? series.slice() : [];
+  }
+  const normalized = series
+    .map((point) => ({
+      ...point,
+      date: String(point.date || "").slice(0, 10)
+    }))
+    .filter((point) => parseSeriesIsoDate(point.date));
+  if (normalized.length < 2) {
+    return normalized;
+  }
+
+  const firstDate = parseSeriesIsoDate(normalized[0].date);
+  const lastDate = parseSeriesIsoDate(normalized[normalized.length - 1].date);
+  const spanDays = firstDate && lastDate ? Math.round((lastDate.getTime() - firstDate.getTime()) / 86400000) : 0;
+  if (spanDays > 4000) {
+    return normalized;
+  }
+
+  const output = [{ ...normalized[0] }];
+  let previousPoint = normalized[0];
+  let previousDate = parseSeriesIsoDate(previousPoint.date);
+  for (let index = 1; index < normalized.length; index += 1) {
+    const currentPoint = normalized[index];
+    const currentDate = parseSeriesIsoDate(currentPoint.date);
+    if (!previousDate || !currentDate) {
+      output.push({ ...currentPoint });
+      previousPoint = currentPoint;
+      previousDate = currentDate;
+      continue;
+    }
+
+    let cursor = new Date(previousDate.getTime());
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+    while (cursor < currentDate) {
+      output.push({
+        ...previousPoint,
+        date: cursor.toISOString().slice(0, 10)
+      });
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+
+    output.push({ ...currentPoint });
+    previousPoint = currentPoint;
+    previousDate = currentDate;
   }
   return output;
 }
@@ -6626,6 +7484,39 @@ function ensureLineChartState(canvas) {
   return state;
 }
 
+function readCssVarValue(name, fallback) {
+  if (typeof window === "undefined" || typeof getComputedStyle !== "function" || typeof document === "undefined") {
+    return fallback;
+  }
+  const root = document.body || document.documentElement;
+  if (!root) {
+    return fallback;
+  }
+  const value = getComputedStyle(root).getPropertyValue(name).trim();
+  return value || fallback;
+}
+
+function getChartPalette() {
+  return {
+    primary: readCssVarValue("--chart-primary", "#0e7a64"),
+    secondary: readCssVarValue("--chart-secondary", "#ff7f32"),
+    up: readCssVarValue("--chart-up", "#0e7a64"),
+    down: readCssVarValue("--chart-down", "#b04444"),
+    grid: readCssVarValue("--chart-grid", "rgba(168, 185, 163, 0.46)"),
+    axis: readCssVarValue("--chart-axis", "rgba(75, 96, 86, 0.9)"),
+    axisStrong: readCssVarValue("--chart-axis-strong", "#30473e"),
+    empty: readCssVarValue("--chart-empty", "#4b6056"),
+    guide: readCssVarValue("--chart-guide", "rgba(0, 87, 71, 0.34)"),
+    selectionFill: readCssVarValue("--chart-selection-fill", "rgba(14, 122, 100, 0.12)"),
+    selectionStroke: readCssVarValue("--chart-selection-stroke", "rgba(14, 122, 100, 0.34)"),
+    candleGuide: readCssVarValue("--chart-candle-guide", "rgba(82, 70, 36, 0.36)"),
+    backgroundTop: readCssVarValue("--chart-bg-top", "rgba(14, 122, 100, 0.06)"),
+    backgroundBottom: readCssVarValue("--chart-bg-bottom", "rgba(14, 122, 100, 0.01)"),
+    candleBackgroundTop: readCssVarValue("--chart-candle-bg-top", "rgba(255, 127, 50, 0.05)"),
+    candleBackgroundBottom: readCssVarValue("--chart-candle-bg-bottom", "rgba(255, 127, 50, 0.01)")
+  };
+}
+
 function drawLineChart(canvas, labels, values, options = {}) {
   const frame = prepareCanvasFrame(canvas);
   if (!frame) {
@@ -6640,6 +7531,7 @@ function drawLineChart(canvas, labels, values, options = {}) {
   const tooltipLabelFormatter =
     typeof options.tooltipLabelFormatter === "function" ? options.tooltipLabelFormatter : formatLineChartTooltipLabel;
   const comparisonSeries = Array.isArray(options.series) ? options.series : [];
+  const chartPalette = getChartPalette();
 
   if (!values || values.length === 0) {
     if (chartState && chartState.tooltip) {
@@ -6647,13 +7539,13 @@ function drawLineChart(canvas, labels, values, options = {}) {
       chartState.points = [];
       chartState.seriesPoints = [];
     }
-    ctx.fillStyle = "#4b6056";
+    ctx.fillStyle = chartPalette.empty;
     ctx.font = compact ? "13px Space Grotesk" : "14px Space Grotesk";
     ctx.fillText("Brak danych do wykresu.", 20, 26);
     return;
   }
 
-  const color = options.color || "#0e7a64";
+  const color = options.color || chartPalette.primary;
   const seriesDefinitions = [
     {
       name: options.seriesName || "Seria główna",
@@ -6667,7 +7559,7 @@ function drawLineChart(canvas, labels, values, options = {}) {
   ].concat(
     comparisonSeries.map((series, index) => ({
       name: series.name || `Porównanie ${index + 1}`,
-      color: series.color || "#ff7f32",
+      color: series.color || chartPalette.secondary,
       dash: Array.isArray(series.dash) ? series.dash : [7, 5],
       values: (Array.isArray(series.values) ? series.values : []).map((value) => toChartNumOrNull(value)),
       fill: false,
@@ -6693,14 +7585,14 @@ function drawLineChart(canvas, labels, values, options = {}) {
   const gridLines = 4;
 
   const chartBackground = ctx.createLinearGradient(0, padding.top, 0, height - padding.bottom);
-  chartBackground.addColorStop(0, "rgba(14, 122, 100, 0.06)");
-  chartBackground.addColorStop(1, "rgba(14, 122, 100, 0.01)");
+  chartBackground.addColorStop(0, chartPalette.backgroundTop);
+  chartBackground.addColorStop(1, chartPalette.backgroundBottom);
   ctx.fillStyle = chartBackground;
   ctx.fillRect(padding.left, padding.top, chartWidth, chartHeight);
 
-  ctx.strokeStyle = "rgba(168, 185, 163, 0.46)";
+  ctx.strokeStyle = chartPalette.grid;
   ctx.lineWidth = 1;
-  ctx.fillStyle = "rgba(75, 96, 86, 0.9)";
+  ctx.fillStyle = chartPalette.axis;
   ctx.font = compact ? "10px IBM Plex Mono" : "11px IBM Plex Mono";
   ctx.textAlign = "right";
   ctx.textBaseline = "middle";
@@ -6794,7 +7686,7 @@ function drawLineChart(canvas, labels, values, options = {}) {
       ctx.lineTo(legendX + 18, legendY);
       ctx.stroke();
       ctx.restore();
-      ctx.fillStyle = "#30473e";
+      ctx.fillStyle = chartPalette.axisStrong;
       ctx.fillText(series.name, legendX + 24, legendY);
       legendX += 24 + ctx.measureText(series.name).width + 18;
     });
@@ -6870,7 +7762,7 @@ function drawLineChart(canvas, labels, values, options = {}) {
   if (activePoint && chartState && !chartState.drag) {
     ctx.save();
     ctx.setLineDash([5, 5]);
-    ctx.strokeStyle = "rgba(0, 87, 71, 0.34)";
+    ctx.strokeStyle = chartPalette.guide;
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(activePoint.x, padding.top);
@@ -6900,8 +7792,8 @@ function drawLineChart(canvas, labels, values, options = {}) {
     const selectionWidth = Math.abs(chartState.drag.currentX - chartState.drag.startX);
     if (selectionWidth > 0) {
       ctx.save();
-      ctx.fillStyle = "rgba(14, 122, 100, 0.12)";
-      ctx.strokeStyle = "rgba(14, 122, 100, 0.34)";
+      ctx.fillStyle = chartPalette.selectionFill;
+      ctx.strokeStyle = chartPalette.selectionStroke;
       ctx.setLineDash([6, 5]);
       ctx.fillRect(left, padding.top, selectionWidth, chartHeight);
       ctx.strokeRect(left, padding.top, selectionWidth, chartHeight);
@@ -6921,7 +7813,7 @@ function drawLineChart(canvas, labels, values, options = {}) {
           ]
     )
   ).filter((index) => index >= 0 && index < primaryPoints.length);
-  ctx.fillStyle = "#30473e";
+  ctx.fillStyle = chartPalette.axisStrong;
   ctx.font = compact ? "10px Space Grotesk" : "11px Space Grotesk";
   ctx.textBaseline = "top";
   xLabelIndices.forEach((index) => {
@@ -7033,13 +7925,14 @@ function drawCandlestickChart(canvas, candles) {
   }
   const { ctx, width, height, compact } = frame;
   const chartState = ensureCandlestickChartState(canvas);
+  const chartPalette = getChartPalette();
 
   if (!candles || candles.length === 0) {
     if (chartState) {
       chartState.candles = [];
       hideChartTooltip(chartState);
     }
-    ctx.fillStyle = "#4b6056";
+    ctx.fillStyle = chartPalette.empty;
     ctx.font = compact ? "13px Space Grotesk" : "14px Space Grotesk";
     ctx.fillText("Brak danych świecowych.", 20, 26);
     return;
@@ -7062,14 +7955,14 @@ function drawCandlestickChart(canvas, candles) {
   const yTickCount = 4;
 
   const chartBackground = ctx.createLinearGradient(0, pad.top, 0, height - pad.bottom);
-  chartBackground.addColorStop(0, "rgba(255, 127, 50, 0.05)");
-  chartBackground.addColorStop(1, "rgba(255, 127, 50, 0.01)");
+  chartBackground.addColorStop(0, chartPalette.candleBackgroundTop);
+  chartBackground.addColorStop(1, chartPalette.candleBackgroundBottom);
   ctx.fillStyle = chartBackground;
   ctx.fillRect(pad.left, pad.top, chartWidth, chartHeight);
 
-  ctx.strokeStyle = "rgba(168, 185, 163, 0.5)";
+  ctx.strokeStyle = chartPalette.grid;
   ctx.lineWidth = 1;
-  ctx.fillStyle = "rgba(75, 96, 86, 0.9)";
+  ctx.fillStyle = chartPalette.axis;
   ctx.font = compact ? "10px IBM Plex Mono" : "11px IBM Plex Mono";
   ctx.textAlign = "right";
   ctx.textBaseline = "middle";
@@ -7096,8 +7989,8 @@ function drawCandlestickChart(canvas, candles) {
     const yOpen = pad.top + chartHeight - ((open - minVal) / range) * chartHeight;
     const yClose = pad.top + chartHeight - ((close - minVal) / range) * chartHeight;
     const up = close >= open;
-    ctx.strokeStyle = up ? "#0e7a64" : "#b04444";
-    ctx.fillStyle = up ? "#0e7a64" : "#b04444";
+    ctx.strokeStyle = up ? chartPalette.up : chartPalette.down;
+    ctx.fillStyle = up ? chartPalette.up : chartPalette.down;
     ctx.beginPath();
     ctx.moveTo(x, yHigh);
     ctx.lineTo(x, yLow);
@@ -7137,7 +8030,7 @@ function drawCandlestickChart(canvas, candles) {
   if (activeCandle) {
     ctx.save();
     ctx.setLineDash([5, 5]);
-    ctx.strokeStyle = "rgba(82, 70, 36, 0.36)";
+    ctx.strokeStyle = chartPalette.candleGuide;
     ctx.beginPath();
     ctx.moveTo(activeCandle.x, pad.top);
     ctx.lineTo(activeCandle.x, height - pad.bottom);
@@ -7145,7 +8038,7 @@ function drawCandlestickChart(canvas, candles) {
     ctx.restore();
 
     ctx.lineWidth = 2;
-    ctx.strokeStyle = activeCandle.up ? "#0e7a64" : "#b04444";
+    ctx.strokeStyle = activeCandle.up ? chartPalette.up : chartPalette.down;
     ctx.strokeRect(
       activeCandle.x - candleWidth / 2 - 2,
       activeCandle.bodyTop - 2,
@@ -7159,7 +8052,7 @@ function drawCandlestickChart(canvas, candles) {
   const first = sample[0];
   const last = sample[sample.length - 1];
   ctx.font = compact ? "10px Space Grotesk" : "12px Space Grotesk";
-  ctx.fillStyle = "#30473e";
+  ctx.fillStyle = chartPalette.axisStrong;
   ctx.fillText(formatLineChartAxisLabel(first.date || ""), pad.left, height - 6);
   const lastLabel = last.date || "";
   const lastLabelText = formatLineChartAxisLabel(lastLabel);
@@ -7552,7 +8445,12 @@ function defaultState() {
     meta: {
       activePlan: "Expert",
       baseCurrency: "PLN",
-      createdAt: nowIso()
+      createdAt: nowIso(),
+      fxRates: {},
+      theme: APPEARANCE_DEFAULTS.theme,
+      lastLightTheme: APPEARANCE_DEFAULTS.lastLightTheme,
+      iconSet: APPEARANCE_DEFAULTS.iconSet,
+      fontScale: APPEARANCE_DEFAULTS.fontScale
     },
     portfolios: [
       {
@@ -7618,7 +8516,12 @@ function normalizeState(input) {
         ? stateValue.meta.activePlan
         : fallback.meta.activePlan,
       baseCurrency: textOrFallback(stateValue.meta && stateValue.meta.baseCurrency, fallback.meta.baseCurrency),
-      createdAt: (stateValue.meta && stateValue.meta.createdAt) || fallback.meta.createdAt
+      createdAt: (stateValue.meta && stateValue.meta.createdAt) || fallback.meta.createdAt,
+      fxRates: normalizeFxRates(stateValue.meta && stateValue.meta.fxRates),
+      theme: normalizeTheme(stateValue.meta && stateValue.meta.theme),
+      lastLightTheme: resolveLastLightTheme(stateValue.meta && stateValue.meta.lastLightTheme),
+      iconSet: normalizeIconSet(stateValue.meta && stateValue.meta.iconSet),
+      fontScale: normalizeFontScale(stateValue.meta && stateValue.meta.fontScale)
     },
     portfolios: Array.isArray(stateValue.portfolios) && stateValue.portfolios.length
       ? stateValue.portfolios.map((portfolio) => ({
@@ -7743,10 +8646,23 @@ function normalizeState(input) {
 }
 
 function saveState(options = {}) {
+  invalidateDashboardHistoryCache();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   if (!options.skipBackend) {
     scheduleBackendPush();
   }
+}
+
+function invalidateDashboardHistoryCache() {
+  lineChartViews.dashboard.historySeries = [];
+  lineChartViews.dashboard.historySummary = null;
+  lineChartViews.dashboard.historyKey = "";
+  lineChartViews.dashboard.historyLoading = false;
+  lineChartViews.dashboard.historyResolvedKey = "";
+  lineChartViews.dashboard.comparisonSeries = [];
+  lineChartViews.dashboard.comparisonKey = "";
+  lineChartViews.dashboard.comparisonLoading = false;
+  lineChartViews.dashboard.comparisonResolvedKey = "";
 }
 
 function fillSelect(select, options, includeEmpty = false) {
@@ -8007,11 +8923,24 @@ if (typeof globalThis !== "undefined" && globalThis.__MYFUND_ENABLE_TEST_HOOKS__
     onLiabilitySubmit,
     onActionClick,
     syncEditingForms,
+    normalizeState,
+    normalizeTheme,
+    resolveLastLightTheme,
+    normalizeIconSet,
+    normalizeFontScale,
+    normalizeFxRates,
+    findCurrencyConversionRate,
+    applyAppearanceSettings,
+    appearanceIconSetConfig,
+    onThemeToggle,
+    computeMetrics,
     shouldUseBackendMetrics,
     normalizeLineChartRange,
     normalizeLineChartMode,
     sliceLineChartSeriesByRange,
     computeReturnSeries,
+    densifySeriesByDay,
+    computeDashboardHistorySummary,
     extractBenchmarkSeriesFromRows,
     alignBenchmarkHistoryToSeries,
     buildCandlestickTooltipContent

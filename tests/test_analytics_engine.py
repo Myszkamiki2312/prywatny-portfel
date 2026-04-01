@@ -191,6 +191,47 @@ class AnalyticsEngineTests(unittest.TestCase):
         detail = metrics["closedDetails"][0]
         self.assertAlmostEqual(detail["realizedPL"], 29.0)
 
+    def test_metrics_convert_usd_values_to_pln_with_fx_rates(self):
+        state = build_state()
+        state["accounts"][0]["currency"] = "USD"
+        state["assets"][0]["ticker"] = "AAPL"
+        state["assets"][0]["name"] = "Apple"
+        state["assets"][0]["currency"] = "USD"
+        state["assets"][0]["currentPrice"] = 110.0
+        state["meta"]["fxRates"] = {"USD/PLN": 4.0}
+        state["operations"] = [
+            operation(
+                "op_1",
+                date="2026-01-02",
+                op_type="Operacja gotowkowa",
+                amount=1000.0,
+                created_at="2026-01-02T10:00:00+00:00",
+            )
+            | {"currency": "USD"},
+            operation(
+                "op_2",
+                date="2026-01-03",
+                op_type="Kupno waloru",
+                asset_id="ast_1",
+                quantity=2.0,
+                price=100.0,
+                amount=200.0,
+                fee=1.0,
+                created_at="2026-01-03T10:00:00+00:00",
+            )
+            | {"currency": "USD"},
+        ]
+
+        metrics = AnalyticsEngine(state).metrics
+
+        self.assertAlmostEqual(metrics["marketValue"], 880.0)
+        self.assertAlmostEqual(metrics["bookValue"], 804.0)
+        self.assertAlmostEqual(metrics["cashTotal"], 3196.0)
+        self.assertAlmostEqual(metrics["totalPL"], 72.0)
+        self.assertAlmostEqual(metrics["netWorth"], 4076.0)
+        self.assertAlmostEqual(metrics["holdings"][0].value, 880.0)
+        self.assertAlmostEqual(metrics["byCurrency"][0]["baseValue"], 4076.0)
+
 
 if __name__ == "__main__":
     unittest.main()

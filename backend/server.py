@@ -28,7 +28,7 @@ from .parity_tools import ParityToolsService
 from .quotes import QuoteService
 from .realtime import RealtimeRunner
 from .reports import ReportService
-from .utils import now_iso, to_int
+from .utils import normalize_currency, normalize_fx_pair_key, normalize_fx_rates, now_iso, to_int
 
 
 APP_NAME = "Prywatny Portfel"
@@ -436,54 +436,72 @@ class AppHandler(SimpleHTTPRequestHandler):
             }
 
         def _route_quotes_refresh() -> Dict[str, Any]:
+            state = self.context.database.get_state()
             tickers = _payload_tickers(payload)
             if not tickers:
-                state = self.context.database.get_state()
                 tickers = [asset["ticker"] for asset in state["assets"] if str(asset.get("ticker") or "").strip()]
-            refreshed_quotes = self.context.quote_service.refresh(tickers)
-            quote_map: Dict[str, ApiQuoteRow] = {
-                str(row.get("ticker") or "").upper(): _api_quote_row(row, default_source="market-data")
-                for row in refreshed_quotes
-                if str(row.get("ticker") or "").strip()
-            }
 
-            fresh_quotes = [row for row in quote_map.values() if not bool(row.get("stale"))]
-            if fresh_quotes:
-                self.context.database.upsert_quotes([_quote_upsert_row(row) for row in fresh_quotes])
+            requested_asset_tickers = list(tickers)
+            quote_map: Dict[str, ApiQuoteRow] = {}
 
-            missing_or_stale = [
-                ticker
-                for ticker in tickers
-                if ticker not in quote_map or bool(quote_map[ticker].get("stale"))
-            ]
-            if missing_or_stale:
-                for db_row in self.context.database.get_quotes(missing_or_stale):
-                    mapped = _api_quote_row(db_row, default_source="db-cache")
-                    existing = quote_map.get(mapped["ticker"])
-                    if not existing or (bool(existing.get("stale")) and not bool(mapped.get("stale"))):
-                        quote_map[mapped["ticker"]] = mapped
+            def merge_quotes(requested: List[str]) -> None:
+                if not requested:
+                    return
+                refreshed_quotes = self.context.quote_service.refresh(requested)
+                refreshed_map: Dict[str, ApiQuoteRow] = {
+                    str(row.get("ticker") or "").upper(): _api_quote_row(row, default_source="market-data")
+                    for row in refreshed_quotes
+                    if str(row.get("ticker") or "").strip()
+                }
+                fresh_quotes = [row for row in refreshed_map.values() if not bool(row.get("stale"))]
+                if fresh_quotes:
+                    self.context.database.upsert_quotes([_quote_upsert_row(row) for row in fresh_quotes])
+                missing_or_stale = [
+                    ticker
+                    for ticker in requested
+                    if ticker not in refreshed_map or bool(refreshed_map[ticker].get("stale"))
+                ]
+                if missing_or_stale:
+                    for db_row in self.context.database.get_quotes(missing_or_stale):
+                        mapped = _api_quote_row(db_row, default_source="db-cache")
+                        existing = refreshed_map.get(mapped["ticker"])
+                        if not existing or (bool(existing.get("stale")) and not bool(mapped.get("stale"))):
+                            refreshed_map[mapped["ticker"]] = mapped
+                quote_map.update(refreshed_map)
 
-            quotes = [quote_map[ticker] for ticker in tickers if ticker in quote_map]
+            merge_quotes(requested_asset_tickers)
+            currencies = _state_currencies_for_fx(state, quote_map)
+            fx_tickers = _fx_tickers_for_currencies(currencies, normalize_currency(state["meta"].get("baseCurrency"), "PLN"))
+            merge_quotes(fx_tickers)
 
+            quotes = [quote_map[ticker] for ticker in requested_asset_tickers if ticker in quote_map]
+            fx_quotes = [quote_map[ticker] for ticker in fx_tickers if ticker in quote_map]
+            updated = False
             if quotes:
-                state = self.context.database.get_state()
-                updated = False
                 for asset in state["assets"]:
                     ticker = str(asset.get("ticker") or "").upper()
                     if ticker in quote_map:
                         asset["currentPrice"] = float(quote_map[ticker]["price"])
                         asset["currency"] = str(quote_map[ticker]["currency"])
                         updated = True
-                if updated:
-                    self.context.database.replace_state(state)
+            if fx_quotes:
+                next_fx_rates = normalize_fx_rates(state["meta"].get("fxRates"))
+                next_fx_rates.update(_extract_fx_rates_from_quotes(fx_quotes))
+                if next_fx_rates != normalize_fx_rates(state["meta"].get("fxRates")):
+                    state["meta"]["fxRates"] = next_fx_rates
+                    updated = True
+            if updated:
+                self.context.database.replace_state(state)
 
             return {
                 "quotes": quotes,
-                "requested": len(tickers),
+                "requested": len(requested_asset_tickers),
                 "resolved": len(quotes),
-                "updated": len(fresh_quotes),
+                "updated": len([row for row in quotes if not bool(row.get("stale"))]),
+                "fxRates": normalize_fx_rates(state["meta"].get("fxRates")),
+                "fxUpdated": len([row for row in fx_quotes if not bool(row.get("stale"))]),
                 "fallbackUsed": len([row for row in quotes if bool(row.get("stale"))]),
-                "missing": max(0, len(tickers) - len(quotes)),
+                "missing": max(0, len(requested_asset_tickers) - len(quotes)),
             }
 
         def _route_reports_generate() -> Dict[str, Any]:
@@ -624,6 +642,9 @@ class AppHandler(SimpleHTTPRequestHandler):
             ("POST", "/api/reports/generate"): _route_reports_generate,
             ("GET", "/api/metrics/portfolio"): lambda: {
                 "metrics": self.context.reports.metrics(portfolio_id=str(query.get("portfolioId", [""])[0]).strip())
+            },
+            ("GET", "/api/metrics/history"): lambda: {
+                "history": self.context.reports.metrics_history(portfolio_id=str(query.get("portfolioId", [""])[0]).strip())
             },
             ("GET", "/api/tools/scanner"): lambda: self.context.expert_tools.scanner(
                 {
@@ -842,6 +863,44 @@ def _payload_tickers(payload: Dict[str, Any]) -> List[str]:
         if text and text not in values:
             values.append(text)
     return values
+
+
+def _state_currencies_for_fx(state: Dict[str, Any], quote_map: Dict[str, Dict[str, Any]]) -> List[str]:
+    base_currency = normalize_currency(state.get("meta", {}).get("baseCurrency"), "PLN")
+    currencies = {base_currency}
+    for account in state.get("accounts", []):
+        currencies.add(normalize_currency(account.get("currency"), base_currency))
+    for liability in state.get("liabilities", []):
+        currencies.add(normalize_currency(liability.get("currency"), base_currency))
+    for operation in state.get("operations", []):
+        currencies.add(normalize_currency(operation.get("currency"), base_currency))
+    for asset in state.get("assets", []):
+        ticker = str(asset.get("ticker") or "").upper().strip()
+        quote = quote_map.get(ticker, {})
+        currencies.add(normalize_currency(quote.get("currency") or asset.get("currency"), base_currency))
+    return sorted(currency for currency in currencies if currency)
+
+
+def _fx_tickers_for_currencies(currencies: List[str], base_currency: str) -> List[str]:
+    output: List[str] = []
+    for currency in currencies:
+        pair_key = normalize_fx_pair_key(currency, base_currency)
+        if not pair_key:
+            continue
+        ticker = f"FX:{pair_key}"
+        if ticker not in output:
+            output.append(ticker)
+    return output
+
+
+def _extract_fx_rates_from_quotes(quotes: List[Dict[str, Any]]) -> Dict[str, float]:
+    rates: Dict[str, float] = {}
+    for row in quotes:
+        pair_key = normalize_fx_pair_key(row.get("ticker"))
+        price = float(row.get("price") or 0)
+        if pair_key and price > 0:
+            rates[pair_key] = price
+    return rates
 
 
 def _extract_webhook_token(headers, query: Dict[str, List[str]]) -> str:
