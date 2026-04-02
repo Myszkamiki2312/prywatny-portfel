@@ -3,14 +3,16 @@
 
 Aplikacja mobilna jest w katalogu:
 
-- `/Users/bartlomiejprzybycien/Documents/New project/android-app`
+- `/Users/bartlomiejprzybycien/Documents/New project/mobile-app`
 
 Automatyczny build APK działa w GitHub Actions (`Android APK`):
 
-- po pushu zmian do `android-app/` dostajesz artefakt `prywatny-portfel-mobile-apk`,
+- po pushu zmian do `mobile-app/` dostajesz artefakt `prywatny-portfel-mobile-apk`,
 - po wypchnięciu taga `android-v...` workflow tworzy GitHub Release z plikiem `prywatny-portfel-mobile.apk` (publiczny download).
 
 Android app działa jako `offline-first`: backend API uruchamia się lokalnie w telefonie (Room/SQLite), bez wymogu uruchamiania backendu na komputerze.
+
+Mobilka ma teraz własny frontend w `/Users/bartlomiejprzybycien/Documents/New project/mobile-app/web`, więc zmiany Androida nie są już spięte bezpośrednio z plikami desktopu.
 
 Przykład publikacji APK jako release:
 

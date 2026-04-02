@@ -5,8 +5,8 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
-val defaultVersionName = "1.2.5"
-val defaultVersionCode = 10205
+val defaultVersionName = "1.2.6"
+val defaultVersionCode = 10206
 val appVersionName = providers.gradleProperty("appVersionName")
     .orElse(providers.environmentVariable("APP_VERSION_NAME"))
     .orElse(defaultVersionName)
@@ -83,7 +83,7 @@ dependencies {
     ksp("androidx.room:room-compiler:2.6.1")
 }
 
-val webSourceRoot = rootDir.parentFile
+val webSourceRoot = rootDir.resolve("web")
 val syncWebAssets by tasks.registering(Copy::class) {
     from(webSourceRoot) {
         include("index.html")
