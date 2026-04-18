@@ -1147,7 +1147,13 @@ function applyQuotes(quotes) {
       return;
     }
     asset.currentPrice = toNum(quote.price);
-    asset.currency = textOrFallback(quote.currency, asset.currency || state.meta.baseCurrency);
+    asset.quoteCurrency = normalizeCurrency(
+      quote.currency,
+      asset.quoteCurrency || asset.currency || state.meta.baseCurrency
+    );
+    if (!asset.currency) {
+      asset.currency = asset.quoteCurrency;
+    }
   });
 }
 
@@ -6711,6 +6717,26 @@ function normalizeFxRates(raw) {
   return output;
 }
 
+function buildAssetCurrencyHints(source) {
+  const operations = Array.isArray(source.operations) ? source.operations : [];
+  const accounts = Array.isArray(source.accounts) ? source.accounts : [];
+  const hints = new Map();
+
+  operations.forEach((operation) => {
+    const directCurrency = normalizeCurrency(operation && operation.currency, "");
+    const accountCurrency = normalizeCurrency(findById(accounts, operation && operation.accountId)?.currency, "");
+    const hintedCurrency = directCurrency || accountCurrency;
+    if (!hintedCurrency) {
+      return;
+    }
+    [operation && operation.assetId, operation && operation.targetAssetId]
+      .filter(Boolean)
+      .forEach((assetId) => hints.set(assetId, hintedCurrency));
+  });
+
+  return hints;
+}
+
 function findCurrencyConversionRate(fromCurrency, toCurrency, fxRates) {
   const base = normalizeCurrency(fromCurrency, "");
   const quote = normalizeCurrency(toCurrency, "");
@@ -8669,6 +8695,7 @@ function normalizeState(input) {
           name: textOrFallback(asset.name, "Brak nazwy"),
           type: textOrFallback(asset.type, "Inny"),
           currency: textOrFallback(asset.currency, fallback.meta.baseCurrency),
+          quoteCurrency: textOrFallback(asset.quoteCurrency, asset.currency || fallback.meta.baseCurrency),
           currentPrice: toNum(asset.currentPrice),
           risk: clamp(toNum(asset.risk) || 5, 1, 10),
           sector: asset.sector || "",
@@ -8758,6 +8785,16 @@ function normalizeState(input) {
   if (!normalized.accounts.length) {
     normalized.accounts = fallback.accounts;
   }
+  const assetCurrencyHints = buildAssetCurrencyHints(normalized);
+  normalized.assets = normalized.assets.map((asset) => {
+    const hintedCurrency = assetCurrencyHints.get(asset.id) || "";
+    const persistedCurrency = normalizeCurrency(asset.currency, fallback.meta.baseCurrency);
+    return {
+      ...asset,
+      currency: normalizeCurrency(hintedCurrency, persistedCurrency),
+      quoteCurrency: normalizeCurrency(asset.quoteCurrency, persistedCurrency)
+    };
+  });
   return normalized;
 }
 

@@ -192,3 +192,110 @@ test("computeMetrics converts USD portfolio values to PLN using stored FX rates"
   assert.equal(metrics.holdings[0].value, 880);
   assert.equal(metrics.holdings[0].currency, "USD");
 });
+
+test("normalizeState restores asset currency from operation history when stale quote data overwrote it", () => {
+  const hooks = createHarness();
+  hooks.setState({
+    meta: {
+      activePlan: "Expert",
+      baseCurrency: "PLN",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      fxRates: {
+        "USD/PLN": 4
+      }
+    },
+    portfolios: [
+      {
+        id: "ptf_1",
+        name: "PLN",
+        currency: "PLN",
+        benchmark: "",
+        goal: "",
+        parentId: "",
+        twinOf: "",
+        groupName: "",
+        isPublic: false,
+        createdAt: "2026-01-01T00:00:00.000Z"
+      }
+    ],
+    accounts: [
+      {
+        id: "acc_1",
+        name: "Konto PLN",
+        type: "Broker",
+        currency: "PLN",
+        createdAt: "2026-01-01T00:00:00.000Z"
+      }
+    ],
+    assets: [
+      {
+        id: "ast_1",
+        ticker: "CDR",
+        name: "CD Projekt",
+        type: "Akcja",
+        currency: "USD",
+        quoteCurrency: "USD",
+        currentPrice: 120,
+        risk: 5,
+        sector: "",
+        industry: "",
+        tags: [],
+        benchmark: "",
+        createdAt: "2026-01-01T00:00:00.000Z"
+      }
+    ],
+    operations: [
+      {
+        id: "op_1",
+        date: "2026-01-02",
+        type: "Operacja gotówkowa",
+        portfolioId: "ptf_1",
+        accountId: "acc_1",
+        assetId: "",
+        targetAssetId: "",
+        quantity: 0,
+        targetQuantity: 0,
+        price: 0,
+        amount: 1000,
+        fee: 0,
+        currency: "PLN",
+        tags: [],
+        note: "",
+        createdAt: "2026-01-02T00:00:00.000Z"
+      },
+      {
+        id: "op_2",
+        date: "2026-01-03",
+        type: "Kupno waloru",
+        portfolioId: "ptf_1",
+        accountId: "acc_1",
+        assetId: "ast_1",
+        targetAssetId: "",
+        quantity: 2,
+        targetQuantity: 0,
+        price: 100,
+        amount: 200,
+        fee: 0,
+        currency: "PLN",
+        tags: [],
+        note: "",
+        createdAt: "2026-01-03T00:00:00.000Z"
+      }
+    ],
+    recurringOps: [],
+    liabilities: [],
+    alerts: [],
+    notes: [],
+    strategies: [],
+    favorites: []
+  });
+
+  const metrics = hooks.computeMetrics("ptf_1");
+  const state = hooks.getState();
+
+  assert.equal(state.assets[0].currency, "PLN");
+  assert.equal(state.assets[0].quoteCurrency, "USD");
+  assert.equal(metrics.holdings[0].currency, "PLN");
+  assert.equal(metrics.marketValue, 240);
+  assert.equal(metrics.netWorth, 1040);
+});
