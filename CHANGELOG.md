@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.7.4 - 2026-04-26
+
+### Changed
+- Uproszczono desktopowy interfejs pod codzienne używanie:
+  - ukryto techniczny katalog narzędzi z tabelą `Narzędzie / Status`,
+  - dodano kafelkowy wybór raportów: Portfel, Zysk, Ryzyko, Podatki, Dywidendy,
+  - dodano mini onboarding: Dodaj konto -> Dodaj walor -> Dodaj operację.
+- Formularz operacji dostał szybką kartę dodania waloru przy kupnie, gdy nie ma jeszcze żadnych walorów.
+- Zmiana ceny waloru używa teraz modala zamiast systemowego `prompt`.
+- Odświeżanie notowań pokazuje stan `Odświeżam...` i czytelne komunikaty toast.
+
+### Stability
+- Zweryfikowane lokalnie:
+  - `node --check app.js`
+  - `node --check frontend/dashboard.js`
+  - `node --check frontend/operations.js`
+  - `for test in frontend_tests/*.test.js; do node "$test"; done`
+  - `python3 -m unittest discover -s tests -p 'test_*.py' -v`
+
 ## v0.6.5 - 2026-02-24
 
 ### Added

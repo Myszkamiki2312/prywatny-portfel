@@ -8,7 +8,7 @@ on:
     tags:
       - "android-v*"
     paths:
-      - "mobile-app/**"
+      - "android-app/**"
       - ".github/workflows/android-apk.yml"
 
 permissions:
@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: mobile-app
+        working-directory: android-app
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -38,7 +38,7 @@ jobs:
         id: version
         run: |
           REF_NAME="${GITHUB_REF_NAME}"
-          VERSION_NAME="1.2.6"
+          VERSION_NAME="1.2.3"
           if [[ "${REF_NAME}" == android-v* ]]; then
             VERSION_NAME="${REF_NAME#android-v}"
           fi

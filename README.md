@@ -3,16 +3,14 @@
 
 Aplikacja mobilna jest w katalogu:
 
-- `/Users/bartlomiejprzybycien/Documents/New project/mobile-app`
+- `/Users/bartlomiejprzybycien/Documents/New project/android-app`
 
 Automatyczny build APK działa w GitHub Actions (`Android APK`):
 
-- po pushu zmian do `mobile-app/` dostajesz artefakt `prywatny-portfel-mobile-apk`,
+- po pushu zmian do `android-app/` dostajesz artefakt `prywatny-portfel-mobile-apk`,
 - po wypchnięciu taga `android-v...` workflow tworzy GitHub Release z plikiem `prywatny-portfel-mobile.apk` (publiczny download).
 
 Android app działa jako `offline-first`: backend API uruchamia się lokalnie w telefonie (Room/SQLite), bez wymogu uruchamiania backendu na komputerze.
-
-Mobilka ma teraz własny frontend w `/Users/bartlomiejprzybycien/Documents/New project/mobile-app/web`, więc zmiany Androida nie są już spięte bezpośrednio z plikami desktopu.
 
 Przykład publikacji APK jako release:
 
@@ -40,6 +38,69 @@ git push origin v0.6.1
 
 Windows `.exe` uruchamia lokalny backend i na Windows domyślnie otwiera aplikacje w przeglądarce z małym oknem sterującym, co jest odporniejsze od problemów z osadzonym webview. Dane aplikacji sa trzymane w katalogu użytkownika, a nie w folderze tymczasowym bundla.
 `MSI` instaluje ten sam launcher jako normalna aplikacja Windows dla bieżącego użytkownika, bez potrzeby ręcznego rozpakowywania.
+
+## Chmura Supabase
+
+Desktop ma teraz tryb synchronizacji chmurowej:
+
+- konfiguracja projektu Supabase jest w `supabase-config.js`,
+- schemat bazy i polityki RLS są w `docs/supabase-schema.sql`,
+- po zalogowaniu aplikacja zapisuje stan portfela do tabeli `app_states`,
+- lokalny backend nadal obsługuje notowania, importery, raporty i narzędzia eksperckie.
+
+W Supabase SQL Editor odpal:
+
+```sql
+-- zawartość pliku docs/supabase-schema.sql
+```
+
+W Authentication ustaw:
+
+- `Allow new users to sign up`: ON,
+- `Email`: Enabled,
+- na testy możesz ustawić `Confirm email`: OFF.
+
+## Cloud backend
+
+Backend Python można uruchomić lokalnie albo w chmurze.
+
+Najbezpieczniejszy układ dla tej aplikacji:
+
+- Supabase trzyma prywatne dane portfela per użytkownik,
+- backend w chmurze obsługuje notowania, importery, raporty i narzędzia,
+- frontend wskazuje zdalny backend przez `supabase-config.js`.
+
+Konfiguracja frontendu:
+
+```js
+window.PRIVATE_PORTFOLIO_BACKEND = {
+  apiBase: "https://twoj-backend.example.com/api",
+  apiToken: "TEN_SAM_TOKEN_CO_W_BACKENDZIE"
+};
+```
+
+Jeśli `apiBase` zostanie puste, desktop działa po staremu przez lokalne `/api`.
+
+Backend może wymagać tokenu:
+
+```bash
+export PRYWATNY_PORTFEL_API_TOKEN="dlugi-losowy-token"
+python3 -m backend.server --host 0.0.0.0 --port 8080
+```
+
+Deploy Docker:
+
+```bash
+docker build -t prywatny-portfel-backend .
+docker run --rm -p 8080:8080 \
+  -e PRYWATNY_PORTFEL_API_TOKEN="dlugi-losowy-token" \
+  -v prywatny-portfel-data:/data \
+  prywatny-portfel-backend
+```
+
+Pliki `Dockerfile` i `render.yaml` są przygotowane pod hosting typu Render/Railway/Fly/VPS.
+
+Uwaga: nie wystawiaj publicznego backendu bez `PRYWATNY_PORTFEL_API_TOKEN`, bo endpointy API są silnikiem aplikacji i nie powinny być otwarte dla przypadkowych osób.
 
 ## Testy
 

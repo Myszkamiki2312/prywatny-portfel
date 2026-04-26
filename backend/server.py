@@ -35,6 +35,7 @@ APP_NAME = "Prywatny Portfel"
 PROJECT_ROOT_ENV = "PRYWATNY_PORTFEL_PROJECT_ROOT"
 DATA_ROOT_ENV = "PRYWATNY_PORTFEL_DATA_ROOT"
 SERVER_LOG_ENV = "PRYWATNY_PORTFEL_SERVER_LOG"
+API_TOKEN_ENV = "PRYWATNY_PORTFEL_API_TOKEN"
 
 
 def default_project_root() -> Path:
@@ -167,7 +168,7 @@ class AppHandler(SimpleHTTPRequestHandler):
     def end_headers(self) -> None:
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Webhook-Token")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Webhook-Token, X-App-Token")
         super().end_headers()
 
     def do_OPTIONS(self) -> None:
@@ -204,6 +205,7 @@ class AppHandler(SimpleHTTPRequestHandler):
 
     def _handle_api(self, method: str, parsed) -> None:
         try:
+            self._authorize_api_request(parsed.path)
             payload = {}
             if method in {"POST", "PUT"}:
                 payload = self._read_json()
@@ -233,6 +235,16 @@ class AppHandler(SimpleHTTPRequestHandler):
                 },
             )
             self._send_json(500, {"error": f"Internal server error: {error}"})
+
+    def _authorize_api_request(self, path: str) -> None:
+        expected = str(os.environ.get(API_TOKEN_ENV) or "").strip()
+        if not expected:
+            return
+        if path in {"/api/health", "/api/monitoring/healthcheck"}:
+            return
+        provided = str(self.headers.get("X-App-Token") or "").strip()
+        if provided != expected:
+            raise ApiError(401, "Unauthorized")
 
     def _dispatch(
         self,
@@ -978,8 +990,8 @@ def _quote_freshness_stats(quotes: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=f"{APP_NAME} backend server")
-    parser.add_argument("--host", default="127.0.0.1", help="Bind host")
-    parser.add_argument("--port", default=8080, type=int, help="Bind port")
+    parser.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"), help="Bind host")
+    parser.add_argument("--port", default=to_int(os.environ.get("PORT"), 8080), type=int, help="Bind port")
     parser.add_argument("--db", default="", help="SQLite database path")
     parser.add_argument("--project-root", default=str(PROJECT_ROOT), help="Static files root")
     parser.add_argument("--data-root", default=str(DATA_ROOT), help="App data root")

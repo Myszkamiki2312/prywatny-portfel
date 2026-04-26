@@ -98,28 +98,48 @@ export function renderOperations(deps) {
     lookupAssetLabel
   });
 
-  const rows = filteredOperations
+  const cards = filteredOperations
     .slice()
     .sort((a, b) => String(b.date).localeCompare(String(a.date)))
-    .map((operation) => [
-      escapeHtml(operation.date),
-      escapeHtml(operation.type),
-      escapeHtml(lookupName(state.portfolios, operation.portfolioId)),
-      escapeHtml(lookupName(state.accounts, operation.accountId)),
-      escapeHtml(lookupAssetLabel(operation.assetId)),
-      escapeHtml(lookupAssetLabel(operation.targetAssetId)),
-      formatFloat(operation.quantity),
-      formatFloat(operation.targetQuantity),
-      formatFloat(operation.price),
-      formatMoney(operation.amount, operation.currency || state.meta.baseCurrency),
-      formatMoney(operation.fee, operation.currency || state.meta.baseCurrency),
-      escapeHtml(operation.tags.join(", ") || "-"),
-      escapeHtml(operation.note || "-"),
-      [
-        `<button class="btn secondary" data-action="edit-operation" data-id="${operation.id}">Edytuj</button>`,
-        `<button class="btn danger" data-action="delete-operation" data-id="${operation.id}">Usuń</button>`
-      ].join(" ")
-    ]);
+    .map((operation) => {
+      const assetLabel = lookupAssetLabel(operation.assetId);
+      const targetAssetLabel = lookupAssetLabel(operation.targetAssetId);
+      const title = operation.assetId ? assetLabel : operation.type;
+      const subtitleParts = [
+        lookupName(state.portfolios, operation.portfolioId),
+        lookupName(state.accounts, operation.accountId)
+      ].filter(Boolean);
+      const qtyLabel = Number(operation.quantity || 0)
+        ? `${formatFloat(operation.quantity)} szt. · cena ${formatFloat(operation.price)}`
+        : operation.targetAssetId
+          ? `Docelowo: ${targetAssetLabel}`
+          : operation.note || "";
+      const tags = Array.isArray(operation.tags) ? operation.tags : [];
+      return `
+        <article class="record-card" data-action="show-record" data-kind="operation" data-id="${operation.id}">
+          <div class="record-main">
+            <span class="record-kicker">${escapeHtml(operation.date)} · ${escapeHtml(operation.type)}</span>
+            <h3 class="record-title">${escapeHtml(title)}</h3>
+            <p class="record-subtitle">${escapeHtml(subtitleParts.join(" · ") || "-")}</p>
+          </div>
+          <div class="record-value">
+            <strong>${formatMoney(operation.amount, operation.currency || state.meta.baseCurrency)}</strong>
+            <span>${escapeHtml(qtyLabel || operation.currency || "")}</span>
+          </div>
+          ${
+            tags.length
+              ? `<div class="record-tags">${tags
+                  .map((tag) => `<span class="record-tag">${escapeHtml(tag)}</span>`)
+                  .join("")}</div>`
+              : ""
+          }
+          <div class="record-actions">
+            <button class="btn secondary" data-action="edit-operation" data-id="${operation.id}">Edytuj</button>
+            <button class="btn danger" data-action="delete-operation" data-id="${operation.id}">Usuń</button>
+          </div>
+        </article>
+      `;
+    });
 
   if (dom.operationHistoryInfo) {
     const activeFilters = [
@@ -137,26 +157,11 @@ export function renderOperations(deps) {
       : `Łącznie operacji: ${state.operations.length}`;
   }
 
-  renderTable(
-    dom.operationList,
-    [
-      "Data",
-      "Typ",
-      "Portfel",
-      "Konto",
-      "Walor",
-      "Walor docelowy",
-      "Ilość",
-      "Ilość doc.",
-      "Cena",
-      "Kwota",
-      "Prowizja",
-      "Tagi",
-      "Notatka",
-      "Akcje"
-    ],
-    rows
-  );
+  if (dom.operationList) {
+    dom.operationList.innerHTML = cards.length
+      ? `<div class="record-list">${cards.join("")}</div>`
+      : '<p class="muted">Brak danych.</p>';
+  }
 }
 
 export function renderRecurring(deps) {

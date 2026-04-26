@@ -38,6 +38,17 @@ export function renderDashboard(deps) {
   dom.statNetWorth.textContent = formatMoney(metrics.netWorth);
   dom.statTotalPl.textContent = formatMoney(metrics.totalPL);
   dom.statTotalPl.style.color = metrics.totalPL >= 0 ? "var(--brand-strong)" : "var(--danger)";
+  const emptyDashboard =
+    metrics.holdings.length === 0 &&
+    Math.abs(Number(metrics.cashTotal || 0)) < 0.000001 &&
+    Math.abs(Number(metrics.marketValue || 0)) < 0.000001;
+  if (dom.dashboardEmptyState) {
+    dom.dashboardEmptyState.hidden = !emptyDashboard;
+  }
+  if (dom.onboardingCard) {
+    const needsOnboarding = state.assets.length === 0 || state.operations.length === 0;
+    dom.onboardingCard.hidden = !needsOnboarding;
+  }
 
   applyTrendCard(dom.statDailyChangePct, dom.statDailyChangeValue, summary.daily, formatPercent, formatMoney);
   applyTrendCard(dom.statMonthlyChangePct, dom.statMonthlyChangeValue, summary.monthly, formatPercent, formatMoney);
@@ -66,21 +77,29 @@ export function renderDashboard(deps) {
     }
   );
 
-  const rows = metrics.holdings.map((holding) => [
-    escapeHtml(holding.ticker),
-    escapeHtml(holding.name),
-    escapeHtml(holding.type),
-    formatFloat(holding.qty),
-    formatMoney(holding.price, holding.currency),
-    formatMoney(holding.value),
-    formatMoney(holding.unrealized),
-    `${formatFloat(holding.share)}%`
-  ]);
-  renderTable(
-    dom.dashboardDetails,
-    ["Ticker", "Nazwa", "Typ", "Ilość", "Cena", "Wartość", "Niezrealizowany P/L", "Udział"],
-    rows
-  );
+  if (dom.dashboardDetails) {
+    dom.dashboardDetails.innerHTML = metrics.holdings.length
+      ? `<div class="record-list">${metrics.holdings
+          .map(
+            (holding) => `
+              <article class="record-card" data-action="show-record" data-kind="holding" data-id="${holding.assetId}">
+                <div class="record-main">
+                  <span class="record-kicker">${escapeHtml(holding.type || "Pozycja")}</span>
+                  <h3 class="record-title">${escapeHtml(holding.ticker)} · ${escapeHtml(holding.name)}</h3>
+                  <p class="record-subtitle">Ilość: ${escapeHtml(formatFloat(holding.qty))} · udział ${escapeHtml(
+                    formatFloat(holding.share)
+                  )}%</p>
+                </div>
+                <div class="record-value">
+                  <strong>${formatMoney(holding.value)}</strong>
+                  <span>P/L ${formatMoney(holding.unrealized)}</span>
+                </div>
+              </article>
+            `
+          )
+          .join("")}</div>`
+      : '<p class="muted">Brak pozycji w portfelu.</p>';
+  }
 
   scheduleMetricsRefresh(portfolioId);
 }

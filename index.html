@@ -14,16 +14,47 @@
   </head>
   <body>
     <div class="backdrop" aria-hidden="true"></div>
+    <div id="toastHost" class="toast-host" aria-live="polite" aria-atomic="true"></div>
+    <div id="cloudAuthOverlay" class="cloud-auth-overlay" hidden>
+      <section class="cloud-auth-card" role="dialog" aria-modal="true" aria-labelledby="cloudAuthTitle">
+        <p class="eyebrow">Prywatny Portfel</p>
+        <h2 id="cloudAuthTitle">Zaloguj się do portfela</h2>
+        <p class="muted">
+          Twoje portfele, operacje i ustawienia są zapisywane w Supabase. Jeśli konto nie istnieje, aplikacja utworzy je automatycznie.
+        </p>
+        <form id="cloudAuthForm" class="cloud-auth-form">
+          <label class="control">
+            <span>E-mail</span>
+            <input name="email" type="email" autocomplete="email" required />
+          </label>
+          <label class="control">
+            <span>Hasło</span>
+            <input name="password" type="password" autocomplete="current-password" minlength="6" required />
+          </label>
+          <details class="cloud-dev-settings">
+            <summary>Ustawienia Supabase</summary>
+            <label class="control">
+              <span>Supabase URL</span>
+              <input id="cloudAuthUrlInput" type="url" placeholder="https://xxxx.supabase.co" />
+            </label>
+            <label class="control">
+              <span>Publishable key</span>
+              <input id="cloudAuthAnonKeyInput" type="password" placeholder="sb_publishable_..." />
+            </label>
+          </details>
+          <button type="submit" class="btn">Zaloguj / utwórz konto</button>
+          <button id="cloudAuthResendBtn" type="button" class="btn secondary">Wyślij ponownie mail potwierdzający</button>
+        </form>
+        <p id="cloudAuthInfo" class="hint"></p>
+        <button id="cloudAuthCloseBtn" type="button" class="btn secondary">Zamknij</button>
+      </section>
+    </div>
     <header class="topbar">
       <div class="brand">
-        <p class="eyebrow">Lokalna aplikacja inwestycyjna</p>
+        <p class="eyebrow">Aplikacja inwestycyjna</p>
         <h1>Prywatny Portfel</h1>
       </div>
       <div class="topbar-actions">
-        <label class="control">
-          <span>Abonament</span>
-          <select id="planSelect"></select>
-        </label>
         <label class="control">
           <span>Waluta bazowa</span>
           <select id="baseCurrencySelect">
@@ -34,14 +65,50 @@
             <option value="CHF">CHF</option>
           </select>
         </label>
-        <button id="themeToggleBtn" class="btn secondary" type="button" aria-pressed="false">Tryb ciemny</button>
-        <button id="exportBackupBtn" class="btn secondary">Eksport kopii</button>
-        <label class="btn secondary file-btn">
-          Import kopii
-          <input id="importBackupInput" type="file" accept="application/json" />
-        </label>
         <button id="refreshQuotesBtn" class="btn secondary">Odśwież notowania</button>
-        <span id="backendStatus" class="badge off">Backend: offline</span>
+        <div class="account-menu-wrap">
+        <button id="cloudSyncLoginBtn" class="account-chip" type="button">
+          <span class="account-dot" aria-hidden="true"></span>
+          <span>
+            <strong id="cloudAccountLabel">Zaloguj</strong>
+            <small id="cloudAccountSub">Konto i synchronizacja</small>
+          </span>
+        </button>
+        <button id="cloudAccountChip" class="account-chip account-chip-active" type="button" hidden>
+          <span class="account-dot" aria-hidden="true"></span>
+          <span>
+            <strong id="cloudAccountEmail">Konto</strong>
+            <small id="cloudAccountSync">Synchronizacja aktywna</small>
+          </span>
+        </button>
+          <div id="accountMenu" class="account-menu" hidden>
+            <button id="cloudSyncNowBtn" class="account-menu-item" type="button">
+              <span>Synchronizuj teraz</span>
+              <small>Zapisz bieżące dane w chmurze</small>
+            </button>
+            <button id="themeToggleBtn" class="account-menu-item" type="button" aria-pressed="false">
+              <span>Tryb ciemny</span>
+              <small>Przełącz wygląd aplikacji</small>
+            </button>
+            <button id="exportBackupBtn" class="account-menu-item" type="button">
+              <span>Eksport kopii</span>
+              <small>Pobierz awaryjny backup JSON</small>
+            </button>
+            <label class="account-menu-item file-btn">
+              <span>Import kopii</span>
+              <small>Wczytaj backup JSON</small>
+              <input id="importBackupInput" type="file" accept="application/json" />
+            </label>
+            <button id="cloudSettingsBtn" class="account-menu-item" type="button">
+              <span>Ustawienia Supabase</span>
+              <small>Zmień URL lub publishable key</small>
+            </button>
+            <button id="cloudSyncLogoutBtn" class="account-menu-item danger" type="button" hidden>
+              <span>Wyloguj</span>
+              <small>Wyczyść sesję na tym urządzeniu</small>
+            </button>
+          </div>
+        </div>
       </div>
     </header>
 
@@ -74,10 +141,6 @@
         <span class="tab-icon" aria-hidden="true">◌</span>
         <span class="tab-label">Wygląd</span>
       </button>
-      <button class="tab" data-view="featuresView" data-icon-key="features">
-        <span class="tab-icon" aria-hidden="true">◌</span>
-        <span class="tab-label">Matryca funkcji</span>
-      </button>
     </nav>
 
     <main class="container">
@@ -100,23 +163,22 @@
               </label>
             </div>
           </div>
-          <div class="stats-grid">
-            <article class="stat-card">
-              <p>Wartość rynkowa</p>
-              <strong id="statMarketValue">0,00 PLN</strong>
-            </article>
-            <article class="stat-card">
-              <p>Gotówka</p>
-              <strong id="statCash">0,00 PLN</strong>
-            </article>
-            <article class="stat-card">
-              <p>Wartość majątku (netto)</p>
+          <div class="dashboard-premium-head">
+            <article class="stat-card stat-card-hero">
+              <p>Wartość portfela</p>
               <strong id="statNetWorth">0,00 PLN</strong>
+              <div class="hero-stat-meta">
+                <span>Rynek <strong id="statMarketValue">0,00 PLN</strong></span>
+                <span>Zysk/strata <strong id="statTotalPl">0,00 PLN</strong></span>
+              </div>
             </article>
-            <article class="stat-card">
-              <p>Całkowity zysk/strata</p>
-              <strong id="statTotalPl">0,00 PLN</strong>
-            </article>
+            <div class="dashboard-quick-actions">
+              <button class="btn" type="button" data-action="quick-operation" data-operation-type="Operacja gotówkowa">+ Wpłata</button>
+              <button class="btn secondary" type="button" data-action="quick-operation" data-operation-type="Kupno waloru">Kupno</button>
+              <button class="btn secondary" type="button" data-action="quick-operation" data-operation-type="Sprzedaż waloru">Sprzedaż</button>
+            </div>
+          </div>
+          <div class="stats-grid dashboard-mini-stats">
             <article class="stat-card stat-card-trend">
               <p>Zmiana dzienna</p>
               <strong id="statDailyChangePct">—</strong>
@@ -132,6 +194,40 @@
               <strong id="statYearlyChangePct">—</strong>
               <span id="statYearlyChangeValue" class="stat-card-meta">Brak pełnego zakresu</span>
             </article>
+            <article class="stat-card">
+              <p>Gotówka</p>
+              <strong id="statCash">0,00 PLN</strong>
+            </article>
+          </div>
+          <div id="dashboardEmptyState" class="empty-hero" hidden>
+            <div>
+              <span class="empty-kicker">Pierwszy krok</span>
+              <h3>Dodaj pierwszą operację</h3>
+              <p>
+                Zacznij od wpłaty gotówki albo od kupna waloru. Kokpit, wykres i zysk zaczną liczyć się automatycznie.
+              </p>
+            </div>
+            <button class="btn" type="button" data-action="start-first-operation">Dodaj operację</button>
+          </div>
+          <div id="onboardingCard" class="onboarding-card" hidden>
+            <div>
+              <span class="empty-kicker">Start</span>
+              <h3>Skonfiguruj portfel w 3 krokach</h3>
+            </div>
+            <div class="onboarding-steps">
+              <button type="button" class="onboarding-step" data-action="go-view" data-view="accountsView">
+                <strong>1</strong>
+                <span>Dodaj konto</span>
+              </button>
+              <button type="button" class="onboarding-step" data-action="focus-asset-form">
+                <strong>2</strong>
+                <span>Dodaj walor</span>
+              </button>
+              <button type="button" class="onboarding-step" data-action="quick-operation" data-operation-type="Kupno waloru">
+                <strong>3</strong>
+                <span>Dodaj operację</span>
+              </button>
+            </div>
           </div>
           <div class="chart-toolbar">
             <div id="dashboardChartRangeControls" class="chart-range-group" aria-label="Zakres wykresu kokpitu">
@@ -152,7 +248,7 @@
           </div>
           <div id="dashboardChartRangeInfo" class="hint compact"></div>
           <div class="chart-wrap">
-            <canvas id="dashboardChart" width="1200" height="280"></canvas>
+            <canvas id="dashboardChart" width="1200" height="360"></canvas>
           </div>
           <div id="dashboardDetails" class="table-wrap"></div>
         </div>
@@ -340,57 +436,95 @@
         <div class="grid-two">
           <article class="panel">
             <h2>Dodaj operację</h2>
+            <div id="operationQuickType" class="operation-choice-group" aria-label="Szybki typ operacji">
+              <button type="button" class="operation-choice active" data-operation-type="Operacja gotówkowa">
+                <span>Wpłata</span>
+                <small>Gotówka na konto</small>
+              </button>
+              <button type="button" class="operation-choice" data-operation-type="Kupno waloru">
+                <span>Kupno</span>
+                <small>Akcje, ETF, fundusz</small>
+              </button>
+              <button type="button" class="operation-choice" data-operation-type="Sprzedaż waloru">
+                <span>Sprzedaż</span>
+                <small>Zamknięcie pozycji</small>
+              </button>
+              <button type="button" class="operation-choice" data-operation-type="advanced">
+                <span>Więcej</span>
+                <small>Dywidenda, przelew, konwersja</small>
+              </button>
+            </div>
+            <div id="quickAssetCard" class="quick-asset-card" hidden>
+              <div>
+                <span class="empty-kicker">Brak waloru</span>
+                <h3>Dodaj walor bez wychodzenia z operacji</h3>
+                <p>Kupno wymaga waloru. Wpisz ticker i nazwę, a aplikacja od razu podłączy go do formularza kupna.</p>
+              </div>
+              <div class="quick-asset-grid">
+                <input id="quickAssetTickerInput" placeholder="Ticker, np. AAPL" />
+                <input id="quickAssetNameInput" placeholder="Nazwa, np. Apple" />
+                <select id="quickAssetCurrencySelect">
+                  <option value="PLN">PLN</option>
+                  <option value="EUR">EUR</option>
+                  <option value="USD">USD</option>
+                  <option value="GBP">GBP</option>
+                  <option value="CHF">CHF</option>
+                </select>
+                <input id="quickAssetPriceInput" type="number" step="0.0001" placeholder="Cena rynkowa" />
+                <button id="quickAssetAddBtn" type="button" class="btn">Dodaj walor</button>
+              </div>
+            </div>
             <form id="operationForm" class="form-grid">
               <input type="hidden" name="editId" id="operationEditId" value="" />
-              <label class="control">
+              <label class="control" data-operation-field="common">
                 <span>Data</span>
                 <input type="date" name="date" required />
               </label>
-              <label class="control">
+              <label class="control" data-operation-field="advanced-type">
                 <span>Typ operacji</span>
                 <select name="type" id="operationTypeSelect"></select>
               </label>
-              <label class="control">
+              <label class="control" data-operation-field="common">
                 <span>Portfel</span>
                 <select name="portfolioId" id="operationPortfolioSelect"></select>
               </label>
-              <label class="control">
+              <label class="control" data-operation-field="common">
                 <span>Konto</span>
                 <select name="accountId" id="operationAccountSelect"></select>
               </label>
-              <label class="control">
+              <label class="control" data-operation-field="asset">
                 <span>Walor (źródło)</span>
                 <select name="assetId" id="operationAssetSelect">
                   <option value="">Brak</option>
                 </select>
               </label>
-              <label class="control">
+              <label class="control" data-operation-field="target">
                 <span>Walor docelowy (konwersja)</span>
                 <select name="targetAssetId" id="operationTargetAssetSelect">
                   <option value="">Brak</option>
                 </select>
               </label>
-              <label class="control">
+              <label class="control" data-operation-field="asset">
                 <span>Ilość</span>
                 <input type="number" name="quantity" step="0.00000001" />
               </label>
-              <label class="control">
+              <label class="control" data-operation-field="target">
                 <span>Ilość docelowa</span>
                 <input type="number" name="targetQuantity" step="0.00000001" />
               </label>
-              <label class="control">
+              <label class="control" data-operation-field="asset">
                 <span>Cena</span>
                 <input type="number" name="price" step="0.0001" />
               </label>
-              <label class="control">
+              <label class="control" data-operation-field="amount">
                 <span>Kwota gotówkowa</span>
                 <input type="number" name="amount" step="0.01" />
               </label>
-              <label class="control">
+              <label class="control" data-operation-field="fee">
                 <span>Prowizja</span>
                 <input type="number" name="fee" step="0.01" />
               </label>
-              <label class="control">
+              <label class="control" data-operation-field="common">
                 <span>Waluta</span>
                 <select name="currency">
                   <option value="PLN">PLN</option>
@@ -400,11 +534,11 @@
                   <option value="CHF">CHF</option>
                 </select>
               </label>
-              <label class="control">
+              <label class="control" data-operation-field="common">
                 <span>Tagi (po przecinku)</span>
                 <input name="tags" />
               </label>
-              <label class="control full">
+              <label class="control full" data-operation-field="common">
                 <span>Notatka</span>
                 <textarea name="note" rows="2"></textarea>
               </label>
@@ -562,6 +696,7 @@
               <button id="generateReportBtn" class="btn">Generuj</button>
             </div>
           </div>
+          <div id="reportQuickCards" class="report-card-grid" aria-label="Szybki wybór raportu"></div>
           <div id="reportInfo" class="hint"></div>
           <div class="chart-toolbar">
             <div id="reportChartRangeControls" class="chart-range-group" aria-label="Zakres wykresu raportu">
@@ -922,7 +1057,6 @@
               <button type="submit" class="btn">Oblicz podatek</button>
             </form>
             <div id="taxOutput" class="hint"></div>
-            <div id="toolCatalog" class="table-wrap"></div>
           </article>
         </div>
 
@@ -1286,23 +1420,52 @@
         </div>
       </section>
 
-      <section id="featuresView" class="view">
-        <article class="panel">
-          <h2>Pełna matryca funkcji</h2>
-          <p class="muted">
-            Wersja Solo jest ustawiona pod Ciebie. Możesz przełączać plan, aby sprawdzać limity i widoczność funkcji.
-          </p>
-          <div id="featureMatrix" class="table-wrap"></div>
-        </article>
-      </section>
     </main>
 
-    <footer class="footer">
+    <footer class="footer" hidden>
       <p>
-        Dane trzymane lokalnie w przeglądarce. Wykonuj regularny eksport kopii.
+        Dane mogą synchronizować się z Supabase po zalogowaniu. Eksport kopii zostaje jako awaryjny backup.
       </p>
+      <p id="cloudSyncInfo" class="hint"></p>
       <button id="resetStateBtn" class="btn danger">Wyczyść wszystkie dane</button>
     </footer>
+
+    <div id="recordSheetOverlay" class="record-sheet-overlay" hidden>
+      <aside class="record-sheet" role="dialog" aria-modal="true" aria-labelledby="recordSheetTitle">
+        <button id="recordSheetCloseBtn" class="record-sheet-close" type="button" aria-label="Zamknij">×</button>
+        <p id="recordSheetKicker" class="eyebrow"></p>
+        <h2 id="recordSheetTitle">Szczegóły</h2>
+        <div id="recordSheetBody" class="record-sheet-body"></div>
+      </aside>
+    </div>
+
+    <div id="confirmDialogOverlay" class="confirm-dialog-overlay" hidden>
+      <section class="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirmDialogTitle">
+        <p id="confirmDialogKicker" class="eyebrow">Potwierdzenie</p>
+        <h2 id="confirmDialogTitle">Na pewno?</h2>
+        <p id="confirmDialogMessage" class="muted"></p>
+        <div class="confirm-dialog-actions">
+          <button id="confirmDialogCancelBtn" class="btn secondary" type="button">Anuluj</button>
+          <button id="confirmDialogConfirmBtn" class="btn danger" type="button">Usuń</button>
+        </div>
+      </section>
+    </div>
+
+    <div id="priceDialogOverlay" class="confirm-dialog-overlay" hidden>
+      <section class="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="priceDialogTitle">
+        <p class="eyebrow">Cena waloru</p>
+        <h2 id="priceDialogTitle">Zmień cenę</h2>
+        <p id="priceDialogAssetLabel" class="muted"></p>
+        <label class="control">
+          <span>Nowa cena</span>
+          <input id="priceDialogInput" type="number" step="0.0001" />
+        </label>
+        <div class="confirm-dialog-actions">
+          <button id="priceDialogCancelBtn" class="btn secondary" type="button">Anuluj</button>
+          <button id="priceDialogSaveBtn" class="btn" type="button">Zapisz cenę</button>
+        </div>
+      </section>
+    </div>
 
     <template id="tableTemplate">
       <table>
@@ -1311,6 +1474,7 @@
       </table>
     </template>
 
+    <script src="supabase-config.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

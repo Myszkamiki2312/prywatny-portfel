@@ -432,8 +432,6 @@ class OfflineRepository(private val context: Context) {
                 JSONObject()
                     .put("activePlan", "Expert")
                     .put("baseCurrency", "PLN")
-                    .put("dashboardInflationEnabled", false)
-                    .put("dashboardInflationRatePct", 0.0)
                     .put("createdAt", createdAt)
             )
             .put(

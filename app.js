@@ -2,7 +2,18 @@
 
 const STORAGE_KEY = "prywatny-portfel-state-v1";
 const LEGACY_STORAGE_KEYS = ["myfund-solo-state-v1"];
-const API_BASE = "/api";
+const CLOUD_SYNC_KEY = "prywatny-portfel-cloud-sync-v1";
+const SUPABASE_APP_CONFIG =
+  typeof window !== "undefined" && window.PRIVATE_PORTFOLIO_SUPABASE
+    ? window.PRIVATE_PORTFOLIO_SUPABASE
+    : {};
+const BACKEND_APP_CONFIG =
+  typeof window !== "undefined" && window.PRIVATE_PORTFOLIO_BACKEND
+    ? window.PRIVATE_PORTFOLIO_BACKEND
+    : {};
+const API_BASE = normalizeApiBase(BACKEND_APP_CONFIG.apiBase || BACKEND_APP_CONFIG.url || "");
+const API_TOKEN = String(BACKEND_APP_CONFIG.apiToken || "").trim();
+const CLOUD_LOGIN_REQUIRED = true;
 const PLAN_ORDER = ["Brak", "Basic", "Standard", "Pro", "Expert"];
 const PLAN_LIMITS = {
   Brak: { portfolios: 0, groupPortfolios: 0, twinPortfolios: 0 },
@@ -74,6 +85,34 @@ const REPORT_FEATURES = [
   "Historia operacji",
   "Podsumowania na e-mail",
   "Limity IKE/IKZE/PPK"
+];
+
+const REPORT_CARD_GROUPS = [
+  {
+    title: "Portfel",
+    copy: "Skład, struktura, majątek i ekspozycja.",
+    report: "Skład i struktura"
+  },
+  {
+    title: "Zysk",
+    copy: "Wynik, wkład, stopa zwrotu i historia.",
+    report: "Zysk w czasie"
+  },
+  {
+    title: "Ryzyko",
+    copy: "Zmienność, drawdown i kontrola ryzyka.",
+    report: "Analiza ryzyka"
+  },
+  {
+    title: "Podatki",
+    copy: "Prowizje, limity i dane do rozliczeń.",
+    report: "Prowizje w czasie"
+  },
+  {
+    title: "Dywidendy",
+    copy: "Dywidendy oraz przepływy z inwestycji.",
+    report: "Analiza dywidend w czasie"
+  }
 ];
 
 const TOOL_FEATURES = [
@@ -258,6 +297,15 @@ const APPEARANCE_FONT_SCALES = {
   }
 };
 
+function normalizeApiBase(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "/api";
+  }
+  const trimmed = raw.replace(/\/+$/, "");
+  return trimmed.endsWith("/api") ? trimmed : `${trimmed}/api`;
+}
+
 let state = loadState();
 const dom = {};
 const backendSync = {
@@ -273,6 +321,13 @@ const backendSync = {
   metricsRequestSeq: 0,
   healthProbe: null,
   resizeTimer: 0
+};
+let cloudSyncConfig = loadCloudSyncConfig();
+const cloudSyncRuntime = {
+  pushTimer: 0,
+  pushInFlight: false,
+  pullInFlight: false,
+  suppressPush: false
 };
 const candlesView = {
   all: [],
@@ -314,6 +369,9 @@ const editingState = {
   alertId: "",
   liabilityId: ""
 };
+const quickOperationRuntime = {
+  returnToDashboardAfterSave: false
+};
 const uiModules = {
   dashboard: null,
   operations: null,
@@ -323,6 +381,12 @@ const clientErrorTracker = {
   bound: false,
   recent: new Map(),
   ttlMs: 15000
+};
+const confirmDialogRuntime = {
+  resolve: null
+};
+const priceDialogRuntime = {
+  assetId: ""
 };
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -336,11 +400,14 @@ async function init() {
   await loadUiModules();
   setupGlobalErrorReporting();
   cacheDom();
+  installToastNotifications();
   applyAppearanceSettings();
   seedStaticSelects();
   bindEvents();
+  renderCloudSyncForm();
   resetOperationForm();
   await hydrateFromBackend();
+  await hydrateFromCloudOnStartup();
   renderAll();
 }
 
@@ -355,7 +422,109 @@ async function loadUiModules() {
   uiModules.tools = toolsModule;
 }
 
+function inferToastType(message) {
+  const text = String(message || "");
+  if (/błąd|blad|nie udało|nie udalo|offline|brak|denied|expired|invalid|error|failed|niepopraw/i.test(text)) {
+    return "error";
+  }
+  if (/zapisano|zalogowano|zaimportowano|wygenerowano|wysłano|wyslano|odświeżono|odswiezono|gotowe/i.test(text)) {
+    return "success";
+  }
+  return "info";
+}
+
+function showToast(message, type = "info", options = {}) {
+  const text = String(message || "").trim();
+  if (!text || !dom.toastHost || typeof document === "undefined") {
+    return;
+  }
+  const toast = document.createElement("div");
+  toast.className = `toast toast-${type}`;
+  toast.setAttribute("role", type === "error" ? "alert" : "status");
+  const title = type === "error" ? "Uwaga" : type === "success" ? "Gotowe" : "Info";
+  toast.innerHTML = `<strong>${escapeHtml(title)}</strong><span>${escapeHtml(text)}</span>`;
+  dom.toastHost.appendChild(toast);
+  const ttl = Math.max(1800, Number(options.ttlMs) || (type === "error" ? 5200 : 3200));
+  window.setTimeout(() => {
+    toast.style.opacity = "0";
+    toast.style.transform = "translateY(-6px)";
+    window.setTimeout(() => toast.remove(), 180);
+  }, ttl);
+}
+
+function installToastNotifications() {
+  if (typeof window === "undefined" || window.__PRIVATE_PORTFOLIO_TOAST_ALERTS__) {
+    return;
+  }
+  window.__PRIVATE_PORTFOLIO_TOAST_ALERTS__ = true;
+  const nativeAlert = typeof window.alert === "function" ? window.alert.bind(window) : null;
+  window.alert = (message) => {
+    if (dom.toastHost) {
+      showToast(message, inferToastType(message));
+      return;
+    }
+    if (nativeAlert) {
+      nativeAlert(message);
+    }
+  };
+}
+
+function resolveConfirmDialog(confirmed) {
+  if (dom.confirmDialogOverlay) {
+    dom.confirmDialogOverlay.hidden = true;
+  }
+  const resolver = confirmDialogRuntime.resolve;
+  confirmDialogRuntime.resolve = null;
+  if (typeof resolver === "function") {
+    resolver(Boolean(confirmed));
+  }
+}
+
+function confirmAction(options = {}) {
+  const title = options.title || "Na pewno?";
+  const message = options.message || title;
+  const confirmLabel = options.confirmLabel || "Usuń";
+  const cancelLabel = options.cancelLabel || "Anuluj";
+  if (!dom.confirmDialogOverlay || !dom.confirmDialogConfirmBtn || !dom.confirmDialogCancelBtn) {
+    return typeof window.confirm === "function" ? window.confirm(message) : true;
+  }
+  if (confirmDialogRuntime.resolve) {
+    resolveConfirmDialog(false);
+  }
+  if (dom.confirmDialogKicker) {
+    dom.confirmDialogKicker.textContent = options.kicker || "Potwierdzenie";
+  }
+  if (dom.confirmDialogTitle) {
+    dom.confirmDialogTitle.textContent = title;
+  }
+  if (dom.confirmDialogMessage) {
+    dom.confirmDialogMessage.textContent = message;
+  }
+  dom.confirmDialogConfirmBtn.textContent = confirmLabel;
+  dom.confirmDialogCancelBtn.textContent = cancelLabel;
+  dom.confirmDialogOverlay.hidden = false;
+  return new Promise((resolve) => {
+    confirmDialogRuntime.resolve = resolve;
+  });
+}
+
+function runAfterConfirm(options, callback) {
+  const result = confirmAction(options);
+  if (typeof result === "boolean") {
+    if (result) {
+      callback();
+    }
+    return;
+  }
+  void result.then((confirmed) => {
+    if (confirmed) {
+      callback();
+    }
+  });
+}
+
 function cacheDom() {
+  dom.toastHost = document.getElementById("toastHost");
   dom.tabs = document.getElementById("tabs");
   dom.planSelect = document.getElementById("planSelect");
   dom.baseCurrencySelect = document.getElementById("baseCurrencySelect");
@@ -365,6 +534,25 @@ function cacheDom() {
   dom.resetStateBtn = document.getElementById("resetStateBtn");
   dom.refreshQuotesBtn = document.getElementById("refreshQuotesBtn");
   dom.backendStatus = document.getElementById("backendStatus");
+  dom.cloudAuthOverlay = document.getElementById("cloudAuthOverlay");
+  dom.cloudAuthForm = document.getElementById("cloudAuthForm");
+  dom.cloudAuthInfo = document.getElementById("cloudAuthInfo");
+  dom.cloudAuthResendBtn = document.getElementById("cloudAuthResendBtn");
+  dom.cloudAuthCloseBtn = document.getElementById("cloudAuthCloseBtn");
+  dom.cloudAuthUrlInput = document.getElementById("cloudAuthUrlInput");
+  dom.cloudAuthAnonKeyInput = document.getElementById("cloudAuthAnonKeyInput");
+  dom.cloudSyncLoginBtn = document.getElementById("cloudSyncLoginBtn");
+  dom.cloudSyncLogoutBtn = document.getElementById("cloudSyncLogoutBtn");
+  dom.cloudSyncStatus = document.getElementById("cloudSyncStatus");
+  dom.cloudSyncInfo = document.getElementById("cloudSyncInfo");
+  dom.cloudAccountChip = document.getElementById("cloudAccountChip");
+  dom.cloudAccountLabel = document.getElementById("cloudAccountLabel");
+  dom.cloudAccountSub = document.getElementById("cloudAccountSub");
+  dom.cloudAccountEmail = document.getElementById("cloudAccountEmail");
+  dom.cloudAccountSync = document.getElementById("cloudAccountSync");
+  dom.accountMenu = document.getElementById("accountMenu");
+  dom.cloudSyncNowBtn = document.getElementById("cloudSyncNowBtn");
+  dom.cloudSettingsBtn = document.getElementById("cloudSettingsBtn");
 
   dom.dashboardPortfolioSelect = document.getElementById("dashboardPortfolioSelect");
   dom.dashboardInflationEnabled = document.getElementById("dashboardInflationEnabled");
@@ -379,6 +567,8 @@ function cacheDom() {
   dom.statMonthlyChangeValue = document.getElementById("statMonthlyChangeValue");
   dom.statYearlyChangePct = document.getElementById("statYearlyChangePct");
   dom.statYearlyChangeValue = document.getElementById("statYearlyChangeValue");
+  dom.dashboardEmptyState = document.getElementById("dashboardEmptyState");
+  dom.onboardingCard = document.getElementById("onboardingCard");
   dom.dashboardChart = document.getElementById("dashboardChart");
   dom.dashboardChartRangeControls = document.getElementById("dashboardChartRangeControls");
   dom.dashboardChartModeControls = document.getElementById("dashboardChartModeControls");
@@ -411,10 +601,17 @@ function cacheDom() {
   dom.operationSubmitBtn = document.getElementById("operationSubmitBtn");
   dom.operationCancelEditBtn = document.getElementById("operationCancelEditBtn");
   dom.operationTypeSelect = document.getElementById("operationTypeSelect");
+  dom.operationQuickType = document.getElementById("operationQuickType");
   dom.operationPortfolioSelect = document.getElementById("operationPortfolioSelect");
   dom.operationAccountSelect = document.getElementById("operationAccountSelect");
   dom.operationAssetSelect = document.getElementById("operationAssetSelect");
   dom.operationTargetAssetSelect = document.getElementById("operationTargetAssetSelect");
+  dom.quickAssetCard = document.getElementById("quickAssetCard");
+  dom.quickAssetTickerInput = document.getElementById("quickAssetTickerInput");
+  dom.quickAssetNameInput = document.getElementById("quickAssetNameInput");
+  dom.quickAssetCurrencySelect = document.getElementById("quickAssetCurrencySelect");
+  dom.quickAssetPriceInput = document.getElementById("quickAssetPriceInput");
+  dom.quickAssetAddBtn = document.getElementById("quickAssetAddBtn");
   dom.operationHistorySearchInput = document.getElementById("operationHistorySearchInput");
   dom.operationHistoryDateFromInput = document.getElementById("operationHistoryDateFromInput");
   dom.operationHistoryDateToInput = document.getElementById("operationHistoryDateToInput");
@@ -454,6 +651,7 @@ function cacheDom() {
   dom.reportChartRangeInfo = document.getElementById("reportChartRangeInfo");
   dom.reportChartResetZoomBtn = document.getElementById("reportChartResetZoomBtn");
   dom.reportChartExportBtn = document.getElementById("reportChartExportBtn");
+  dom.reportQuickCards = document.getElementById("reportQuickCards");
 
   dom.alertForm = document.getElementById("alertForm");
   dom.alertEditId = document.getElementById("alertEditId");
@@ -573,11 +771,30 @@ function cacheDom() {
   dom.appearanceSummary = document.getElementById("appearanceSummary");
   dom.appearancePreview = document.getElementById("appearancePreview");
   dom.appearanceResetBtn = document.getElementById("appearanceResetBtn");
+  dom.recordSheetOverlay = document.getElementById("recordSheetOverlay");
+  dom.recordSheetCloseBtn = document.getElementById("recordSheetCloseBtn");
+  dom.recordSheetKicker = document.getElementById("recordSheetKicker");
+  dom.recordSheetTitle = document.getElementById("recordSheetTitle");
+  dom.recordSheetBody = document.getElementById("recordSheetBody");
+  dom.confirmDialogOverlay = document.getElementById("confirmDialogOverlay");
+  dom.confirmDialogKicker = document.getElementById("confirmDialogKicker");
+  dom.confirmDialogTitle = document.getElementById("confirmDialogTitle");
+  dom.confirmDialogMessage = document.getElementById("confirmDialogMessage");
+  dom.confirmDialogCancelBtn = document.getElementById("confirmDialogCancelBtn");
+  dom.confirmDialogConfirmBtn = document.getElementById("confirmDialogConfirmBtn");
+  dom.priceDialogOverlay = document.getElementById("priceDialogOverlay");
+  dom.priceDialogAssetLabel = document.getElementById("priceDialogAssetLabel");
+  dom.priceDialogInput = document.getElementById("priceDialogInput");
+  dom.priceDialogCancelBtn = document.getElementById("priceDialogCancelBtn");
+  dom.priceDialogSaveBtn = document.getElementById("priceDialogSaveBtn");
 }
 
 function seedStaticSelects() {
-  fillSelect(dom.planSelect, PLAN_ORDER.map((plan) => ({ value: plan, label: plan })));
+  if (dom.planSelect) {
+    fillSelect(dom.planSelect, PLAN_ORDER.map((plan) => ({ value: plan, label: plan })));
+  }
   fillSelect(dom.reportSelect, REPORT_FEATURES.map((item) => ({ value: item, label: item })));
+  renderReportCards();
   fillSelect(
     dom.operationTypeSelect,
     OPERATION_TYPES.map((type) => ({ value: type, label: type }))
@@ -595,10 +812,62 @@ function seedStaticSelects() {
 
 function bindEvents() {
   dom.tabs.addEventListener("click", onTabClick);
-  dom.planSelect.addEventListener("change", onPlanChange);
+  if (dom.planSelect) {
+    dom.planSelect.addEventListener("change", onPlanChange);
+  }
   dom.baseCurrencySelect.addEventListener("change", onBaseCurrencyChange);
   if (dom.themeToggleBtn) {
     dom.themeToggleBtn.addEventListener("click", onThemeToggle);
+  }
+  if (dom.cloudSyncLoginBtn) {
+    dom.cloudSyncLoginBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      closeAccountMenu();
+      openCloudAuthOverlay();
+    });
+  }
+  if (dom.cloudAccountChip) {
+    dom.cloudAccountChip.addEventListener("click", (event) => {
+      event.stopPropagation();
+      toggleAccountMenu();
+    });
+  }
+  if (dom.accountMenu) {
+    dom.accountMenu.addEventListener("click", (event) => {
+      event.stopPropagation();
+    });
+  }
+  if (dom.cloudSyncNowBtn) {
+    dom.cloudSyncNowBtn.addEventListener("click", () => {
+      closeAccountMenu();
+      void syncCloudNow();
+    });
+  }
+  if (dom.cloudSettingsBtn) {
+    dom.cloudSettingsBtn.addEventListener("click", () => {
+      closeAccountMenu();
+      openCloudAuthOverlay("Ustawienia Supabase możesz zmienić poniżej. Zostaw bez zmian, jeśli synchronizacja działa.");
+    });
+  }
+  if (dom.cloudSyncLogoutBtn) {
+    dom.cloudSyncLogoutBtn.addEventListener("click", () => {
+      closeAccountMenu();
+      onCloudSyncLogout();
+    });
+  }
+  if (dom.cloudAuthForm) {
+    dom.cloudAuthForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void onCloudAuthSubmit();
+    });
+  }
+  if (dom.cloudAuthResendBtn) {
+    dom.cloudAuthResendBtn.addEventListener("click", () => {
+      void onCloudAuthResend();
+    });
+  }
+  if (dom.cloudAuthCloseBtn) {
+    dom.cloudAuthCloseBtn.addEventListener("click", closeCloudAuthOverlay);
   }
   if (dom.appearanceThemeGrid) {
     dom.appearanceThemeGrid.addEventListener("click", onAppearanceThemeClick);
@@ -621,6 +890,10 @@ function bindEvents() {
     dom.dashboardInflationRateInput.addEventListener("change", onDashboardInflationChange);
   }
   dom.reportPortfolioSelect.addEventListener("change", renderReportCurrent);
+  dom.reportSelect.addEventListener("change", () => {
+    renderReportCards();
+    void renderReportCurrent({ force: true });
+  });
   window.addEventListener("resize", scheduleResponsiveChartRefresh);
   bindLineChartRangeControls("dashboard", dom.dashboardChartRangeControls, () => {
     renderDashboard();
@@ -648,6 +921,17 @@ function bindEvents() {
     resetAssetForm();
   });
   dom.operationForm.addEventListener("submit", onOperationSubmit);
+  if (dom.operationQuickType) {
+    dom.operationQuickType.addEventListener("click", onOperationQuickTypeClick);
+  }
+  if (dom.operationTypeSelect) {
+    dom.operationTypeSelect.addEventListener("change", () => {
+      syncOperationFormFields();
+    });
+  }
+  if (dom.quickAssetAddBtn) {
+    dom.quickAssetAddBtn.addEventListener("click", onQuickAssetAdd);
+  }
   dom.operationCancelEditBtn.addEventListener("click", () => {
     resetOperationForm();
   });
@@ -673,6 +957,9 @@ function bindEvents() {
     event.preventDefault();
     void renderReportCurrent({ force: true });
   });
+  if (dom.reportQuickCards) {
+    dom.reportQuickCards.addEventListener("click", onReportCardClick);
+  }
   dom.dashboardChartExportBtn.addEventListener("click", (event) => {
     event.preventDefault();
     exportCanvasAsPng(dom.dashboardChart, `prywatny-portfel-kokpit-${todayIso()}.png`);
@@ -885,8 +1172,575 @@ function bindEvents() {
   dom.resetStateBtn.addEventListener("click", onResetState);
   dom.refreshQuotesBtn.addEventListener("click", onRefreshQuotes);
   dom.brokerCsvInput.addEventListener("change", onBrokerCsvImport);
+  if (dom.recordSheetCloseBtn) {
+    dom.recordSheetCloseBtn.addEventListener("click", closeRecordSheet);
+  }
+  if (dom.recordSheetOverlay) {
+    dom.recordSheetOverlay.addEventListener("click", (event) => {
+      if (event.target === dom.recordSheetOverlay) {
+        closeRecordSheet();
+      }
+    });
+  }
+  if (dom.confirmDialogOverlay) {
+    dom.confirmDialogOverlay.addEventListener("click", (event) => {
+      if (event.target === dom.confirmDialogOverlay) {
+        resolveConfirmDialog(false);
+      }
+    });
+  }
+  if (dom.confirmDialogCancelBtn) {
+    dom.confirmDialogCancelBtn.addEventListener("click", () => resolveConfirmDialog(false));
+  }
+  if (dom.confirmDialogConfirmBtn) {
+    dom.confirmDialogConfirmBtn.addEventListener("click", () => resolveConfirmDialog(true));
+  }
+  if (dom.priceDialogOverlay) {
+    dom.priceDialogOverlay.addEventListener("click", (event) => {
+      if (event.target === dom.priceDialogOverlay) {
+        closePriceDialog();
+      }
+    });
+  }
+  if (dom.priceDialogCancelBtn) {
+    dom.priceDialogCancelBtn.addEventListener("click", closePriceDialog);
+  }
+  if (dom.priceDialogSaveBtn) {
+    dom.priceDialogSaveBtn.addEventListener("click", savePriceDialog);
+  }
 
+  document.addEventListener("click", closeAccountMenu);
   document.body.addEventListener("click", onActionClick);
+}
+
+function defaultCloudSyncConfig() {
+  return {
+    enabled: true,
+    url: String(SUPABASE_APP_CONFIG.url || "").trim().replace(/\/+$/, ""),
+    anonKey: String(SUPABASE_APP_CONFIG.anonKey || "").trim(),
+    email: "",
+    accessToken: "",
+    refreshToken: "",
+    userId: "",
+    lastSyncAt: "",
+    lastPullAt: "",
+    lastError: ""
+  };
+}
+
+function loadCloudSyncConfig() {
+  try {
+    const raw = localStorage.getItem(CLOUD_SYNC_KEY);
+    return normalizeCloudSyncConfig(raw ? JSON.parse(raw) : {});
+  } catch (error) {
+    return defaultCloudSyncConfig();
+  }
+}
+
+function normalizeCloudSyncConfig(input) {
+  const fallback = defaultCloudSyncConfig();
+  const value = input && typeof input === "object" ? input : {};
+  return {
+    enabled: value.enabled === undefined ? fallback.enabled : Boolean(value.enabled),
+    url: String(SUPABASE_APP_CONFIG.url || value.url || fallback.url || "").trim().replace(/\/+$/, ""),
+    anonKey: String(SUPABASE_APP_CONFIG.anonKey || value.anonKey || fallback.anonKey || "").trim(),
+    email: String(value.email || "").trim(),
+    accessToken: String(value.accessToken || ""),
+    refreshToken: String(value.refreshToken || ""),
+    userId: String(value.userId || ""),
+    lastSyncAt: String(value.lastSyncAt || ""),
+    lastPullAt: String(value.lastPullAt || ""),
+    lastError: String(value.lastError || "")
+  };
+}
+
+function saveCloudSyncConfig() {
+  localStorage.setItem(CLOUD_SYNC_KEY, JSON.stringify(cloudSyncConfig));
+  renderCloudSyncForm();
+}
+
+function renderCloudSyncForm() {
+  renderCloudAuthForm();
+  updateCloudSyncInfo();
+}
+
+function renderCloudAuthForm() {
+  if (!dom.cloudAuthForm) {
+    return;
+  }
+  setFormField(dom.cloudAuthForm, "email", cloudSyncConfig.email);
+  setFormField(dom.cloudAuthForm, "password", "");
+  if (dom.cloudAuthUrlInput) {
+    dom.cloudAuthUrlInput.value = cloudSyncConfig.url;
+    dom.cloudAuthUrlInput.disabled = Boolean(SUPABASE_APP_CONFIG.url);
+  }
+  if (dom.cloudAuthAnonKeyInput) {
+    dom.cloudAuthAnonKeyInput.value = cloudSyncConfig.anonKey;
+    dom.cloudAuthAnonKeyInput.disabled = Boolean(SUPABASE_APP_CONFIG.anonKey);
+  }
+}
+
+function hasCloudSession() {
+  return Boolean(cloudSyncConfig.accessToken && cloudSyncConfig.userId);
+}
+
+function openCloudAuthOverlay(message = "") {
+  if (!dom.cloudAuthOverlay) {
+    return;
+  }
+  renderCloudAuthForm();
+  if (dom.cloudAuthInfo) {
+    dom.cloudAuthInfo.textContent =
+      message ||
+      "Jeśli konto nie istnieje, aplikacja spróbuje je utworzyć. Hasło powinno mieć minimum 6 znaków.";
+  }
+  if (dom.cloudAuthCloseBtn) {
+    dom.cloudAuthCloseBtn.hidden = CLOUD_LOGIN_REQUIRED && !hasCloudSession();
+  }
+  dom.cloudAuthOverlay.hidden = false;
+  document.body.classList.add("auth-open");
+}
+
+function closeCloudAuthOverlay() {
+  if (CLOUD_LOGIN_REQUIRED && !hasCloudSession()) {
+    return;
+  }
+  if (dom.cloudAuthOverlay) {
+    dom.cloudAuthOverlay.hidden = true;
+  }
+  document.body.classList.remove("auth-open");
+}
+
+function toggleAccountMenu(forceOpen = null) {
+  if (!dom.accountMenu || !hasCloudSession()) {
+    return;
+  }
+  const shouldOpen = forceOpen == null ? dom.accountMenu.hidden : Boolean(forceOpen);
+  dom.accountMenu.hidden = !shouldOpen;
+  if (dom.cloudAccountChip) {
+    dom.cloudAccountChip.setAttribute("aria-expanded", shouldOpen ? "true" : "false");
+  }
+}
+
+function closeAccountMenu() {
+  if (!dom.accountMenu) {
+    return;
+  }
+  dom.accountMenu.hidden = true;
+  if (dom.cloudAccountChip) {
+    dom.cloudAccountChip.setAttribute("aria-expanded", "false");
+  }
+}
+
+async function syncCloudNow() {
+  try {
+    showToast("Synchronizuję portfel z Supabase...", "info");
+    await pushCloudState({ force: true, reason: "manual" });
+    if (cloudSyncConfig.lastError) {
+      throw new Error(cloudSyncConfig.lastError);
+    }
+    showToast("Dane zapisane w chmurze.", "success");
+  } catch (error) {
+    showToast(`Supabase: ${error.message}`, "error");
+  }
+}
+
+function updateCloudSyncInfo(message = "") {
+  const hasSession = hasCloudSession();
+  const syncBusy = cloudSyncRuntime.pushInFlight || cloudSyncRuntime.pullInFlight;
+  if (dom.cloudSyncStatus) {
+    dom.cloudSyncStatus.textContent = syncBusy
+      ? "Chmura: sync..."
+      : hasSession
+        ? "Chmura: online"
+        : "Chmura: offline";
+    dom.cloudSyncStatus.className = `badge ${syncBusy ? "syncing" : hasSession ? "ok" : "off"}`;
+  }
+  if (dom.cloudSyncLoginBtn) {
+    dom.cloudSyncLoginBtn.hidden = hasSession;
+  }
+  if (dom.cloudAccountChip) {
+    dom.cloudAccountChip.hidden = !hasSession;
+    dom.cloudAccountChip.setAttribute("aria-haspopup", "menu");
+  }
+  if (dom.cloudAccountLabel) {
+    dom.cloudAccountLabel.textContent = hasSession ? "Połączono" : "Zaloguj";
+  }
+  if (dom.cloudAccountSub) {
+    dom.cloudAccountSub.textContent = hasSession ? "Supabase aktywny" : "Konto i synchronizacja";
+  }
+  if (dom.cloudAccountEmail) {
+    dom.cloudAccountEmail.textContent = cloudSyncConfig.email || "Konto";
+  }
+  if (dom.cloudAccountSync) {
+    dom.cloudAccountSync.textContent = syncBusy
+      ? "Synchronizuję..."
+      : cloudSyncConfig.lastSyncAt
+        ? `Zapisano ${formatDateTime(cloudSyncConfig.lastSyncAt) || ""}`.trim()
+        : "Synchronizacja aktywna";
+  }
+  if (dom.cloudSyncLogoutBtn) {
+    dom.cloudSyncLogoutBtn.hidden = !hasSession;
+  }
+  if (!hasSession) {
+    closeAccountMenu();
+  }
+  if (dom.cloudSyncInfo) {
+    const parts = [];
+    if (message) {
+      parts.push(message);
+    }
+    parts.push(hasSession ? `Zalogowano: ${cloudSyncConfig.email || cloudSyncConfig.userId}` : "Chmura niepołączona.");
+    if (cloudSyncConfig.lastSyncAt) {
+      parts.push(`Wysłano: ${formatDateTime(cloudSyncConfig.lastSyncAt) || cloudSyncConfig.lastSyncAt}.`);
+    }
+    if (cloudSyncConfig.lastPullAt) {
+      parts.push(`Pobrano: ${formatDateTime(cloudSyncConfig.lastPullAt) || cloudSyncConfig.lastPullAt}.`);
+    }
+    if (cloudSyncConfig.lastError && !/permission denied|app_states/i.test(cloudSyncConfig.lastError)) {
+      parts.push(`Błąd: ${cloudSyncConfig.lastError}`);
+    }
+    dom.cloudSyncInfo.textContent = parts.join(" ");
+  }
+  document.body.classList.toggle("cloud-syncing", syncBusy);
+}
+
+function assertCloudSyncReady({ requireSession = true } = {}) {
+  if (!cloudSyncConfig.url || !cloudSyncConfig.anonKey) {
+    throw new Error("Brakuje konfiguracji Supabase URL albo publishable key.");
+  }
+  if (requireSession && (!cloudSyncConfig.accessToken || !cloudSyncConfig.userId)) {
+    throw new Error("Najpierw zaloguj konto Supabase.");
+  }
+}
+
+async function supabaseRequest(path, options = {}) {
+  assertCloudSyncReady({ requireSession: Boolean(options.requireSession) });
+  const headers = {
+    apikey: cloudSyncConfig.anonKey,
+    Authorization: `Bearer ${options.useAnonAuth ? cloudSyncConfig.anonKey : cloudSyncConfig.accessToken || cloudSyncConfig.anonKey}`,
+    "Content-Type": "application/json",
+    ...(options.headers || {})
+  };
+  const response = await fetch(`${cloudSyncConfig.url}${path}`, {
+    method: options.method || "GET",
+    headers,
+    body: options.body == null ? undefined : JSON.stringify(options.body)
+  });
+  const text = await response.text();
+  let payload = null;
+  try {
+    payload = text ? JSON.parse(text) : null;
+  } catch (error) {
+    payload = { message: text };
+  }
+  if (!response.ok) {
+    throw new Error(normalizeSupabaseError(payload, response.status));
+  }
+  return payload;
+}
+
+function normalizeSupabaseError(payload, status) {
+  const raw = String(
+    (payload && (payload.error_description || payload.msg || payload.message || payload.error)) ||
+      `Supabase HTTP ${status}`
+  );
+  const lower = raw.toLowerCase();
+  if (lower.includes("password") && (lower.includes("weak") || lower.includes("short") || lower.includes("6"))) {
+    return "Hasło jest za słabe. Użyj minimum 6 znaków, najlepiej z cyfrą albo znakiem specjalnym.";
+  }
+  if (lower.includes("invalid login credentials")) {
+    return "Błędny e-mail albo hasło. Sprawdź dane i spróbuj ponownie.";
+  }
+  if (lower.includes("email not confirmed")) {
+    return "Konto wymaga potwierdzenia. Sprawdź skrzynkę e-mail i kliknij link od Supabase.";
+  }
+  if (lower.includes("otp_expired") || lower.includes("expired")) {
+    return "Link potwierdzający wygasł albo został już użyty. Wyślij ponownie mail potwierdzający.";
+  }
+  if (lower.includes("user already registered") || lower.includes("already registered")) {
+    return "Konto już istnieje. Podaj poprawne hasło, żeby się zalogować.";
+  }
+  if (lower.includes("signup") && lower.includes("disabled")) {
+    return "Rejestracja jest wyłączona w Supabase. Włącz Allow new users to sign up.";
+  }
+  if (lower.includes("permission denied") && lower.includes("app_states")) {
+    return "Brak uprawnień do tabeli app_states. Odpal aktualny plik docs/supabase-schema.sql w Supabase SQL Editor.";
+  }
+  return raw;
+}
+
+function validateCloudPassword(password) {
+  if (String(password || "").length < 6) {
+    throw new Error("Hasło jest za krótkie. Wpisz minimum 6 znaków.");
+  }
+}
+
+async function authenticateWithCloud(email, password) {
+  cloudSyncConfig = normalizeCloudSyncConfig({
+    ...cloudSyncConfig,
+    email,
+    enabled: true,
+    lastError: ""
+  });
+  assertCloudSyncReady({ requireSession: false });
+  validateCloudPassword(password);
+  let payload;
+  let loginErrorMessage = "";
+  try {
+    payload = await supabaseRequest("/auth/v1/token?grant_type=password", {
+      method: "POST",
+      useAnonAuth: true,
+      body: { email: cloudSyncConfig.email, password }
+    });
+  } catch (loginError) {
+    loginErrorMessage = loginError && loginError.message ? String(loginError.message) : "";
+    if (!/błędny e-mail albo hasło|invalid login credentials/i.test(loginErrorMessage)) {
+      throw loginError;
+    }
+    try {
+      payload = await supabaseRequest("/auth/v1/signup", {
+        method: "POST",
+        useAnonAuth: true,
+        body: { email: cloudSyncConfig.email, password }
+      });
+    } catch (signupError) {
+      const signupMessage = signupError && signupError.message ? String(signupError.message) : "";
+      if (/błędny e-mail albo hasło|invalid login credentials/i.test(loginErrorMessage)) {
+        throw new Error("Błędny e-mail albo hasło. Sprawdź dane i spróbuj ponownie.");
+      }
+      throw new Error(signupMessage || loginErrorMessage || "Nie udało się zalogować ani utworzyć konta.");
+    }
+  }
+  const session = payload && (payload.session || payload);
+  const user = payload && (payload.user || (payload.session && payload.session.user));
+  cloudSyncConfig = normalizeCloudSyncConfig({
+    ...cloudSyncConfig,
+    accessToken: session && session.access_token,
+    refreshToken: session && session.refresh_token,
+    userId: user && user.id,
+    lastError: ""
+  });
+  if (!cloudSyncConfig.accessToken || !cloudSyncConfig.userId) {
+    throw new Error("Konto utworzone. Sprawdź e-mail i kliknij link potwierdzający, potem wróć do logowania.");
+  }
+  saveCloudSyncConfig();
+  await pullCloudState({ silent: true, createIfMissing: true });
+  closeCloudAuthOverlay();
+  document.body.classList.remove("auth-open");
+  renderAll();
+}
+
+async function onCloudAuthSubmit() {
+  const formValue = formToObject(dom.cloudAuthForm);
+  const email = String(formValue.email || "").trim();
+  const password = String(formValue.password || "");
+  const submitButton = dom.cloudAuthForm ? dom.cloudAuthForm.querySelector('button[type="submit"]') : null;
+  const previousLabel = submitButton ? submitButton.textContent : "";
+  cloudSyncConfig = normalizeCloudSyncConfig({
+    ...cloudSyncConfig,
+    url: dom.cloudAuthUrlInput ? dom.cloudAuthUrlInput.value : cloudSyncConfig.url,
+    anonKey: dom.cloudAuthAnonKeyInput ? dom.cloudAuthAnonKeyInput.value : cloudSyncConfig.anonKey,
+    email,
+    enabled: true,
+    lastError: ""
+  });
+  saveCloudSyncConfig();
+  try {
+    if (submitButton) {
+      submitButton.disabled = true;
+      submitButton.textContent = "Łączę...";
+    }
+    if (!email || !password) {
+      throw new Error("Podaj e-mail i hasło.");
+    }
+    if (dom.cloudAuthInfo) {
+      dom.cloudAuthInfo.textContent = "Łączę z Supabase...";
+    }
+    await authenticateWithCloud(email, password);
+    updateCloudSyncInfo("Zalogowano do chmury.");
+    showToast("Zalogowano i połączono portfel z chmurą.", "success");
+  } catch (error) {
+    cloudSyncConfig.lastError = error.message;
+    saveCloudSyncConfig();
+    openCloudAuthOverlay(error.message);
+  } finally {
+    if (submitButton) {
+      submitButton.disabled = false;
+      submitButton.textContent = previousLabel || "Zaloguj / zarejestruj";
+    }
+  }
+}
+
+async function onCloudAuthResend() {
+  const emailInput = dom.cloudAuthForm ? dom.cloudAuthForm.elements.namedItem("email") : null;
+  const email = String((emailInput && emailInput.value) || cloudSyncConfig.email || "").trim();
+  const button = dom.cloudAuthResendBtn;
+  const previousLabel = button ? button.textContent : "";
+  try {
+    cloudSyncConfig = normalizeCloudSyncConfig({
+      ...cloudSyncConfig,
+      url: dom.cloudAuthUrlInput ? dom.cloudAuthUrlInput.value : cloudSyncConfig.url,
+      anonKey: dom.cloudAuthAnonKeyInput ? dom.cloudAuthAnonKeyInput.value : cloudSyncConfig.anonKey,
+      email,
+      lastError: ""
+    });
+    saveCloudSyncConfig();
+    if (!email) {
+      throw new Error("Wpisz e-mail, na który wysłać potwierdzenie.");
+    }
+    assertCloudSyncReady({ requireSession: false });
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Wysyłam...";
+    }
+    await supabaseRequest("/auth/v1/resend", {
+      method: "POST",
+      useAnonAuth: true,
+      body: { type: "signup", email }
+    });
+    if (dom.cloudAuthInfo) {
+      dom.cloudAuthInfo.textContent = "Wysłano nowy mail potwierdzający. Sprawdź skrzynkę i spam.";
+    }
+    showToast("Wysłano mail potwierdzający.", "success");
+  } catch (error) {
+    const message = normalizeSupabaseError({ message: error.message }, 400);
+    cloudSyncConfig.lastError = message;
+    saveCloudSyncConfig();
+    openCloudAuthOverlay(message);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = previousLabel || "Wyślij ponownie mail potwierdzający";
+    }
+  }
+}
+
+function onCloudSyncLogout() {
+  cloudSyncConfig = normalizeCloudSyncConfig({
+    ...cloudSyncConfig,
+    enabled: true,
+    accessToken: "",
+    refreshToken: "",
+    userId: "",
+    lastError: ""
+  });
+  saveCloudSyncConfig();
+  state = defaultState();
+  localStorage.removeItem(STORAGE_KEY);
+  invalidateDashboardHistoryCache();
+  renderAll();
+  showToast("Wylogowano z portfela na tym urządzeniu.", "info");
+  openCloudAuthOverlay("Wylogowano. Zaloguj się ponownie, żeby pobrać swój portfel.");
+}
+
+async function hydrateFromCloudOnStartup() {
+  if (!cloudSyncConfig.enabled || !cloudSyncConfig.accessToken || !cloudSyncConfig.userId) {
+    updateCloudSyncInfo();
+    if (CLOUD_LOGIN_REQUIRED) {
+      openCloudAuthOverlay("Zaloguj się, żeby pobrać swój portfel z chmury.");
+    }
+    return;
+  }
+  await pullCloudState({ silent: true, createIfMissing: false });
+  if (cloudSyncConfig.lastError && CLOUD_LOGIN_REQUIRED) {
+    openCloudAuthOverlay(cloudSyncConfig.lastError);
+  }
+}
+
+function scheduleCloudPush() {
+  if (!cloudSyncConfig.enabled || !cloudSyncConfig.accessToken || cloudSyncRuntime.suppressPush) {
+    return;
+  }
+  window.clearTimeout(cloudSyncRuntime.pushTimer);
+  cloudSyncRuntime.pushTimer = window.setTimeout(() => {
+    void pushCloudState({ reason: "auto" });
+  }, 1400);
+}
+
+async function pushCloudState({ force = false, reason = "manual" } = {}) {
+  if (cloudSyncRuntime.pushInFlight) {
+    return;
+  }
+  try {
+    assertCloudSyncReady({ requireSession: true });
+    if (!force && !cloudSyncConfig.enabled) {
+      return;
+    }
+    cloudSyncRuntime.pushInFlight = true;
+    updateCloudSyncInfo(reason === "auto" ? "Synchronizuję zmiany..." : "Wysyłam dane do Supabase...");
+    const now = nowIso();
+    await supabaseRequest("/rest/v1/app_states?on_conflict=user_id", {
+      method: "POST",
+      requireSession: true,
+      headers: { Prefer: "resolution=merge-duplicates" },
+      body: {
+        user_id: cloudSyncConfig.userId,
+        state: normalizeState(state),
+        updated_at: now
+      }
+    });
+    cloudSyncConfig.lastSyncAt = now;
+    cloudSyncConfig.lastError = "";
+    saveCloudSyncConfig();
+  } catch (error) {
+    cloudSyncConfig.lastError = error.message;
+    saveCloudSyncConfig();
+    if (force || reason !== "auto") {
+      window.alert(`Supabase: ${error.message}`);
+    }
+  } finally {
+    cloudSyncRuntime.pushInFlight = false;
+    updateCloudSyncInfo();
+  }
+}
+
+async function pullCloudState({ silent = false, createIfMissing = false } = {}) {
+  if (cloudSyncRuntime.pullInFlight) {
+    return;
+  }
+  try {
+    assertCloudSyncReady({ requireSession: true });
+    cloudSyncRuntime.pullInFlight = true;
+    updateCloudSyncInfo("Pobieram dane z Supabase...");
+    const payload = await supabaseRequest(
+      `/rest/v1/app_states?user_id=eq.${encodeURIComponent(cloudSyncConfig.userId)}&select=state,updated_at&limit=1`,
+      { requireSession: true }
+    );
+    const row = Array.isArray(payload) ? payload[0] : null;
+    if (!row || !row.state) {
+      if (createIfMissing) {
+        await pushCloudState({ force: true, reason: "initial" });
+      } else if (!silent) {
+        window.alert("W chmurze nie ma jeszcze danych. Po pierwszej zmianie aplikacja zsynchronizuje portfel.");
+      }
+      return;
+    }
+    cloudSyncRuntime.suppressPush = true;
+    state = normalizeState(row.state);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    invalidateDashboardHistoryCache();
+    cloudSyncConfig.lastPullAt = nowIso();
+    cloudSyncConfig.lastError = "";
+    saveCloudSyncConfig();
+    if (backendSync.available) {
+      scheduleBackendPush();
+    }
+    renderAll();
+    if (!silent) {
+      updateCloudSyncInfo("Dane pobrane z Supabase.");
+    }
+  } catch (error) {
+    cloudSyncConfig.lastError = error.message;
+    saveCloudSyncConfig();
+    if (!silent) {
+      window.alert(`Supabase: ${error.message}`);
+    }
+  } finally {
+    cloudSyncRuntime.suppressPush = false;
+    cloudSyncRuntime.pullInFlight = false;
+    updateCloudSyncInfo();
+  }
 }
 
 async function hydrateFromBackend() {
@@ -958,6 +1812,7 @@ async function hydrateReportCatalog() {
       return;
     }
     fillSelect(dom.reportSelect, options);
+    renderReportCards();
   } catch (error) {
     // keep built-in report list
   }
@@ -1001,13 +1856,19 @@ async function hydrateBrokerCatalog() {
 
 async function onRefreshQuotes() {
   if (!backendSync.available) {
-    window.alert("Backend jest offline. Uruchom serwer, aby odświeżyć notowania.");
+    showToast("Backend jest offline. Uruchom aplikację z launcherem, aby odświeżyć notowania.", "error");
     return;
   }
   const tickers = state.assets.map((asset) => asset.ticker).filter(Boolean);
   if (!tickers.length) {
-    window.alert("Brak walorów do odświeżenia notowań.");
+    showToast("Brak walorów do odświeżenia notowań.", "info");
     return;
+  }
+  const refreshButton = dom.refreshQuotesBtn;
+  const previousLabel = refreshButton ? refreshButton.textContent : "";
+  if (refreshButton) {
+    refreshButton.disabled = true;
+    refreshButton.textContent = "Odświeżam...";
   }
   backendSync.pushInFlight = true;
   updateBackendStatus();
@@ -1021,15 +1882,20 @@ async function onRefreshQuotes() {
     applyFxRates(payload.fxRates || extractFxRatesFromQuotes(quotes));
     saveState({ skipBackend: true });
     renderAll();
-    window.alert(
-      `Zaktualizowano notowania: ${quotes.length} walorów.${payload.fxUpdated ? ` Kursy FX: ${payload.fxUpdated}.` : ""}`
+    showToast(
+      `Zaktualizowano notowania: ${quotes.length} walorów.${payload.fxUpdated ? ` Kursy FX: ${payload.fxUpdated}.` : ""}`,
+      "success"
     );
   } catch (error) {
     backendSync.available = false;
     updateBackendStatus();
-    window.alert("Nie udało się odświeżyć notowań z backendu.");
+    showToast("Nie udało się odświeżyć notowań. Sprawdź, czy backend działa.", "error");
   } finally {
     backendSync.pushInFlight = false;
+    if (refreshButton) {
+      refreshButton.disabled = false;
+      refreshButton.textContent = previousLabel || "Odśwież notowania";
+    }
     updateBackendStatus();
   }
 }
@@ -1147,13 +2013,7 @@ function applyQuotes(quotes) {
       return;
     }
     asset.currentPrice = toNum(quote.price);
-    asset.quoteCurrency = normalizeCurrency(
-      quote.currency,
-      asset.quoteCurrency || asset.currency || state.meta.baseCurrency
-    );
-    if (!asset.currency) {
-      asset.currency = asset.quoteCurrency;
-    }
+    asset.currency = textOrFallback(quote.currency, asset.currency || state.meta.baseCurrency);
   });
 }
 
@@ -1188,26 +2048,10 @@ async function pullQuotesFromBackend() {
 }
 
 function updateBackendStatus() {
-  if (!dom.backendStatus) {
-    return;
+  if (dom.backendStatus) {
+    dom.backendStatus.hidden = true;
+    dom.backendStatus.textContent = "";
   }
-  if (!backendSync.checked) {
-    dom.backendStatus.textContent = "Backend: ?";
-    dom.backendStatus.className = "badge off";
-    return;
-  }
-  if (!backendSync.available) {
-    dom.backendStatus.textContent = "Backend: offline";
-    dom.backendStatus.className = "badge off";
-    return;
-  }
-  if (backendSync.pushInFlight) {
-    dom.backendStatus.textContent = "Backend: sync...";
-    dom.backendStatus.className = "badge off";
-    return;
-  }
-  dom.backendStatus.textContent = "Backend: online";
-  dom.backendStatus.className = "badge ok";
 }
 
 async function ensureBackendAvailable(options = {}) {
@@ -1900,23 +2744,31 @@ async function clearErrorLogsNow() {
     window.alert("Backend offline. Czyszczenie logów niedostępne.");
     return;
   }
-  const confirmed = window.confirm("Usunąć wszystkie logi błędów?");
-  if (!confirmed) {
-    return;
-  }
-  try {
-    const payload = await apiRequest("/tools/errors/clear", {
-      method: "POST",
-      body: { keepLast: 0 },
-      timeoutMs: 7000
-    });
-    if (dom.errorLogsInfo) {
-      dom.errorLogsInfo.textContent = `Wyczyszczono logi: ${toNum(payload.deleted)}.`;
+  runAfterConfirm(
+    {
+      title: "Usunąć logi błędów?",
+      message: "Historia błędów backendu zostanie wyczyszczona.",
+      confirmLabel: "Wyczyść logi"
+    },
+    () => {
+      void (async () => {
+        try {
+          const payload = await apiRequest("/tools/errors/clear", {
+            method: "POST",
+            body: { keepLast: 0 },
+            timeoutMs: 7000
+          });
+          if (dom.errorLogsInfo) {
+            dom.errorLogsInfo.textContent = `Wyczyszczono logi: ${toNum(payload.deleted)}.`;
+          }
+          await refreshErrorLogs({ silent: true });
+          showToast("Logi błędów zostały wyczyszczone.", "success");
+        } catch (error) {
+          window.alert(`Nie udało się wyczyścić logów: ${error.message}`);
+        }
+      })();
     }
-    await refreshErrorLogs({ silent: true });
-  } catch (error) {
-    window.alert(`Nie udało się wyczyścić logów: ${error.message}`);
-  }
+  );
 }
 
 function renderBackupRunsRows(items) {
@@ -3703,7 +4555,10 @@ async function reportClientError(entry) {
   try {
     await fetch(`${API_BASE}/tools/errors/log`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(API_TOKEN ? { "X-App-Token": API_TOKEN } : {})
+      },
       body: JSON.stringify(payload)
     });
   } catch (error) {
@@ -3749,6 +4604,9 @@ async function apiRequest(path, options = {}) {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
   const headers = {};
+  if (API_TOKEN) {
+    headers["X-App-Token"] = API_TOKEN;
+  }
   let body = undefined;
   if (options.body !== undefined) {
     headers["Content-Type"] = "application/json";
@@ -3841,16 +4699,12 @@ function onTabClick(event) {
 }
 
 function onPlanChange() {
-  state.meta.activePlan = dom.planSelect.value;
-  saveState();
-  renderFeatureMatrix();
-  renderToolCatalog();
-  const limit = currentPlanLimit().portfolios;
-  if (state.portfolios.length > limit) {
-    window.alert(
-      `Masz ${state.portfolios.length} portfeli, a plan ${state.meta.activePlan} pozwala na ${limit}.`
-    );
+  state.meta.activePlan = "Expert";
+  if (dom.planSelect) {
+    dom.planSelect.value = "Expert";
   }
+  saveState();
+  renderToolCatalog();
 }
 
 function onBaseCurrencyChange() {
@@ -4015,7 +4869,13 @@ function renderThemeToggleButton() {
     return;
   }
   const darkActive = isDarkTheme(state?.meta?.theme);
-  dom.themeToggleBtn.textContent = darkActive ? "Tryb jasny" : "Tryb ciemny";
+  const label = darkActive ? "Tryb jasny" : "Tryb ciemny";
+  const labelNode = dom.themeToggleBtn.querySelector("span");
+  if (labelNode) {
+    labelNode.textContent = label;
+  } else {
+    dom.themeToggleBtn.textContent = label;
+  }
   dom.themeToggleBtn.setAttribute("aria-pressed", darkActive ? "true" : "false");
   dom.themeToggleBtn.classList.toggle("is-active", darkActive);
 }
@@ -4518,6 +5378,151 @@ function resetOperationForm() {
       currencyInput.value = state.meta.baseCurrency;
     }
   }
+  setOperationQuickType("Operacja gotówkowa");
+  syncOperationFormFields();
+}
+
+function operationFormModeForType(typeValue) {
+  const type = String(typeValue || "").toLowerCase();
+  if (type.includes("kupno")) {
+    return "buy";
+  }
+  if (type.includes("sprzedaż") || type.includes("sprzedaz")) {
+    return "sell";
+  }
+  if (type.includes("konwersja")) {
+    return "conversion";
+  }
+  if (type.includes("gotówk") || type.includes("gotowk")) {
+    return "cash";
+  }
+  return "advanced";
+}
+
+function operationFieldsForMode(mode) {
+  if (mode === "cash") {
+    return new Set(["common", "amount"]);
+  }
+  if (mode === "buy" || mode === "sell") {
+    return new Set(["common", "asset", "fee"]);
+  }
+  if (mode === "conversion") {
+    return new Set(["common", "asset", "target", "fee"]);
+  }
+  return new Set(["common", "advanced-type", "asset", "target", "amount", "fee"]);
+}
+
+function setOperationQuickType(typeValue) {
+  if (!dom.operationQuickType) {
+    return;
+  }
+  const normalizedType = String(typeValue || "");
+  const mode = normalizedType === "advanced" ? "advanced" : operationFormModeForType(normalizedType);
+  dom.operationQuickType.querySelectorAll("[data-operation-type]").forEach((button) => {
+    const value = button.dataset.operationType || "";
+    const isActive =
+      value === normalizedType ||
+      (value === "advanced" && mode === "advanced") ||
+      (value === "Operacja gotówkowa" && mode === "cash") ||
+      (value === "Kupno waloru" && mode === "buy") ||
+      (value === "Sprzedaż waloru" && mode === "sell");
+    button.classList.toggle("active", isActive);
+  });
+}
+
+function syncOperationFormFields() {
+  if (!dom.operationForm || !dom.operationTypeSelect) {
+    return;
+  }
+  const mode = operationFormModeForType(dom.operationTypeSelect.value);
+  const visibleGroups = operationFieldsForMode(mode);
+  dom.operationForm.querySelectorAll("[data-operation-field]").forEach((field) => {
+    const group = field.dataset.operationField || "";
+    const visible = visibleGroups.has(group);
+    field.classList.toggle("operation-field-hidden", !visible);
+    field.querySelectorAll("input, select, textarea").forEach((input) => {
+      if (input === dom.operationTypeSelect) {
+        input.disabled = false;
+        return;
+      }
+      input.disabled = !visible;
+    });
+  });
+  setOperationQuickType(dom.operationTypeSelect.value);
+  syncQuickAssetCard();
+}
+
+function syncQuickAssetCard() {
+  if (!dom.quickAssetCard || !dom.operationTypeSelect) {
+    return;
+  }
+  const mode = operationFormModeForType(dom.operationTypeSelect.value);
+  const shouldShow = mode === "buy" && state.assets.length === 0;
+  dom.quickAssetCard.hidden = !shouldShow;
+  if (shouldShow && dom.quickAssetCurrencySelect && !dom.quickAssetCurrencySelect.value) {
+    dom.quickAssetCurrencySelect.value = state.meta.baseCurrency || "PLN";
+  }
+}
+
+function onQuickAssetAdd(event) {
+  event.preventDefault();
+  const ticker = String(dom.quickAssetTickerInput ? dom.quickAssetTickerInput.value : "").trim().toUpperCase();
+  if (!ticker) {
+    showToast("Wpisz ticker waloru, np. AAPL albo CDR.", "error");
+    return;
+  }
+  const name = textOrFallback(dom.quickAssetNameInput ? dom.quickAssetNameInput.value : "", ticker);
+  const currency = textOrFallback(dom.quickAssetCurrencySelect ? dom.quickAssetCurrencySelect.value : "", state.meta.baseCurrency);
+  const asset = {
+    id: makeId("ast"),
+    ticker,
+    name,
+    type: "Akcja",
+    currency,
+    currentPrice: toNum(dom.quickAssetPriceInput ? dom.quickAssetPriceInput.value : 0),
+    risk: 5,
+    sector: "",
+    industry: "",
+    tags: [],
+    benchmark: "",
+    createdAt: nowIso()
+  };
+  state.assets.push(asset);
+  saveState();
+  scheduleFxRefresh();
+  fillAssetDependentSelects();
+  if (dom.operationAssetSelect) {
+    dom.operationAssetSelect.value = asset.id;
+  }
+  if (dom.quickAssetTickerInput) {
+    dom.quickAssetTickerInput.value = "";
+  }
+  if (dom.quickAssetNameInput) {
+    dom.quickAssetNameInput.value = "";
+  }
+  if (dom.quickAssetPriceInput) {
+    dom.quickAssetPriceInput.value = "";
+  }
+  syncQuickAssetCard();
+  renderAssets();
+  showToast(`Dodano walor ${ticker}. Możesz od razu zapisać kupno.`, "success");
+}
+
+function onOperationQuickTypeClick(event) {
+  const button = event.target.closest("[data-operation-type]");
+  if (!button || !dom.operationTypeSelect) {
+    return;
+  }
+  const type = button.dataset.operationType || "Operacja gotówkowa";
+  if (type !== "advanced") {
+    dom.operationTypeSelect.value = type;
+  }
+  if (type === "advanced") {
+    const current = dom.operationTypeSelect.value || "Dywidenda";
+    const currentMode = operationFormModeForType(current);
+    dom.operationTypeSelect.value = ["cash", "buy", "sell"].includes(currentMode) ? "Dywidenda" : current;
+  }
+  syncOperationFormFields();
 }
 
 function resetOperationHistoryFilters() {
@@ -4621,6 +5626,7 @@ function startOperationEdit(operationId) {
   if (noteInput) {
     noteInput.value = operation.note || "";
   }
+  syncOperationFormFields();
   form.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -4663,17 +5669,25 @@ function onOperationSubmit(event) {
       return;
     }
     Object.assign(existing, payload);
+    showToast("Operacja została zaktualizowana.", "success");
   } else {
     state.operations.push({
       id: makeId("op"),
       ...payload,
       createdAt: nowIso()
     });
+    showToast("Operacja została dodana.", "success");
   }
   saveState();
   scheduleFxRefresh();
+  const shouldReturnToDashboard = quickOperationRuntime.returnToDashboardAfterSave;
+  quickOperationRuntime.returnToDashboardAfterSave = false;
   resetOperationForm();
   renderAll();
+  if (shouldReturnToDashboard) {
+    activateView("dashboardView");
+    showToast("Kokpit został zaktualizowany.", "success");
+  }
 }
 
 function resetRecurringForm() {
@@ -5110,6 +6124,7 @@ function onTaxSubmit(event) {
 }
 
 function onBackupExport() {
+  closeAccountMenu();
   const payload = {
     version: 1,
     exportedAt: nowIso(),
@@ -5126,6 +6141,7 @@ function onBackupExport() {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+  showToast("Kopia danych została pobrana.", "success");
 }
 
 function exportCanvasAsPng(canvas, fileName) {
@@ -5154,6 +6170,7 @@ function exportCanvasAsPng(canvas, fileName) {
 }
 
 function onBackupImport(event) {
+  closeAccountMenu();
   const file = event.target.files && event.target.files[0];
   if (!file) {
     return;
@@ -5178,13 +6195,214 @@ function onBackupImport(event) {
 }
 
 function onResetState() {
-  const yes = window.confirm("Na pewno usunąć wszystkie dane lokalne?");
-  if (!yes) {
+  runAfterConfirm(
+    {
+      title: "Wyczyścić wszystkie dane?",
+      message: "Usunie to lokalny stan aplikacji na tym urządzeniu. Dane w chmurze zostaną nadpisane dopiero po kolejnej synchronizacji.",
+      confirmLabel: "Wyczyść"
+    },
+    () => {
+      state = defaultState();
+      saveState();
+      renderAll();
+      showToast("Dane lokalne zostały wyczyszczone.", "success");
+    }
+  );
+}
+
+function activateView(viewId) {
+  if (!viewId || !dom.tabs) {
     return;
   }
-  state = defaultState();
+  document.querySelectorAll(".view").forEach((view) => {
+    view.classList.toggle("active", view.id === viewId);
+  });
+  dom.tabs.querySelectorAll(".tab").forEach((tab) => {
+    tab.classList.toggle("active", tab.dataset.view === viewId);
+  });
+}
+
+function showOperationsWizard(type = "Operacja gotówkowa", options = {}) {
+  activateView("operationsView");
+  resetOperationForm();
+  quickOperationRuntime.returnToDashboardAfterSave = Boolean(options.returnToDashboard);
+  if (dom.operationTypeSelect) {
+    dom.operationTypeSelect.value = type;
+  }
+  syncOperationFormFields();
+  if (dom.operationForm) {
+    dom.operationForm.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+}
+
+function closeRecordSheet() {
+  if (dom.recordSheetOverlay) {
+    dom.recordSheetOverlay.hidden = true;
+  }
+}
+
+function recordDetailRows(rows) {
+  return rows
+    .map(([label, value]) => {
+      const safeValue = value == null || value === "" ? "-" : value;
+      return `<div class="record-detail-row"><span>${escapeHtml(label)}</span><strong>${safeValue}</strong></div>`;
+    })
+    .join("");
+}
+
+function openRecordSheet(kind, id) {
+  if (!dom.recordSheetOverlay || !dom.recordSheetTitle || !dom.recordSheetBody) {
+    return;
+  }
+  let kicker = "Szczegóły";
+  let title = "Rekord";
+  let rows = [];
+  if (kind === "operation") {
+    const operation = findById(state.operations, id);
+    if (!operation) {
+      return;
+    }
+    kicker = "Operacja";
+    title = `${operation.type || "Operacja"} · ${operation.date || "-"}`;
+    rows = [
+      ["Portfel", escapeHtml(lookupName(state.portfolios, operation.portfolioId))],
+      ["Konto", escapeHtml(lookupName(state.accounts, operation.accountId))],
+      ["Walor", escapeHtml(lookupAssetLabel(operation.assetId))],
+      ["Walor docelowy", escapeHtml(lookupAssetLabel(operation.targetAssetId))],
+      ["Ilość", escapeHtml(formatFloat(operation.quantity))],
+      ["Ilość docelowa", escapeHtml(formatFloat(operation.targetQuantity))],
+      ["Cena", escapeHtml(formatFloat(operation.price))],
+      ["Kwota", formatMoney(operation.amount, operation.currency || state.meta.baseCurrency)],
+      ["Prowizja", formatMoney(operation.fee, operation.currency || state.meta.baseCurrency)],
+      ["Tagi", escapeHtml(Array.isArray(operation.tags) ? operation.tags.join(", ") : "")],
+      ["Notatka", escapeHtml(operation.note || "")]
+    ];
+  } else if (kind === "asset") {
+    const asset = findById(state.assets, id);
+    if (!asset) {
+      return;
+    }
+    kicker = "Walor";
+    title = `${asset.ticker || "-"} · ${asset.name || "-"}`;
+    rows = [
+      ["Typ", escapeHtml(asset.type || "-")],
+      ["Cena", formatMoney(asset.currentPrice, asset.currency || state.meta.baseCurrency)],
+      ["Ryzyko", escapeHtml(String(asset.risk || "-"))],
+      ["Sektor", escapeHtml(asset.sector || "-")],
+      ["Branża", escapeHtml(asset.industry || "-")],
+      ["Tagi", escapeHtml(Array.isArray(asset.tags) ? asset.tags.join(", ") : "")],
+      ["Benchmark", escapeHtml(asset.benchmark || "-")]
+    ];
+  } else if (kind === "account") {
+    const account = findById(state.accounts, id);
+    if (!account) {
+      return;
+    }
+    kicker = "Konto";
+    title = account.name || "Konto";
+    rows = [
+      ["Typ", escapeHtml(account.type || "-")],
+      ["Waluta", escapeHtml(account.currency || state.meta.baseCurrency)],
+      ["Utworzono", escapeHtml(formatDateTime(account.createdAt) || account.createdAt || "-")]
+    ];
+  } else if (kind === "portfolio") {
+    const portfolio = findById(state.portfolios, id);
+    if (!portfolio) {
+      return;
+    }
+    kicker = "Portfel";
+    title = portfolio.name || "Portfel";
+    rows = [
+      ["Waluta", escapeHtml(portfolio.currency || state.meta.baseCurrency)],
+      ["Benchmark", escapeHtml(portfolio.benchmark || "-")],
+      ["Cel", escapeHtml(portfolio.goal || "-")],
+      ["Grupa", escapeHtml(portfolio.groupName || "-")],
+      ["Sub-portfel", escapeHtml(portfolio.parentId ? lookupName(state.portfolios, portfolio.parentId) : "-")],
+      ["Portfel bliźniaczy", escapeHtml(portfolio.twinOf ? lookupName(state.portfolios, portfolio.twinOf) : "-")],
+      ["Publiczny", portfolio.isPublic ? "Tak" : "Nie"],
+      ["Utworzono", escapeHtml(formatDateTime(portfolio.createdAt) || portfolio.createdAt || "-")]
+    ];
+  } else if (kind === "holding") {
+    const portfolioId = dom.dashboardPortfolioSelect ? dom.dashboardPortfolioSelect.value || "" : "";
+    const metrics = computeMetrics(portfolioId);
+    const holding = metrics.holdings.find((item) => item.assetId === id);
+    if (!holding) {
+      return;
+    }
+    kicker = "Pozycja";
+    title = `${holding.ticker || "-"} · ${holding.name || "-"}`;
+    rows = [
+      ["Typ", escapeHtml(holding.type || "-")],
+      ["Ilość", escapeHtml(formatFloat(holding.qty))],
+      ["Cena", formatMoney(holding.price, holding.currency || state.meta.baseCurrency)],
+      ["Wartość", formatMoney(holding.value)],
+      ["Koszt", formatMoney(holding.cost)],
+      ["Niezrealizowany P/L", formatMoney(holding.unrealized)],
+      ["Udział", `${escapeHtml(formatFloat(holding.share))}%`]
+    ];
+  } else {
+    return;
+  }
+  if (dom.recordSheetKicker) {
+    dom.recordSheetKicker.textContent = kicker;
+  }
+  dom.recordSheetTitle.textContent = title;
+  dom.recordSheetBody.innerHTML = recordDetailRows(rows);
+  dom.recordSheetOverlay.hidden = false;
+}
+
+function updateAssetPrice(asset, value) {
+  if (!asset) {
+    return;
+  }
+  asset.currentPrice = toNum(value);
   saveState();
   renderAll();
+  showToast(`Cena ${asset.ticker || "waloru"} została zaktualizowana.`, "success");
+}
+
+function openPriceDialog(assetId) {
+  const asset = findById(state.assets, assetId);
+  if (!asset) {
+    return;
+  }
+  if (!dom.priceDialogOverlay || !dom.priceDialogInput) {
+    const value = typeof window.prompt === "function"
+      ? window.prompt(`Nowa cena dla ${asset.ticker} (${asset.currency})`, String(asset.currentPrice || 0))
+      : null;
+    if (value != null) {
+      updateAssetPrice(asset, value);
+    }
+    return;
+  }
+  priceDialogRuntime.assetId = asset.id;
+  if (dom.priceDialogAssetLabel) {
+    dom.priceDialogAssetLabel.textContent = `${asset.ticker} · ${asset.name || "Walor"} · ${asset.currency || state.meta.baseCurrency}`;
+  }
+  dom.priceDialogInput.value = String(asset.currentPrice || 0);
+  dom.priceDialogOverlay.hidden = false;
+  dom.priceDialogInput.focus();
+  dom.priceDialogInput.select();
+}
+
+function closePriceDialog() {
+  priceDialogRuntime.assetId = "";
+  if (dom.priceDialogOverlay) {
+    dom.priceDialogOverlay.hidden = true;
+  }
+}
+
+function savePriceDialog(event) {
+  if (event && typeof event.preventDefault === "function") {
+    event.preventDefault();
+  }
+  const asset = findById(state.assets, priceDialogRuntime.assetId);
+  if (!asset || !dom.priceDialogInput) {
+    closePriceDialog();
+    return;
+  }
+  updateAssetPrice(asset, dom.priceDialogInput.value);
+  closePriceDialog();
 }
 
 function onActionClick(event) {
@@ -5198,6 +6416,33 @@ function onActionClick(event) {
     return;
   }
 
+  if (action === "start-first-operation") {
+    showOperationsWizard("Operacja gotówkowa");
+    return;
+  }
+  if (action === "quick-operation") {
+    showOperationsWizard(btn.dataset.operationType || "Operacja gotówkowa", { returnToDashboard: true });
+    return;
+  }
+  if (action === "go-view") {
+    activateView(btn.dataset.view || "");
+    return;
+  }
+  if (action === "focus-asset-form") {
+    activateView("accountsView");
+    if (dom.assetForm) {
+      dom.assetForm.scrollIntoView({ behavior: "smooth", block: "start" });
+      const tickerInput = dom.assetForm.querySelector('[name="ticker"]');
+      if (tickerInput) {
+        tickerInput.focus();
+      }
+    }
+    return;
+  }
+  if (action === "show-record") {
+    openRecordSheet(btn.dataset.kind || "", id);
+    return;
+  }
   if (action === "delete-portfolio") {
     removePortfolio(id);
     return;
@@ -5215,25 +6460,35 @@ function onActionClick(event) {
     return;
   }
   if (action === "delete-account") {
-    if (editingState.accountId === id) {
-      resetAccountForm();
-    }
-    if (
-      editingState.recurringId &&
-      state.recurringOps.some((item) => item.id === editingState.recurringId && item.accountId === id)
-    ) {
-      resetRecurringForm();
-    }
-    if (
-      editingState.operationId &&
-      state.operations.some((item) => item.id === editingState.operationId && item.accountId === id)
-    ) {
-      resetOperationForm();
-    }
-    state.accounts = state.accounts.filter((item) => item.id !== id);
-    state.operations = state.operations.filter((item) => item.accountId !== id);
-    saveState();
-    renderAll();
+    runAfterConfirm(
+      {
+        title: "Usunąć konto?",
+        message: "Usunięte zostanie konto oraz operacje przypisane do tego konta.",
+        confirmLabel: "Usuń konto"
+      },
+      () => {
+        if (editingState.accountId === id) {
+          resetAccountForm();
+        }
+        if (
+          editingState.recurringId &&
+          state.recurringOps.some((item) => item.id === editingState.recurringId && item.accountId === id)
+        ) {
+          resetRecurringForm();
+        }
+        if (
+          editingState.operationId &&
+          state.operations.some((item) => item.id === editingState.operationId && item.accountId === id)
+        ) {
+          resetOperationForm();
+        }
+        state.accounts = state.accounts.filter((item) => item.id !== id);
+        state.operations = state.operations.filter((item) => item.accountId !== id);
+        saveState();
+        renderAll();
+        showToast("Konto zostało usunięte.", "success");
+      }
+    );
     return;
   }
   if (action === "edit-account") {
@@ -5245,37 +6500,47 @@ function onActionClick(event) {
     return;
   }
   if (action === "delete-asset") {
-    if (editingState.assetId === id) {
-      resetAssetForm();
-    }
-    if (
-      editingState.alertId &&
-      state.alerts.some((item) => item.id === editingState.alertId && item.assetId === id)
-    ) {
-      resetAlertForm();
-    }
-    if (
-      editingState.recurringId &&
-      state.recurringOps.some((item) => item.id === editingState.recurringId && item.assetId === id)
-    ) {
-      resetRecurringForm();
-    }
-    if (
-      editingState.operationId &&
-      state.operations.some(
-        (item) => item.id === editingState.operationId && (item.assetId === id || item.targetAssetId === id)
-      )
-    ) {
-      resetOperationForm();
-    }
-    state.assets = state.assets.filter((item) => item.id !== id);
-    state.operations = state.operations.filter(
-      (item) => item.assetId !== id && item.targetAssetId !== id
+    runAfterConfirm(
+      {
+        title: "Usunąć walor?",
+        message: "Usunięte zostaną też operacje i alerty powiązane z tym walorem.",
+        confirmLabel: "Usuń walor"
+      },
+      () => {
+        if (editingState.assetId === id) {
+          resetAssetForm();
+        }
+        if (
+          editingState.alertId &&
+          state.alerts.some((item) => item.id === editingState.alertId && item.assetId === id)
+        ) {
+          resetAlertForm();
+        }
+        if (
+          editingState.recurringId &&
+          state.recurringOps.some((item) => item.id === editingState.recurringId && item.assetId === id)
+        ) {
+          resetRecurringForm();
+        }
+        if (
+          editingState.operationId &&
+          state.operations.some(
+            (item) => item.id === editingState.operationId && (item.assetId === id || item.targetAssetId === id)
+          )
+        ) {
+          resetOperationForm();
+        }
+        state.assets = state.assets.filter((item) => item.id !== id);
+        state.operations = state.operations.filter(
+          (item) => item.assetId !== id && item.targetAssetId !== id
+        );
+        state.alerts = state.alerts.filter((item) => item.assetId !== id);
+        state.favorites = state.favorites.filter((item) => item !== id);
+        saveState();
+        renderAll();
+        showToast("Walor został usunięty.", "success");
+      }
     );
-    state.alerts = state.alerts.filter((item) => item.assetId !== id);
-    state.favorites = state.favorites.filter((item) => item !== id);
-    saveState();
-    renderAll();
     return;
   }
   if (action === "toggle-favorite") {
@@ -5289,33 +6554,26 @@ function onActionClick(event) {
     return;
   }
   if (action === "update-asset-price") {
-    const asset = findById(state.assets, id);
-    if (!asset) {
-      return;
-    }
-    const value = window.prompt(
-      `Nowa cena dla ${asset.ticker} (${asset.currency})`,
-      String(asset.currentPrice || 0)
-    );
-    if (value == null) {
-      return;
-    }
-    asset.currentPrice = toNum(value);
-    saveState();
-    renderAll();
+    openPriceDialog(id);
     return;
   }
   if (action === "delete-operation") {
-    const yes = window.confirm("Usunąć tę operację?");
-    if (!yes) {
-      return;
-    }
-    if (editingState.operationId === id) {
-      resetOperationForm();
-    }
-    state.operations = state.operations.filter((item) => item.id !== id);
-    saveState();
-    renderAll();
+    runAfterConfirm(
+      {
+        title: "Usunąć operację?",
+        message: "Ta operacja zniknie z historii i przeliczy kokpit oraz raporty.",
+        confirmLabel: "Usuń operację"
+      },
+      () => {
+        if (editingState.operationId === id) {
+          resetOperationForm();
+        }
+        state.operations = state.operations.filter((item) => item.id !== id);
+        saveState();
+        renderAll();
+        showToast("Operacja została usunięta.", "success");
+      }
+    );
     return;
   }
   if (action === "edit-operation") {
@@ -5323,12 +6581,22 @@ function onActionClick(event) {
     return;
   }
   if (action === "delete-recurring") {
-    if (editingState.recurringId === id) {
-      resetRecurringForm();
-    }
-    state.recurringOps = state.recurringOps.filter((item) => item.id !== id);
-    saveState();
-    renderRecurring();
+    runAfterConfirm(
+      {
+        title: "Usunąć operację cykliczną?",
+        message: "Przyszłe automatyczne generowanie tej operacji zostanie zatrzymane.",
+        confirmLabel: "Usuń cykliczną"
+      },
+      () => {
+        if (editingState.recurringId === id) {
+          resetRecurringForm();
+        }
+        state.recurringOps = state.recurringOps.filter((item) => item.id !== id);
+        saveState();
+        renderRecurring();
+        showToast("Operacja cykliczna została usunięta.", "success");
+      }
+    );
     return;
   }
   if (action === "edit-recurring") {
@@ -5336,12 +6604,22 @@ function onActionClick(event) {
     return;
   }
   if (action === "delete-alert") {
-    if (editingState.alertId === id) {
-      resetAlertForm();
-    }
-    state.alerts = state.alerts.filter((item) => item.id !== id);
-    saveState();
-    renderAlerts();
+    runAfterConfirm(
+      {
+        title: "Usunąć alert?",
+        message: "Alert cenowy przestanie być sprawdzany.",
+        confirmLabel: "Usuń alert"
+      },
+      () => {
+        if (editingState.alertId === id) {
+          resetAlertForm();
+        }
+        state.alerts = state.alerts.filter((item) => item.id !== id);
+        saveState();
+        renderAlerts();
+        showToast("Alert został usunięty.", "success");
+      }
+    );
     return;
   }
   if (action === "edit-alert") {
@@ -5349,25 +6627,55 @@ function onActionClick(event) {
     return;
   }
   if (action === "delete-note") {
-    state.notes = state.notes.filter((item) => item.id !== id);
-    saveState();
-    renderNotes();
+    runAfterConfirm(
+      {
+        title: "Usunąć notatkę?",
+        message: "Ta notatka zostanie trwale usunięta z aplikacji.",
+        confirmLabel: "Usuń notatkę"
+      },
+      () => {
+        state.notes = state.notes.filter((item) => item.id !== id);
+        saveState();
+        renderNotes();
+        showToast("Notatka została usunięta.", "success");
+      }
+    );
     return;
   }
   if (action === "delete-strategy") {
-    state.strategies = state.strategies.filter((item) => item.id !== id);
-    saveState();
-    renderStrategies();
+    runAfterConfirm(
+      {
+        title: "Usunąć strategię?",
+        message: "Opis strategii zostanie usunięty.",
+        confirmLabel: "Usuń strategię"
+      },
+      () => {
+        state.strategies = state.strategies.filter((item) => item.id !== id);
+        saveState();
+        renderStrategies();
+        showToast("Strategia została usunięta.", "success");
+      }
+    );
     return;
   }
   if (action === "delete-liability") {
-    if (editingState.liabilityId === id) {
-      resetLiabilityForm();
-    }
-    state.liabilities = state.liabilities.filter((item) => item.id !== id);
-    saveState();
-    renderLiabilities();
-    renderDashboard();
+    runAfterConfirm(
+      {
+        title: "Usunąć zobowiązanie?",
+        message: "Zobowiązanie zniknie z majątku netto i raportów.",
+        confirmLabel: "Usuń zobowiązanie"
+      },
+      () => {
+        if (editingState.liabilityId === id) {
+          resetLiabilityForm();
+        }
+        state.liabilities = state.liabilities.filter((item) => item.id !== id);
+        saveState();
+        renderLiabilities();
+        renderDashboard();
+        showToast("Zobowiązanie zostało usunięte.", "success");
+      }
+    );
     return;
   }
   if (action === "edit-liability") {
@@ -5446,7 +6754,9 @@ function renderAll() {
   applyAppearanceSettings();
   saveState({ preserveHistoryCache: true });
 
-  dom.planSelect.value = state.meta.activePlan;
+  if (dom.planSelect) {
+    dom.planSelect.value = state.meta.activePlan;
+  }
   dom.baseCurrencySelect.value = state.meta.baseCurrency;
   if (dom.dashboardInflationEnabled) {
     dom.dashboardInflationEnabled.checked = Boolean(state.meta.dashboardInflationEnabled);
@@ -5470,7 +6780,7 @@ function renderAll() {
   renderLiabilities();
   renderDashboard();
   renderToolCatalog();
-  renderFeatureMatrix();
+  renderReportCards();
   renderAppearanceSettings();
   void renderReportCurrent();
   if (isViewActive("toolsView")) {
@@ -5532,62 +6842,120 @@ function fillAssetDependentSelects() {
 }
 
 function renderPortfolioList() {
-  const rows = state.portfolios.map((portfolio) => {
-    const parent = portfolio.parentId ? lookupName(state.portfolios, portfolio.parentId) : "-";
-    const twin = portfolio.twinOf ? lookupName(state.portfolios, portfolio.twinOf) : "-";
-    return [
-      escapeHtml(portfolio.name),
-      escapeHtml(portfolio.currency),
-      escapeHtml(portfolio.benchmark || "-"),
-      escapeHtml(portfolio.goal || "-"),
-      escapeHtml(parent),
-      escapeHtml(portfolio.groupName || "-"),
-      escapeHtml(twin),
-      portfolio.isPublic ? '<span class="badge ok">Tak</span>' : '<span class="badge off">Nie</span>',
-      [
-        `<button class="btn secondary" data-action="edit-portfolio" data-id="${portfolio.id}">Edytuj</button>`,
-        `<button class="btn secondary" data-action="copy-portfolio" data-id="${portfolio.id}">Kopiuj</button>`,
-        `<button class="btn secondary" data-action="export-portfolio" data-id="${portfolio.id}">Eksport</button>`,
-        `<button class="btn danger" data-action="delete-portfolio" data-id="${portfolio.id}">Usuń</button>`
-      ].join(" ")
-    ];
-  });
-  renderTable(dom.portfolioList, ["Nazwa", "Waluta", "Benchmark", "Cel", "Sub", "Grupa", "Bliźniaczy", "Publiczny", "Akcje"], rows);
+  if (!dom.portfolioList) {
+    return;
+  }
+  if (!state.portfolios.length) {
+    dom.portfolioList.innerHTML = '<p class="muted">Brak portfeli.</p>';
+    return;
+  }
+  dom.portfolioList.innerHTML = `<div class="record-list">${state.portfolios
+    .map((portfolio) => {
+      const parent = portfolio.parentId ? lookupName(state.portfolios, portfolio.parentId) : "";
+      const twin = portfolio.twinOf ? lookupName(state.portfolios, portfolio.twinOf) : "";
+      const metrics = computeMetrics(portfolio.id);
+      return `
+        <article class="record-card" data-action="show-record" data-kind="portfolio" data-id="${portfolio.id}">
+          <div class="record-main">
+            <span class="record-kicker">${escapeHtml(portfolio.currency || state.meta.baseCurrency)} · ${
+              portfolio.isPublic ? "publiczny" : "prywatny"
+            }</span>
+            <h3 class="record-title">${escapeHtml(portfolio.name)}</h3>
+            <p class="record-subtitle">${escapeHtml(
+              [portfolio.goal || "", portfolio.benchmark ? `Benchmark: ${portfolio.benchmark}` : "", parent ? `Sub: ${parent}` : "", twin ? `Bliźniaczy: ${twin}` : ""]
+                .filter(Boolean)
+                .join(" · ") || "Bez dodatkowych ustawień"
+            )}</p>
+          </div>
+          <div class="record-value">
+            <strong>${formatMoney(metrics.netWorth)}</strong>
+            <span>${metrics.holdings.length} pozycji</span>
+          </div>
+          <div class="record-actions">
+            <button class="btn secondary" data-action="edit-portfolio" data-id="${portfolio.id}">Edytuj</button>
+            <button class="btn secondary" data-action="copy-portfolio" data-id="${portfolio.id}">Kopiuj</button>
+            <button class="btn secondary" data-action="export-portfolio" data-id="${portfolio.id}">Eksport</button>
+            <button class="btn danger" data-action="delete-portfolio" data-id="${portfolio.id}">Usuń</button>
+          </div>
+        </article>
+      `;
+    })
+    .join("")}</div>`;
 }
 
 function renderAccounts() {
-  const rows = state.accounts.map((account) => [
-    escapeHtml(account.name),
-    escapeHtml(account.type),
-    escapeHtml(account.currency),
-    [
-      `<button class="btn secondary" data-action="edit-account" data-id="${account.id}">Edytuj</button>`,
-      `<button class="btn danger" data-action="delete-account" data-id="${account.id}">Usuń</button>`
-    ].join(" ")
-  ]);
-  renderTable(dom.accountList, ["Nazwa", "Typ", "Waluta", "Akcje"], rows);
+  if (!dom.accountList) {
+    return;
+  }
+  if (!state.accounts.length) {
+    dom.accountList.innerHTML = '<p class="muted">Brak kont.</p>';
+    return;
+  }
+  dom.accountList.innerHTML = `<div class="record-list">${state.accounts
+    .map(
+      (account) => `
+        <article class="record-card" data-action="show-record" data-kind="account" data-id="${account.id}">
+          <div class="record-main">
+            <span class="record-kicker">${escapeHtml(account.type || "Konto")}</span>
+            <h3 class="record-title">${escapeHtml(account.name)}</h3>
+            <p class="record-subtitle">Waluta: ${escapeHtml(account.currency || state.meta.baseCurrency)}</p>
+          </div>
+          <div class="record-value">
+            <strong>${escapeHtml(account.currency || state.meta.baseCurrency)}</strong>
+            <span>Konto</span>
+          </div>
+          <div class="record-actions">
+            <button class="btn secondary" data-action="edit-account" data-id="${account.id}">Edytuj</button>
+            <button class="btn danger" data-action="delete-account" data-id="${account.id}">Usuń</button>
+          </div>
+        </article>
+      `
+    )
+    .join("")}</div>`;
 }
 
 function renderAssets() {
-  const rows = state.assets.map((asset) => [
-    escapeHtml(asset.ticker),
-    escapeHtml(asset.name),
-    escapeHtml(asset.type),
-    formatMoney(asset.currentPrice, asset.currency),
-    escapeHtml(String(asset.risk)),
-    escapeHtml(asset.sector || "-"),
-    escapeHtml(asset.tags.join(", ") || "-"),
-    state.favorites.includes(asset.id) ? '<span class="badge ok">Ulubione</span>' : '<span class="badge off">-</span>',
-    [
-      `<button class="btn secondary" data-action="toggle-favorite" data-id="${asset.id}">${
-        state.favorites.includes(asset.id) ? "Usuń z ulubionych" : "Dodaj do ulubionych"
-      }</button>`,
-      `<button class="btn secondary" data-action="edit-asset" data-id="${asset.id}">Edytuj</button>`,
-      `<button class="btn secondary" data-action="update-asset-price" data-id="${asset.id}">Cena</button>`,
-      `<button class="btn danger" data-action="delete-asset" data-id="${asset.id}">Usuń</button>`
-    ].join(" ")
-  ]);
-  renderTable(dom.assetList, ["Ticker", "Nazwa", "Typ", "Cena", "Ryzyko", "Sektor", "Tagi", "Fav", "Akcje"], rows);
+  if (!dom.assetList) {
+    return;
+  }
+  if (!state.assets.length) {
+    dom.assetList.innerHTML = '<p class="muted">Brak walorów.</p>';
+    return;
+  }
+  dom.assetList.innerHTML = `<div class="record-list">${state.assets
+    .map((asset) => {
+      const favorite = state.favorites.includes(asset.id);
+      const tags = Array.isArray(asset.tags) ? asset.tags : [];
+      return `
+        <article class="record-card" data-action="show-record" data-kind="asset" data-id="${asset.id}">
+          <div class="record-main">
+            <span class="record-kicker">${escapeHtml(asset.type || "Walor")}</span>
+            <h3 class="record-title">${escapeHtml(asset.ticker)} · ${escapeHtml(asset.name)}</h3>
+            <p class="record-subtitle">${escapeHtml(asset.sector || "Bez sektora")} · ryzyko ${escapeHtml(String(asset.risk || "-"))}</p>
+          </div>
+          <div class="record-value">
+            <strong>${formatMoney(asset.currentPrice, asset.currency)}</strong>
+            <span>${favorite ? "Ulubione" : "Cena"}</span>
+          </div>
+          ${
+            tags.length
+              ? `<div class="record-tags">${tags
+                  .map((tag) => `<span class="record-tag">${escapeHtml(tag)}</span>`)
+                  .join("")}</div>`
+              : ""
+          }
+          <div class="record-actions">
+            <button class="btn secondary" data-action="toggle-favorite" data-id="${asset.id}">${
+              favorite ? "Usuń z ulubionych" : "Dodaj do ulubionych"
+            }</button>
+            <button class="btn secondary" data-action="edit-asset" data-id="${asset.id}">Edytuj</button>
+            <button class="btn secondary" data-action="update-asset-price" data-id="${asset.id}">Cena</button>
+            <button class="btn danger" data-action="delete-asset" data-id="${asset.id}">Usuń</button>
+          </div>
+        </article>
+      `;
+    })
+    .join("")}</div>`;
 }
 
 function renderOperations() {
@@ -5934,6 +7302,51 @@ function renderDashboard() {
   }
 }
 
+function availableReportNames() {
+  if (!dom.reportSelect) {
+    return new Set(REPORT_FEATURES);
+  }
+  return new Set(
+    Array.from(dom.reportSelect.options || [])
+      .map((option) => option.value)
+      .filter(Boolean)
+  );
+}
+
+function renderReportCards() {
+  if (!dom.reportQuickCards || !dom.reportSelect) {
+    return;
+  }
+  const available = availableReportNames();
+  const active = dom.reportSelect.value || REPORT_FEATURES[0];
+  const cards = REPORT_CARD_GROUPS.map((group) => {
+    const report = available.has(group.report) ? group.report : REPORT_FEATURES.find((item) => available.has(item)) || group.report;
+    const selected = report === active;
+    return `
+      <button class="report-card ${selected ? "active" : ""}" type="button" data-report-name="${escapeHtml(report)}">
+        <strong>${escapeHtml(group.title)}</strong>
+        <span>${escapeHtml(group.copy)}</span>
+        <small>${escapeHtml(report)}</small>
+      </button>
+    `;
+  });
+  dom.reportQuickCards.innerHTML = cards.join("");
+}
+
+function onReportCardClick(event) {
+  const card = event.target.closest("[data-report-name]");
+  if (!card || !dom.reportSelect) {
+    return;
+  }
+  const reportName = card.dataset.reportName || "";
+  if (!reportName) {
+    return;
+  }
+  dom.reportSelect.value = reportName;
+  renderReportCards();
+  void renderReportCurrent({ force: true });
+}
+
 async function renderReportCurrent(arg = null) {
   let force = false;
   if (arg && typeof arg === "object" && "force" in arg) {
@@ -5945,6 +7358,7 @@ async function renderReportCurrent(arg = null) {
     return;
   }
   const reportName = dom.reportSelect.value || REPORT_FEATURES[0];
+  renderReportCards();
   const portfolioId = dom.reportPortfolioSelect.value || "";
   const requestId = ++backendSync.reportRequestSeq;
   if (backendSync.available) {
@@ -6113,18 +7527,15 @@ function renderLiabilities() {
 }
 
 function renderToolCatalog() {
-  const rows = TOOL_FEATURES.map((feature) => {
-    const minPlan = inferMinPlan(feature, "tool");
-    const available = isFeatureAvailable(minPlan, state.meta.activePlan);
-    const status = available
-      ? '<span class="badge ok">Działa lokalnie</span>'
-      : '<span class="badge off">Niedostępne w planie</span>';
-    return [escapeHtml(feature), escapeHtml(minPlan), status];
-  });
-  renderTable(dom.toolCatalog, ["Narzędzie", "Od planu", "Status"], rows);
+  if (dom.toolCatalog) {
+    dom.toolCatalog.innerHTML = "";
+  }
 }
 
 function renderFeatureMatrix() {
+  if (!dom.featureMatrix) {
+    return;
+  }
   const rows = [];
 
   rows.push([
@@ -6715,26 +8126,6 @@ function normalizeFxRates(raw) {
     }
   });
   return output;
-}
-
-function buildAssetCurrencyHints(source) {
-  const operations = Array.isArray(source.operations) ? source.operations : [];
-  const accounts = Array.isArray(source.accounts) ? source.accounts : [];
-  const hints = new Map();
-
-  operations.forEach((operation) => {
-    const directCurrency = normalizeCurrency(operation && operation.currency, "");
-    const accountCurrency = normalizeCurrency(findById(accounts, operation && operation.accountId)?.currency, "");
-    const hintedCurrency = directCurrency || accountCurrency;
-    if (!hintedCurrency) {
-      return;
-    }
-    [operation && operation.assetId, operation && operation.targetAssetId]
-      .filter(Boolean)
-      .forEach((assetId) => hints.set(assetId, hintedCurrency));
-  });
-
-  return hints;
 }
 
 function findCurrencyConversionRate(fromCurrency, toCurrency, fxRates) {
@@ -8396,38 +9787,44 @@ function removePortfolio(portfolioId) {
     window.alert("Musi zostać co najmniej jeden portfel.");
     return;
   }
-  const yes = window.confirm("Usunąć portfel i jego operacje?");
-  if (!yes) {
-    return;
-  }
-  if (editingState.portfolioId === portfolioId) {
-    resetPortfolioForm();
-  }
-  if (
-    editingState.recurringId &&
-    state.recurringOps.some((item) => item.id === editingState.recurringId && item.portfolioId === portfolioId)
-  ) {
-    resetRecurringForm();
-  }
-  if (
-    editingState.operationId &&
-    state.operations.some((operation) => operation.id === editingState.operationId && operation.portfolioId === portfolioId)
-  ) {
-    resetOperationForm();
-  }
-  state.portfolios = state.portfolios.filter((portfolio) => portfolio.id !== portfolioId);
-  state.portfolios.forEach((portfolio) => {
-    if (portfolio.parentId === portfolioId) {
-      portfolio.parentId = "";
+  runAfterConfirm(
+    {
+      title: "Usunąć portfel?",
+      message: "Usunięty zostanie portfel, jego operacje oraz powiązane operacje cykliczne.",
+      confirmLabel: "Usuń portfel"
+    },
+    () => {
+      if (editingState.portfolioId === portfolioId) {
+        resetPortfolioForm();
+      }
+      if (
+        editingState.recurringId &&
+        state.recurringOps.some((item) => item.id === editingState.recurringId && item.portfolioId === portfolioId)
+      ) {
+        resetRecurringForm();
+      }
+      if (
+        editingState.operationId &&
+        state.operations.some((operation) => operation.id === editingState.operationId && operation.portfolioId === portfolioId)
+      ) {
+        resetOperationForm();
+      }
+      state.portfolios = state.portfolios.filter((portfolio) => portfolio.id !== portfolioId);
+      state.portfolios.forEach((portfolio) => {
+        if (portfolio.parentId === portfolioId) {
+          portfolio.parentId = "";
+        }
+        if (portfolio.twinOf === portfolioId) {
+          portfolio.twinOf = "";
+        }
+      });
+      state.operations = state.operations.filter((operation) => operation.portfolioId !== portfolioId);
+      state.recurringOps = state.recurringOps.filter((item) => item.portfolioId !== portfolioId);
+      saveState();
+      renderAll();
+      showToast("Portfel został usunięty.", "success");
     }
-    if (portfolio.twinOf === portfolioId) {
-      portfolio.twinOf = "";
-    }
-  });
-  state.operations = state.operations.filter((operation) => operation.portfolioId !== portfolioId);
-  state.recurringOps = state.recurringOps.filter((item) => item.portfolioId !== portfolioId);
-  saveState();
-  renderAll();
+  );
 }
 
 function copyPortfolio(portfolioId) {
@@ -8648,9 +10045,7 @@ function normalizeState(input) {
   const fallback = defaultState();
   const normalized = {
     meta: {
-      activePlan: PLAN_ORDER.includes(stateValue.meta && stateValue.meta.activePlan)
-        ? stateValue.meta.activePlan
-        : fallback.meta.activePlan,
+      activePlan: "Expert",
       baseCurrency: textOrFallback(stateValue.meta && stateValue.meta.baseCurrency, fallback.meta.baseCurrency),
       createdAt: (stateValue.meta && stateValue.meta.createdAt) || fallback.meta.createdAt,
       fxRates: normalizeFxRates(stateValue.meta && stateValue.meta.fxRates),
@@ -8695,7 +10090,6 @@ function normalizeState(input) {
           name: textOrFallback(asset.name, "Brak nazwy"),
           type: textOrFallback(asset.type, "Inny"),
           currency: textOrFallback(asset.currency, fallback.meta.baseCurrency),
-          quoteCurrency: textOrFallback(asset.quoteCurrency, asset.currency || fallback.meta.baseCurrency),
           currentPrice: toNum(asset.currentPrice),
           risk: clamp(toNum(asset.risk) || 5, 1, 10),
           sector: asset.sector || "",
@@ -8785,16 +10179,6 @@ function normalizeState(input) {
   if (!normalized.accounts.length) {
     normalized.accounts = fallback.accounts;
   }
-  const assetCurrencyHints = buildAssetCurrencyHints(normalized);
-  normalized.assets = normalized.assets.map((asset) => {
-    const hintedCurrency = assetCurrencyHints.get(asset.id) || "";
-    const persistedCurrency = normalizeCurrency(asset.currency, fallback.meta.baseCurrency);
-    return {
-      ...asset,
-      currency: normalizeCurrency(hintedCurrency, persistedCurrency),
-      quoteCurrency: normalizeCurrency(asset.quoteCurrency, persistedCurrency)
-    };
-  });
   return normalized;
 }
 
@@ -8805,6 +10189,9 @@ function saveState(options = {}) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   if (!options.skipBackend) {
     scheduleBackendPush();
+  }
+  if (!options.skipCloud) {
+    scheduleCloudPush();
   }
 }
 
