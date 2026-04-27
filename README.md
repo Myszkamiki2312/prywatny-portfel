@@ -58,7 +58,17 @@ W Authentication ustaw:
 
 - `Allow new users to sign up`: ON,
 - `Email`: Enabled,
-- na testy możesz ustawić `Confirm email`: OFF.
+- na testy możesz ustawić `Confirm email`: OFF,
+- w `URL Configuration` dodaj Redirect URL:
+  - `https://myszkamiki2312.github.io/prywatny-portfel/reset-password.html`.
+
+Reset hasła:
+
+- w oknie logowania kliknij `Nie pamiętasz hasła?`,
+- aplikacja wyśle mail Supabase z linkiem do `reset-password.html`,
+- użytkownik ustawia nowe hasło na stronie i wraca do aplikacji.
+
+Jeśli Gmail lub przeglądarka pokazuje `otp_expired`, wyślij reset jeszcze raz i kliknij najnowszy mail. Linki resetujące są jednorazowe i szybko wygasają.
 
 ## Cloud backend
 

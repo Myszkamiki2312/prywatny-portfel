@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.7.5 - 2026-04-27
+
+### Added
+- Strona `reset-password.html` do ustawienia nowego hasła z linku Supabase.
+- Przycisk `Nie pamiętasz hasła?` w oknie logowania.
+- GitHub Pages workflow publikujący stronę resetu.
+
+### Changed
+- Reset hasła wysyła mail Supabase z poprawnym `redirect_to`.
+- Dokumentacja Supabase opisuje wymagany Redirect URL.
+
+### Stability
+- Zweryfikowane lokalnie:
+  - `node --check app.js`
+  - `node --check frontend/dashboard.js`
+  - `node --check frontend/operations.js`
+  - `for test in frontend_tests/*.test.js; do node "$test"; done`
+  - `python3 -m unittest discover -s tests -p 'test_*.py' -v`
+
 ## v0.7.4 - 2026-04-26
 
 ### Changed
