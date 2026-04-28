@@ -7,12 +7,14 @@ from pathlib import Path
 class AppUpdater:
     def __init__(self, project_root: str):
         self.project_root = Path(project_root)
-        self.repo_url = "https://github.com/myszkamiki2312/prywatny-portfel-v0.7.2.git"
+        self.repo_url = "https://github.com/Myszkamiki2312/prywatny-portfel.git"
 
     def check_for_updates(self):
-        # Wersja uproszczona: git fetch + git status
         try:
-            subprocess.run(["git", "fetch"], cwd=self.project_root, check=True, capture_output=True)
+            # Ensure origin is correct
+            subprocess.run(["git", "remote", "set-url", "origin", self.repo_url], cwd=self.project_root, check=True)
+            subprocess.run(["git", "fetch", "origin"], cwd=self.project_root, check=True, capture_output=True)
+            
             result = subprocess.run(
                 ["git", "rev-list", "HEAD..origin/main", "--count"],
                 cwd=self.project_root,
@@ -22,6 +24,8 @@ class AppUpdater:
             )
             count = int(result.stdout.strip())
             return {"update_available": count > 0, "commits_behind": count}
+        except subprocess.CalledProcessError as e:
+            return {"error": f"Git error: {e.stderr.decode() if e.stderr else str(e)}"}
         except Exception as e:
             return {"error": str(e)}
 

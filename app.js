@@ -6228,7 +6228,7 @@ function onBackupExport() {
 async function onCheckUpdate() {
   closeAccountMenu();
   try {
-    const result = await apiRequest("/update/check");
+    const result = await apiRequest("/update/check", { timeoutMs: 30000 });
     if (result.error) {
       showToast("Błąd sprawdzania aktualizacji: " + result.error, "error");
     } else if (result.update_available) {

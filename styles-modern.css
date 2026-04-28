@@ -1,4 +1,4 @@
-/* XTB Premium - Ultimate Design */
+/* XTB Premium - Fixed & Robust Design */
 
 :root {
   --xtb-bg: #0b0e11;
@@ -12,17 +12,27 @@
   --font-main: 'IBM Plex Sans', sans-serif;
 }
 
-/* OKNO LOGOWANIA NA ŚRODKU - MODERN DESIGN */
-.cloud-auth-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.85);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  display: none; /* Sterowane przez JS */
+/* GLOBAL RESET */
+body.auth-open {
+  overflow: hidden;
+}
+
+/* OKNO LOGOWANIA NA ŚRODKU */
+#cloudAuthOverlay {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  background: rgba(0, 0, 0, 0.85) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+  display: none; 
   align-items: center;
   justify-content: center;
-  z-index: 9999;
+  z-index: 99999 !important;
 }
 
 #cloudAuthOverlay:not([hidden]) {
@@ -30,20 +40,22 @@
 }
 
 .cloud-auth-card {
-  background: var(--xtb-card);
-  border: 1px solid rgba(28, 115, 255, 0.3);
-  border-radius: 16px;
-  padding: 40px;
-  width: 100%;
-  max-width: 420px;
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 20px rgba(28, 115, 255, 0.1);
-  text-align: center;
-  animation: modalIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  background: var(--xtb-card) !important;
+  border: 1px solid rgba(28, 115, 255, 0.4) !important;
+  border-radius: 16px !important;
+  padding: 40px !important;
+  width: 90% !important;
+  max-width: 420px !important;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6) !important;
+  text-align: center !important;
+  animation: modalIn 0.3s ease-out !important;
+  position: relative !important;
+  color: #fff !important;
 }
 
 @keyframes modalIn {
-  from { opacity: 0; transform: scale(0.9) translateY(20px); }
-  to { opacity: 1; transform: scale(1) translateY(0); }
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
 }
 
 .cloud-auth-card .eyebrow {
@@ -52,19 +64,28 @@
   font-weight: 800;
   font-size: 0.7rem;
   letter-spacing: 2px;
-  margin-bottom: 8px;
+  margin-bottom: 12px;
 }
 
 .cloud-auth-card h2 {
-  font-size: 1.5rem;
+  font-size: 1.6rem;
   font-weight: 700;
-  margin-bottom: 12px;
+  margin-bottom: 16px;
   color: #fff;
 }
 
 .cloud-auth-form .control {
   text-align: left;
-  margin-bottom: 20px;
+  margin-bottom: 18px;
+  display: block;
+}
+
+.cloud-auth-form span {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--xtb-text-muted);
+  margin-bottom: 6px;
+  text-transform: uppercase;
 }
 
 .cloud-auth-form input {
@@ -72,103 +93,76 @@
   background: #1e2329 !important;
   border: 1px solid #2b3139 !important;
   padding: 12px !important;
-  border-radius: 8px !important;
+  border-radius: 6px !important;
   color: #fff !important;
-  margin-top: 6px;
+  box-sizing: border-box;
 }
 
 .cloud-auth-form .btn {
   width: 100%;
   padding: 14px;
-  border-radius: 8px;
+  border-radius: 6px;
   background: var(--xtb-primary);
   color: #fff;
   font-weight: 700;
-  font-size: 1rem;
   margin-top: 10px;
-  cursor: pointer;
   border: none;
+  cursor: pointer;
 }
 
-/* MENU KONTA - NOWOCZESNY DESIGN */
+/* MENU KONTA */
 .account-menu {
   background: var(--xtb-card) !important;
   border: 1px solid var(--xtb-border) !important;
-  border-radius: 12px !important;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.5) !important;
-  padding: 8px !important;
-  width: 280px !important;
-  animation: fadeIn 0.2s ease-out;
+  border-radius: 10px !important;
+  padding: 6px !important;
+  width: 260px !important;
+  z-index: 10000 !important;
 }
 
 .account-menu-item {
-  display: flex !important;
-  flex-direction: column !important;
-  align-items: flex-start !important;
-  padding: 12px 16px !important;
-  border-radius: 8px !important;
-  transition: all 0.2s !important;
+  padding: 10px 14px !important;
+  border-radius: 6px !important;
+  color: var(--xtb-text) !important;
   background: transparent !important;
   border: none !important;
   width: 100% !important;
   text-align: left !important;
-  margin-bottom: 2px !important;
-  color: var(--xtb-text) !important;
-}
-
-.account-menu-item:hover {
-  background: rgba(28, 115, 255, 0.1) !important;
-  color: #fff !important;
-}
-
-.account-menu-item span {
-  font-weight: 600 !important;
-  font-size: 0.9rem !important;
-  display: flex !important;
-  align-items: center !important;
-  gap: 10px !important;
-}
-
-.account-menu-item small {
-  color: var(--xtb-text-muted) !important;
-  font-size: 0.75rem !important;
-  margin-top: 2px !important;
-}
-
-/* Ikony w menu (zastępcze przez emoji dla stabilności) */
-#cloudSyncNowBtn span::before { content: "🔄"; }
-#exportBackupBtn span::before { content: "📥"; }
-#checkUpdateBtn span::before { content: "🚀"; color: var(--xtb-primary); }
-#themeToggleBtn span::before { content: "🌓"; }
-.file-btn span::before { content: "📤"; }
-#cloudSyncLogoutBtn span::before { content: "🚪"; }
-
-/* TOPBAR */
-.topbar {
-  background: #0b0e11;
-  border-bottom: 1px solid #1e2329;
-  padding: 0 24px;
-  height: 64px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.account-chip {
-  background: #1e2329;
-  border: 1px solid #2b3139;
-  padding: 6px 16px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
   cursor: pointer;
 }
 
-.account-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--xtb-success);
-  box-shadow: 0 0 10px var(--xtb-success);
+.account-menu-item:hover {
+  background: rgba(255, 255, 255, 0.05) !important;
+}
+
+/* ICONS */
+#checkUpdateBtn span::before { content: "🚀 "; color: var(--xtb-primary); }
+#exportBackupBtn span::before { content: "📥 "; }
+
+/* UTILS */
+.backdrop { display: none !important; }
+
+/* Center and fix the Login Modal */
+#cloudAuthOverlay {
+  display: none;
+  position: fixed !important;
+  top: 0; left: 0; right: 0; bottom: 0;
+  width: 100vw !important;
+  height: 100vh !important;
+  background: rgba(0,0,0,0.85) !important;
+  z-index: 999999 !important;
+  align-items: center;
+  justify-content: center;
+}
+
+.cloud-auth-card {
+  position: relative !important;
+  z-index: 1000000 !important;
+  pointer-events: auto !important;
+}
+
+/* Ensure buttons are clickable */
+.cloud-auth-form button, .cloud-auth-card button {
+  pointer-events: auto !important;
+  cursor: pointer !important;
 }
