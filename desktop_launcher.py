@@ -93,7 +93,15 @@ def start_runtime(static_root: Path, storage_root: Path, port: int, log_file: Pa
     os.environ["PRYWATNY_PORTFEL_DATA_ROOT"] = str(storage_root)
     os.environ["PRYWATNY_PORTFEL_SERVER_LOG"] = str(log_file)
 
-    import uvicorn
+    try:
+        import fastapi
+        import uvicorn
+    except ImportError:
+        append_log(log_file, "Missing dependencies. Attempting to install fastapi and uvicorn...")
+        import subprocess
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "fastapi", "uvicorn"])
+        import uvicorn
+
     from backend.fastapi_app import app
 
     class FastAPIRuntime:
