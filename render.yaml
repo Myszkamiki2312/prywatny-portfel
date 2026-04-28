@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: prywatny-portfel-backend
+    env: docker
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: PRYWATNY_PORTFEL_DATA_ROOT
+        value: /data
+      - key: PRYWATNY_PORTFEL_API_TOKEN
+        generateValue: true

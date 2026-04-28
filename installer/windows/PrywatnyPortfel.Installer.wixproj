@@ -1,0 +1,10 @@
+<Project Sdk="WixToolset.Sdk/6.0.2">
+  <PropertyGroup>
+    <OutputType>Package</OutputType>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <OutputName>prywatny-portfel-desktop</OutputName>
+    <AppVersion Condition="'$(AppVersion)' == ''">0.6.2</AppVersion>
+    <DesktopExePath Condition="'$(DesktopExePath)' == ''">$(MSBuildProjectDirectory)\..\..\dist\PrywatnyPortfel.exe</DesktopExePath>
+    <DefineConstants>AppVersion=$(AppVersion);DesktopExePath=$(DesktopExePath)</DefineConstants>
+  </PropertyGroup>
+</Project>

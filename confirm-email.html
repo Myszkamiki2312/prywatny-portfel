@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Aktywacja konta - Prywatny Portfel</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="supabase-config.js"></script>
+    <style>
+      :root {
+        --bg: #071016;
+        --panel: rgba(13, 22, 31, 0.92);
+        --line: rgba(122, 216, 199, 0.18);
+        --brand: #7ad8c7;
+        --brand-strong: #36a893;
+        --text: #f2fbf8;
+        --muted: rgba(242, 251, 248, 0.68);
+        --danger: #ff9d96;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 1.2rem;
+        font-family: "Space Grotesk", system-ui, sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at 12% 16%, rgba(122, 216, 199, 0.26), transparent 32%),
+          radial-gradient(circle at 88% 4%, rgba(255, 127, 50, 0.18), transparent 28%),
+          linear-gradient(145deg, #050b10, #0b151d 62%, #081017);
+      }
+      main {
+        width: min(540px, 100%);
+        border: 1px solid var(--line);
+        border-radius: 32px;
+        padding: clamp(1.1rem, 4vw, 1.7rem);
+        background: linear-gradient(180deg, rgba(18, 30, 40, 0.96), rgba(8, 14, 21, 0.96));
+        box-shadow: 0 34px 90px rgba(0, 0, 0, 0.42);
+      }
+      .eyebrow {
+        margin: 0 0 0.5rem;
+        color: var(--brand);
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      h1 { margin: 0 0 0.6rem; font-size: clamp(1.8rem, 7vw, 2.45rem); letter-spacing: -0.05em; }
+      p { color: var(--muted); line-height: 1.55; }
+      .status {
+        min-height: 48px;
+        margin-top: 0.9rem;
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        padding: 0.8rem;
+        color: var(--muted);
+        background: rgba(255, 255, 255, 0.035);
+      }
+      .status.error { color: var(--danger); border-color: rgba(255, 157, 150, 0.28); }
+      .status.success { color: var(--brand); border-color: rgba(122, 216, 199, 0.34); }
+      .tips { margin-top: 1rem; padding-left: 1.1rem; color: var(--muted); }
+      .tips li { margin: 0.32rem 0; }
+      a { color: var(--brand); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="eyebrow">Prywatny Portfel</p>
+      <h1>Aktywacja konta</h1>
+      <p>
+        Otwórz tę stronę z najnowszego maila potwierdzającego rejestrację. Po aktywacji wróć do aplikacji i zaloguj się swoim hasłem.
+      </p>
+      <div id="status" class="status">Sprawdzam link aktywacyjny...</div>
+      <ul class="tips">
+        <li>Jeśli widzisz błąd wygasłego linka, wróć do aplikacji i kliknij `Wyślij ponownie mail potwierdzający`.</li>
+        <li>Używaj najnowszego maila. Starsze linki aktywacyjne mogą być jednorazowe albo wygasłe.</li>
+        <li>Stare, już działające konta logują się normalnie. Potwierdzenie dotyczy nowych rejestracji.</li>
+      </ul>
+    </main>
+    <script>
+      const statusNode = document.getElementById("status");
+      const config = window.PRIVATE_PORTFOLIO_SUPABASE || {};
+
+      function setStatus(message, type = "info") {
+        statusNode.textContent = message;
+        statusNode.className = `status ${type === "error" ? "error" : type === "success" ? "success" : ""}`;
+      }
+
+      function urlParams() {
+        const query = new URLSearchParams(window.location.search || "");
+        const hash = new URLSearchParams(String(window.location.hash || "").replace(/^#/, ""));
+        return { query, hash };
+      }
+
+      function normalizeError(error) {
+        const text = String((error && (error.message || error.error_description || error.error)) || error || "Nieznany błąd.");
+        if (/expired|otp_expired|invalid/i.test(text)) {
+          return "Link aktywacyjny wygasł albo został już użyty. Wyślij potwierdzenie jeszcze raz z aplikacji i kliknij najnowszy mail.";
+        }
+        if (/already|confirmed/i.test(text)) {
+          return "Konto wygląda na już aktywowane. Wróć do aplikacji i spróbuj się zalogować.";
+        }
+        return text;
+      }
+
+      async function verifyTokenHash(client, tokenHash, rawType) {
+        const candidates = Array.from(new Set([rawType, "email", "signup"].filter(Boolean)));
+        let lastError = null;
+        for (const type of candidates) {
+          const { error } = await client.auth.verifyOtp({ token_hash: tokenHash, type });
+          if (!error) {
+            return;
+          }
+          lastError = error;
+        }
+        throw lastError || new Error("Nie udało się potwierdzić konta.");
+      }
+
+      async function bootstrapConfirmation() {
+        if (!config.url || !config.anonKey || !window.supabase) {
+          throw new Error("Brakuje konfiguracji Supabase na stronie aktywacji.");
+        }
+        const client = window.supabase.createClient(config.url, config.anonKey, {
+          auth: { detectSessionInUrl: false, persistSession: false }
+        });
+        const { query, hash } = urlParams();
+        const urlError = query.get("error_description") || hash.get("error_description") || query.get("error") || hash.get("error");
+        if (urlError) {
+          throw new Error(urlError);
+        }
+        const accessToken = hash.get("access_token");
+        const refreshToken = hash.get("refresh_token");
+        const code = query.get("code");
+        const tokenHash = query.get("token_hash") || hash.get("token_hash");
+        const rawType = query.get("type") || hash.get("type") || "email";
+        if (accessToken && refreshToken) {
+          const { error } = await client.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+          if (error) throw error;
+        } else if (code) {
+          const { error } = await client.auth.exchangeCodeForSession(code);
+          if (error) throw error;
+        } else if (tokenHash) {
+          await verifyTokenHash(client, tokenHash, rawType);
+        } else {
+          throw new Error("Ten adres nie zawiera aktywnego tokenu aktywacji konta.");
+        }
+        await client.auth.signOut();
+        setStatus("Konto aktywowane. Wróć do aplikacji i zaloguj się.", "success");
+      }
+
+      bootstrapConfirmation().catch((error) => {
+        setStatus(normalizeError(error), "error");
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,79 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="Prywatny Portfel"
+    Manufacturer="Bartlomiej Przybycien"
+    Version="$(AppVersion)"
+    UpgradeCode="5EFA2188-F70D-4B92-88FB-762CCBD9C7CC"
+    Language="1045"
+    Scope="perUser"
+    InstallerVersion="500"
+    Compressed="yes"
+  >
+    <SummaryInformation
+      Description="Prywatny Portfel - desktopowy tracker inwestycji"
+      Manufacturer="Bartlomiej Przybycien"
+    />
+    <MajorUpgrade DowngradeErrorMessage="Nowsza wersja Prywatny Portfel jest juz zainstalowana." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="INSTALLFOLDER" Name="Prywatny Portfel" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AppProgramMenuDir" Name="Prywatny Portfel" />
+    </StandardDirectory>
+
+    <Feature Id="MainFeature" Title="Prywatny Portfel" Level="1">
+      <ComponentGroupRef Id="AppComponents" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <ComponentGroup Id="AppComponents" Directory="INSTALLFOLDER">
+      <Component Id="MainExecutable" Guid="7F0F7A6B-91EA-46E6-8A19-8A7D713E6E6A">
+        <RegistryValue
+          Root="HKCU"
+          Key="Software\PrywatnyPortfel\Desktop"
+          Name="InstalledVersion"
+          Type="string"
+          Value="$(AppVersion)"
+          KeyPath="yes"
+        />
+        <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
+        <File
+          Id="PrywatnyPortfelExe"
+          Name="PrywatnyPortfel.exe"
+          Source="$(DesktopExePath)"
+        >
+          <Shortcut
+            Id="DesktopShortcut"
+            Directory="DesktopFolder"
+            Name="Prywatny Portfel"
+            Description="Prywatny Portfel"
+            WorkingDirectory="INSTALLFOLDER"
+          />
+          <Shortcut
+            Id="StartMenuShortcut"
+            Directory="AppProgramMenuDir"
+            Name="Prywatny Portfel"
+            Description="Prywatny Portfel"
+            WorkingDirectory="INSTALLFOLDER"
+          />
+        </File>
+      </Component>
+
+      <Component Id="ShortcutCleanup" Directory="AppProgramMenuDir" Guid="B46C1EBE-EA7B-4D84-BD09-5C485B4BF76A">
+        <RemoveFolder Id="RemoveAppProgramMenuDir" Directory="AppProgramMenuDir" On="uninstall" />
+        <RegistryValue
+          Root="HKCU"
+          Key="Software\PrywatnyPortfel\Desktop"
+          Name="Installed"
+          Type="integer"
+          Value="1"
+          KeyPath="yes"
+        />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+</Wix>

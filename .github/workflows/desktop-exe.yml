@@ -1,0 +1,113 @@
+name: Desktop Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "tests/**"
+      - "app.js"
+      - "index.html"
+      - "styles.css"
+      - "supabase-config.js"
+      - "reset-password.html"
+      - "confirm-email.html"
+      - "desktop_launcher.py"
+      - "desktop_launcher.spec"
+      - "installer/windows/**"
+      - ".github/workflows/desktop-exe.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Resolve desktop version
+        id: version
+        shell: pwsh
+        run: |
+          $refName = "${env:GITHUB_REF_NAME}"
+          $versionName = "0.7.6"
+          if ($refName -like "v*") {
+            $versionName = $refName.Substring(1)
+          }
+          $baseVersion = $versionName.Split('-')[0]
+          "name=$baseVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller pywebview
+
+      - name: Build EXE
+        run: pyinstaller desktop_launcher.spec --noconfirm
+
+      - name: Build MSI
+        shell: pwsh
+        run: |
+          dotnet build installer/windows/PrywatnyPortfel.Installer.wixproj `
+            -c Release `
+            -p:AppVersion="${{ steps.version.outputs.name }}" `
+            -p:DesktopExePath="${{ github.workspace }}\dist\PrywatnyPortfel.exe"
+
+      - name: Prepare artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build-artifacts | Out-Null
+          Copy-Item dist/PrywatnyPortfel.exe build-artifacts/prywatny-portfel-desktop.exe
+          Compress-Archive -Path dist/PrywatnyPortfel.exe -DestinationPath build-artifacts/prywatny-portfel-desktop-win.zip -Force
+          $msi = Get-ChildItem installer/windows -Recurse -Filter *.msi | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $msi) {
+            throw "MSI file was not created."
+          }
+          Copy-Item $msi.FullName build-artifacts/prywatny-portfel-desktop.msi
+
+      - name: Upload desktop artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: prywatny-portfel-desktop-windows
+          path: |
+            build-artifacts/prywatny-portfel-desktop.exe
+            build-artifacts/prywatny-portfel-desktop-win.zip
+            build-artifacts/prywatny-portfel-desktop.msi
+          retention-days: 30
+
+  release-windows:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-windows
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download desktop artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: prywatny-portfel-desktop-windows
+          path: dist
+
+      - name: Publish GitHub Release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/prywatny-portfel-desktop.exe
+            dist/prywatny-portfel-desktop-win.zip
+            dist/prywatny-portfel-desktop.msi
+          generate_release_notes: true

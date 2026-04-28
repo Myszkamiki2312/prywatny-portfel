@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Prywatny Portfel Mobile</string>
+    <string name="backend_online">Offline backend: online (%1$s)</string>
+    <string name="backend_offline">Offline backend: offline (%1$s)</string>
+    <string name="reload">Reload</string>
+    <string name="save">Zapisz</string>
+    <string name="cancel">Anuluj</string>
+</resources>

@@ -1,0 +1,174 @@
+/* XTB Premium - Ultimate Design */
+
+:root {
+  --xtb-bg: #0b0e11;
+  --xtb-card: #161a1e;
+  --xtb-primary: #1c73ff;
+  --xtb-success: #00c076;
+  --xtb-danger: #ff4d4d;
+  --xtb-text: #ffffff;
+  --xtb-text-muted: #848e9c;
+  --xtb-border: #2b3139;
+  --font-main: 'IBM Plex Sans', sans-serif;
+}
+
+/* OKNO LOGOWANIA NA ŚRODKU - MODERN DESIGN */
+.cloud-auth-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  display: none; /* Sterowane przez JS */
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+#cloudAuthOverlay:not([hidden]) {
+  display: flex !important;
+}
+
+.cloud-auth-card {
+  background: var(--xtb-card);
+  border: 1px solid rgba(28, 115, 255, 0.3);
+  border-radius: 16px;
+  padding: 40px;
+  width: 100%;
+  max-width: 420px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 20px rgba(28, 115, 255, 0.1);
+  text-align: center;
+  animation: modalIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes modalIn {
+  from { opacity: 0; transform: scale(0.9) translateY(20px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.cloud-auth-card .eyebrow {
+  color: var(--xtb-primary);
+  text-transform: uppercase;
+  font-weight: 800;
+  font-size: 0.7rem;
+  letter-spacing: 2px;
+  margin-bottom: 8px;
+}
+
+.cloud-auth-card h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 12px;
+  color: #fff;
+}
+
+.cloud-auth-form .control {
+  text-align: left;
+  margin-bottom: 20px;
+}
+
+.cloud-auth-form input {
+  width: 100%;
+  background: #1e2329 !important;
+  border: 1px solid #2b3139 !important;
+  padding: 12px !important;
+  border-radius: 8px !important;
+  color: #fff !important;
+  margin-top: 6px;
+}
+
+.cloud-auth-form .btn {
+  width: 100%;
+  padding: 14px;
+  border-radius: 8px;
+  background: var(--xtb-primary);
+  color: #fff;
+  font-weight: 700;
+  font-size: 1rem;
+  margin-top: 10px;
+  cursor: pointer;
+  border: none;
+}
+
+/* MENU KONTA - NOWOCZESNY DESIGN */
+.account-menu {
+  background: var(--xtb-card) !important;
+  border: 1px solid var(--xtb-border) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5) !important;
+  padding: 8px !important;
+  width: 280px !important;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.account-menu-item {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-start !important;
+  padding: 12px 16px !important;
+  border-radius: 8px !important;
+  transition: all 0.2s !important;
+  background: transparent !important;
+  border: none !important;
+  width: 100% !important;
+  text-align: left !important;
+  margin-bottom: 2px !important;
+  color: var(--xtb-text) !important;
+}
+
+.account-menu-item:hover {
+  background: rgba(28, 115, 255, 0.1) !important;
+  color: #fff !important;
+}
+
+.account-menu-item span {
+  font-weight: 600 !important;
+  font-size: 0.9rem !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+}
+
+.account-menu-item small {
+  color: var(--xtb-text-muted) !important;
+  font-size: 0.75rem !important;
+  margin-top: 2px !important;
+}
+
+/* Ikony w menu (zastępcze przez emoji dla stabilności) */
+#cloudSyncNowBtn span::before { content: "🔄"; }
+#exportBackupBtn span::before { content: "📥"; }
+#checkUpdateBtn span::before { content: "🚀"; color: var(--xtb-primary); }
+#themeToggleBtn span::before { content: "🌓"; }
+.file-btn span::before { content: "📤"; }
+#cloudSyncLogoutBtn span::before { content: "🚪"; }
+
+/* TOPBAR */
+.topbar {
+  background: #0b0e11;
+  border-bottom: 1px solid #1e2329;
+  padding: 0 24px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.account-chip {
+  background: #1e2329;
+  border: 1px solid #2b3139;
+  padding: 6px 16px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+}
+
+.account-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--xtb-success);
+  box-shadow: 0 0 10px var(--xtb-success);
+}

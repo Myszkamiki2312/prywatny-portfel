@@ -1,0 +1,1 @@
+"""Prywatny Portfel backend package."""
