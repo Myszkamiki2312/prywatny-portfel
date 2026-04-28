@@ -93,14 +93,24 @@ def start_runtime(static_root: Path, storage_root: Path, port: int, log_file: Pa
     os.environ["PRYWATNY_PORTFEL_DATA_ROOT"] = str(storage_root)
     os.environ["PRYWATNY_PORTFEL_SERVER_LOG"] = str(log_file)
 
-    from backend.server import create_runtime
+    import uvicorn
+    from backend.fastapi_app import app
 
-    runtime = create_runtime(
-        host=HOST,
-        port=port,
-        project_root=static_root,
-        data_root=storage_root,
-    )
+    class FastAPIRuntime:
+        def __init__(self, port):
+            self.config = uvicorn.Config(app, host=HOST, port=port, log_level="info", access_log=False)
+            self.server = uvicorn.Server(self.config)
+            self._stopped = False
+
+        def serve_forever(self):
+            self.server.run()
+
+        def stop(self):
+            if not self._stopped:
+                self._stopped = True
+                self.server.should_exit = True
+    
+    runtime = FastAPIRuntime(port)
     startup_state = {"error": "", "traceback": ""}
 
     def run_server() -> None:
@@ -109,11 +119,11 @@ def start_runtime(static_root: Path, storage_root: Path, port: int, log_file: Pa
         except Exception as error:  # noqa: BLE001
             startup_state["error"] = str(error)
             startup_state["traceback"] = traceback.format_exc(limit=10)
-            append_log(log_file, f"Backend thread crashed: {error}\n{startup_state['traceback']}")
+            append_log(log_file, f"FastAPI thread crashed: {error}\n{startup_state['traceback']}")
 
     thread = threading.Thread(
         target=run_server,
-        name="PrywatnyPortfelServer",
+        name="PrywatnyPortfelFastAPI",
         daemon=True,
     )
     thread.start()

@@ -166,3 +166,30 @@ body.auth-open {
   pointer-events: auto !important;
   cursor: pointer !important;
 }
+
+/* Pro Charts Styling */
+.pro-chart-container {
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--xtb-card);
+  border: 1px solid var(--xtb-border);
+}
+
+.tv-lightweight-charts {
+  /* Lightweight charts creates this class */
+  cursor: crosshair !important;
+}
+
+/* Force Pro Charts to be dark and clean */
+.pro-chart-container {
+  background-color: #161a1e !important;
+  border: 1px solid #2b3139 !important;
+  margin-top: 10px;
+}
+
+/* Hide original canvases more aggressively */
+canvas#dashboardChart, canvas#reportChart, canvas#candlesChart {
+  display: none !important;
+  visibility: hidden !important;
+  height: 0 !important;
+}

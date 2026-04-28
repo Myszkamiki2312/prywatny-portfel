@@ -9145,6 +9145,10 @@ function getChartPalette() {
 }
 
 function drawLineChart(canvas, labels, values, options = {}) {
+  if (window.drawProLineChart) {
+    window.drawProLineChart(canvas, labels, values, options);
+    return;
+  }
   const frame = prepareCanvasFrame(canvas);
   if (!frame) {
     return;
@@ -9546,6 +9550,10 @@ function ensureCandlestickChartState(canvas) {
 }
 
 function drawCandlestickChart(canvas, candles) {
+  if (window.drawProCandleChart) {
+    window.drawProCandleChart(canvas, candles);
+    return;
+  }
   const frame = prepareCanvasFrame(canvas);
   if (!frame) {
     return;
