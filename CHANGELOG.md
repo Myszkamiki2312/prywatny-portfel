@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.7.7 - 2026-04-29
+
+### Fixed
+- Import kopii JSON przyjmuje backupi z poprzednich wersji oraz raw stan aplikacji.
+- Import CSV obsługuje polskie nagłówki, BOM, cytowane pola, różne separatory, daty `dd.mm.yyyy` i kwoty `1.234,56`.
+- Import brokerów odrzuca pliki bez wymaganych nagłówków zamiast tworzyć puste operacje.
+- Backend poprawnie parsuje liczby z separatorami tysięcy i przecinkiem dziesiętnym.
+- Transakcja `replace_state` robi rollback po błędzie, więc nie zostawia bazy w częściowo skasowanym stanie.
+- Szybkie kolejne zapisy do backendu/Supabase nie gubią ostatniej zmiany.
+- Logowanie do Supabase nie nadpisuje po cichu lokalnych danych starszą chmurą.
+- Wygasły token Supabase odświeża się przez refresh token i ponawia request.
+- Linki ESPI akceptują tylko `http/https`, a niezaufany CDN wykresów został usunięty.
+- GitHub Pages, Windows build i Android asset sync zawierają brakujące pliki `styles-modern.css` oraz `js/**`.
+
+### Stability
+- Zweryfikowane lokalnie:
+  - `python3 -m unittest discover tests`
+  - `node --check app.js`
+  - `node --check frontend/dashboard.js`
+  - `node --check frontend/operations.js`
+  - `node --check frontend/tools.js`
+  - `node --check js/charts-pro.js`
+  - `node --test frontend_tests/*.test.js`
+  - `git diff --check`
+
 ## v0.7.6 - 2026-04-27
 
 ### Added

@@ -105,7 +105,7 @@ class ExtendedBrokerImportersTests(unittest.TestCase):
         csv_text = "\n".join(
             [
                 "Data;Rodzaj;Instrument;Ilosc;Cena;Kwota;Prowizja;Waluta",
-                "2026-02-22;Kupno;CDR;3;210,5;631,5;2,5;PLN",
+                "2026-02-22;Kupno;CDR;3;1.210,50;3.631,50;2,5;PLN",
             ]
         )
         database = FakeDatabase()
@@ -120,11 +120,20 @@ class ExtendedBrokerImportersTests(unittest.TestCase):
         row = database.state["operations"][0]
         self.assertEqual(row["type"], "Kupno waloru")
         self.assertEqual(row["quantity"], 3.0)
-        self.assertEqual(row["price"], 210.5)
-        self.assertEqual(row["amount"], 631.5)
+        self.assertEqual(row["price"], 1210.5)
+        self.assertEqual(row["amount"], 3631.5)
         self.assertEqual(row["fee"], 2.5)
         self.assertEqual(row["currency"], "PLN")
         self.assertEqual(row["tags"], ["bossa"])
+
+    def test_ibkr_rejects_csv_without_required_headers(self):
+        database = FakeDatabase()
+        importer = BrokerImporter(database)
+
+        with self.assertRaises(ValueError):
+            importer.import_csv(broker="ibkr", csv_text="foo,bar\n1,2", options={"fileName": "bad.csv"})
+
+        self.assertEqual(database.state["operations"], [])
 
 
 if __name__ == "__main__":

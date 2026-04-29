@@ -595,197 +595,201 @@ class Database:
         state = normalize_state(state_payload)
         with self._lock:
             cursor = self._conn.cursor()
-            cursor.execute("BEGIN")
-            meta_rows = cursor.execute("SELECT key, value FROM meta").fetchall()
-            preserved_meta = {
-                row["key"]: row["value"]
-                for row in meta_rows
-                if row["key"]
-                not in {
-                    "activePlan",
-                    "baseCurrency",
-                    "createdAt",
-                    "fxRates",
-                    "theme",
-                    "lastLightTheme",
-                    "iconSet",
-                    "fontScale",
-                    "dashboardInflationEnabled",
-                    "dashboardInflationRatePct",
+            try:
+                cursor.execute("BEGIN")
+                meta_rows = cursor.execute("SELECT key, value FROM meta").fetchall()
+                preserved_meta = {
+                    row["key"]: row["value"]
+                    for row in meta_rows
+                    if row["key"]
+                    not in {
+                        "activePlan",
+                        "baseCurrency",
+                        "createdAt",
+                        "fxRates",
+                        "theme",
+                        "lastLightTheme",
+                        "iconSet",
+                        "fontScale",
+                        "dashboardInflationEnabled",
+                        "dashboardInflationRatePct",
+                    }
                 }
-            }
-            for table in [
-                "meta",
-                "portfolios",
-                "accounts",
-                "assets",
-                "operations",
-                "recurring_ops",
-                "liabilities",
-                "alerts",
-                "notes",
-                "strategies",
-                "favorites",
-            ]:
-                cursor.execute(f"DELETE FROM {table}")
+                for table in [
+                    "meta",
+                    "portfolios",
+                    "accounts",
+                    "assets",
+                    "operations",
+                    "recurring_ops",
+                    "liabilities",
+                    "alerts",
+                    "notes",
+                    "strategies",
+                    "favorites",
+                ]:
+                    cursor.execute(f"DELETE FROM {table}")
 
-            for key, value in state["meta"].items():
-                stored = json.dumps(value, ensure_ascii=False) if key == "fxRates" else str(value)
-                cursor.execute("INSERT INTO meta (key, value) VALUES (?, ?)", (key, stored))
-            for key, value in preserved_meta.items():
-                cursor.execute("INSERT INTO meta (key, value) VALUES (?, ?)", (key, str(value)))
+                for key, value in state["meta"].items():
+                    stored = json.dumps(value, ensure_ascii=False) if key == "fxRates" else str(value)
+                    cursor.execute("INSERT INTO meta (key, value) VALUES (?, ?)", (key, stored))
+                for key, value in preserved_meta.items():
+                    cursor.execute("INSERT INTO meta (key, value) VALUES (?, ?)", (key, str(value)))
 
-            for item in state["portfolios"]:
-                cursor.execute(
-                    """
-                    INSERT INTO portfolios
-                    (id, name, currency, benchmark, goal, parent_id, twin_of, group_name, is_public, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        item["id"],
-                        item["name"],
-                        item["currency"],
-                        item["benchmark"],
-                        item["goal"],
-                        item["parentId"],
-                        item["twinOf"],
-                        item["groupName"],
-                        1 if item["isPublic"] else 0,
-                        item["createdAt"],
-                    ),
-                )
+                for item in state["portfolios"]:
+                    cursor.execute(
+                        """
+                        INSERT INTO portfolios
+                        (id, name, currency, benchmark, goal, parent_id, twin_of, group_name, is_public, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            item["id"],
+                            item["name"],
+                            item["currency"],
+                            item["benchmark"],
+                            item["goal"],
+                            item["parentId"],
+                            item["twinOf"],
+                            item["groupName"],
+                            1 if item["isPublic"] else 0,
+                            item["createdAt"],
+                        ),
+                    )
 
-            for item in state["accounts"]:
-                cursor.execute(
-                    "INSERT INTO accounts (id, name, type, currency, created_at) VALUES (?, ?, ?, ?, ?)",
-                    (item["id"], item["name"], item["type"], item["currency"], item["createdAt"]),
-                )
+                for item in state["accounts"]:
+                    cursor.execute(
+                        "INSERT INTO accounts (id, name, type, currency, created_at) VALUES (?, ?, ?, ?, ?)",
+                        (item["id"], item["name"], item["type"], item["currency"], item["createdAt"]),
+                    )
 
-            for item in state["assets"]:
-                cursor.execute(
-                    """
-                    INSERT INTO assets
-                    (id, ticker, name, type, currency, current_price, risk, sector, industry, tags_json, benchmark, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        item["id"],
-                        item["ticker"],
-                        item["name"],
-                        item["type"],
-                        item["currency"],
-                        item["currentPrice"],
-                        item["risk"],
-                        item["sector"],
-                        item["industry"],
-                        json.dumps(item["tags"], ensure_ascii=False),
-                        item["benchmark"],
-                        item["createdAt"],
-                    ),
-                )
+                for item in state["assets"]:
+                    cursor.execute(
+                        """
+                        INSERT INTO assets
+                        (id, ticker, name, type, currency, current_price, risk, sector, industry, tags_json, benchmark, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            item["id"],
+                            item["ticker"],
+                            item["name"],
+                            item["type"],
+                            item["currency"],
+                            item["currentPrice"],
+                            item["risk"],
+                            item["sector"],
+                            item["industry"],
+                            json.dumps(item["tags"], ensure_ascii=False),
+                            item["benchmark"],
+                            item["createdAt"],
+                        ),
+                    )
 
-            for item in state["operations"]:
-                cursor.execute(
-                    """
-                    INSERT INTO operations
-                    (id, date, type, portfolio_id, account_id, asset_id, target_asset_id, quantity, target_quantity, price, amount, fee, currency, tags_json, note, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        item["id"],
-                        item["date"],
-                        item["type"],
-                        item["portfolioId"],
-                        item["accountId"],
-                        item["assetId"],
-                        item["targetAssetId"],
-                        item["quantity"],
-                        item["targetQuantity"],
-                        item["price"],
-                        item["amount"],
-                        item["fee"],
-                        item["currency"],
-                        json.dumps(item["tags"], ensure_ascii=False),
-                        item["note"],
-                        item["createdAt"],
-                    ),
-                )
+                for item in state["operations"]:
+                    cursor.execute(
+                        """
+                        INSERT INTO operations
+                        (id, date, type, portfolio_id, account_id, asset_id, target_asset_id, quantity, target_quantity, price, amount, fee, currency, tags_json, note, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            item["id"],
+                            item["date"],
+                            item["type"],
+                            item["portfolioId"],
+                            item["accountId"],
+                            item["assetId"],
+                            item["targetAssetId"],
+                            item["quantity"],
+                            item["targetQuantity"],
+                            item["price"],
+                            item["amount"],
+                            item["fee"],
+                            item["currency"],
+                            json.dumps(item["tags"], ensure_ascii=False),
+                            item["note"],
+                            item["createdAt"],
+                        ),
+                    )
 
-            for item in state["recurringOps"]:
-                cursor.execute(
-                    """
-                    INSERT INTO recurring_ops
-                    (id, name, type, frequency, start_date, amount, portfolio_id, account_id, asset_id, currency, last_generated_date, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        item["id"],
-                        item["name"],
-                        item["type"],
-                        item["frequency"],
-                        item["startDate"],
-                        item["amount"],
-                        item["portfolioId"],
-                        item["accountId"],
-                        item["assetId"],
-                        item["currency"],
-                        item["lastGeneratedDate"],
-                        item["createdAt"],
-                    ),
-                )
+                for item in state["recurringOps"]:
+                    cursor.execute(
+                        """
+                        INSERT INTO recurring_ops
+                        (id, name, type, frequency, start_date, amount, portfolio_id, account_id, asset_id, currency, last_generated_date, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            item["id"],
+                            item["name"],
+                            item["type"],
+                            item["frequency"],
+                            item["startDate"],
+                            item["amount"],
+                            item["portfolioId"],
+                            item["accountId"],
+                            item["assetId"],
+                            item["currency"],
+                            item["lastGeneratedDate"],
+                            item["createdAt"],
+                        ),
+                    )
 
-            for item in state["liabilities"]:
-                cursor.execute(
-                    """
-                    INSERT INTO liabilities
-                    (id, name, amount, currency, rate, due_date, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        item["id"],
-                        item["name"],
-                        item["amount"],
-                        item["currency"],
-                        item["rate"],
-                        item["dueDate"],
-                        item["createdAt"],
-                    ),
-                )
+                for item in state["liabilities"]:
+                    cursor.execute(
+                        """
+                        INSERT INTO liabilities
+                        (id, name, amount, currency, rate, due_date, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            item["id"],
+                            item["name"],
+                            item["amount"],
+                            item["currency"],
+                            item["rate"],
+                            item["dueDate"],
+                            item["createdAt"],
+                        ),
+                    )
 
-            for item in state["alerts"]:
-                cursor.execute(
-                    """
-                    INSERT INTO alerts
-                    (id, asset_id, direction, target_price, created_at, last_trigger_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        item["id"],
-                        item["assetId"],
-                        item["direction"],
-                        item["targetPrice"],
-                        item["createdAt"],
-                        item["lastTriggerAt"],
-                    ),
-                )
+                for item in state["alerts"]:
+                    cursor.execute(
+                        """
+                        INSERT INTO alerts
+                        (id, asset_id, direction, target_price, created_at, last_trigger_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            item["id"],
+                            item["assetId"],
+                            item["direction"],
+                            item["targetPrice"],
+                            item["createdAt"],
+                            item["lastTriggerAt"],
+                        ),
+                    )
 
-            for item in state["notes"]:
-                cursor.execute(
-                    "INSERT INTO notes (id, content, created_at) VALUES (?, ?, ?)",
-                    (item["id"], item["content"], item["createdAt"]),
-                )
+                for item in state["notes"]:
+                    cursor.execute(
+                        "INSERT INTO notes (id, content, created_at) VALUES (?, ?, ?)",
+                        (item["id"], item["content"], item["createdAt"]),
+                    )
 
-            for item in state["strategies"]:
-                cursor.execute(
-                    "INSERT INTO strategies (id, name, description, created_at) VALUES (?, ?, ?, ?)",
-                    (item["id"], item["name"], item["description"], item["createdAt"]),
-                )
+                for item in state["strategies"]:
+                    cursor.execute(
+                        "INSERT INTO strategies (id, name, description, created_at) VALUES (?, ?, ?, ?)",
+                        (item["id"], item["name"], item["description"], item["createdAt"]),
+                    )
 
-            for asset_id in state["favorites"]:
-                cursor.execute("INSERT INTO favorites (asset_id) VALUES (?)", (asset_id,))
+                for asset_id in state["favorites"]:
+                    cursor.execute("INSERT INTO favorites (asset_id) VALUES (?)", (asset_id,))
 
-            self._conn.commit()
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
         return state
 
     def upsert_quotes(self, quotes: List[Dict[str, Any]]) -> None:

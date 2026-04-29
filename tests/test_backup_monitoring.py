@@ -53,6 +53,49 @@ class BackupMonitoringTests(unittest.TestCase):
         self.database.close()
         self.tmp.cleanup()
 
+    def test_replace_state_rolls_back_failed_transaction(self):
+        original = self.database.get_state()
+        broken = self.database.get_state()
+        broken["assets"] = [
+            {
+                "id": "dup",
+                "ticker": "AAA",
+                "name": "AAA",
+                "type": "Akcja",
+                "currency": "PLN",
+                "currentPrice": 1.0,
+                "risk": 5,
+                "sector": "",
+                "industry": "",
+                "tags": [],
+                "benchmark": "",
+                "createdAt": now_iso(),
+            },
+            {
+                "id": "dup",
+                "ticker": "BBB",
+                "name": "BBB",
+                "type": "Akcja",
+                "currency": "PLN",
+                "currentPrice": 2.0,
+                "risk": 5,
+                "sector": "",
+                "industry": "",
+                "tags": [],
+                "benchmark": "",
+                "createdAt": now_iso(),
+            },
+        ]
+
+        with self.assertRaises(Exception):
+            self.database.replace_state(broken)
+
+        self.assertEqual(len(self.database.get_state()["assets"]), len(original["assets"]))
+        valid = self.database.get_state()
+        valid["assets"] = broken["assets"][:1]
+        self.database.replace_state(valid)
+        self.assertEqual(len(self.database.get_state()["assets"]), 1)
+
     def test_backup_endpoints_run_and_verify(self):
         config_payload = self.handler.dispatch(
             "PUT",

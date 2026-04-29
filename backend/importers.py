@@ -45,6 +45,17 @@ SUPPORTED_BROKERS: Dict[str, Dict[str, Any]] = {
     },
 }
 
+REQUIRED_HEADER_ALIASES: Dict[str, List[str]] = {
+    "date": ["date", "data", "time", "datetime", "date/time", "tradeTime", "executionDate"],
+    "time": ["time", "date", "datetime", "date/time"],
+    "symbol": ["symbol", "ticker", "underlyingSymbol", "instrument"],
+    "quantity": ["quantity", "qty", "shares", "ilosc", "ilość", "wolumen"],
+    "data": ["data", "date", "time", "datetime"],
+    "rodzaj": ["rodzaj", "rodzajOperacji", "type", "typ", "operacja"],
+    "instrument": ["instrument", "walor", "ticker", "symbol", "nazwa"],
+    "product": ["product", "instrument", "security", "nazwa"],
+}
+
 
 class BrokerImporter:
     def __init__(self, database: Database):
@@ -67,6 +78,7 @@ class BrokerImporter:
             raise ValueError(f"Unsupported broker: {broker_id}")
 
         rows = parse_csv_rows(csv_text)
+        _validate_required_headers(broker_id, rows)
         state = self.database.get_state()
         created = {"assets": 0, "accounts": 0, "portfolios": 0}
 
@@ -147,6 +159,20 @@ def normalize_row_keys(row: Dict[str, str]) -> Dict[str, str]:
     for key, value in row.items():
         normalized[_normalize_key(key)] = str(value or "").strip()
     return normalized
+
+
+def _validate_required_headers(broker_id: str, rows: List[Dict[str, str]]) -> None:
+    if not rows:
+        return
+    normalized_headers = {_normalize_key(key) for key in rows[0].keys()}
+    missing = []
+    for required in SUPPORTED_BROKERS[broker_id]["requiredHeaders"]:
+        aliases = REQUIRED_HEADER_ALIASES.get(required, [required])
+        if not any(_normalize_key(alias) in normalized_headers for alias in aliases):
+            missing.append(required)
+    if missing:
+        readable = ", ".join(SUPPORTED_BROKERS[broker_id]["requiredHeaders"])
+        raise ValueError(f"Missing required CSV headers for {broker_id}: {readable}")
 
 
 def row_value(row: Dict[str, str], *keys: str) -> str:

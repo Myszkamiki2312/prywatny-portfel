@@ -11,8 +11,10 @@ on:
       - "confirm-email.html"
       - "app.js"
       - "styles.css"
+      - "styles-modern.css"
       - "supabase-config.js"
       - "frontend/**"
+      - "js/**"
       - ".github/workflows/pages.yml"
 
 permissions:
@@ -37,8 +39,9 @@ jobs:
       - name: Prepare static site
         run: |
           mkdir -p public
-          cp index.html app.js styles.css supabase-config.js reset-password.html confirm-email.html public/
+          cp index.html app.js styles.css styles-modern.css supabase-config.js reset-password.html confirm-email.html public/
           cp -R frontend public/frontend
+          cp -R js public/js
 
       - name: Configure Pages
         uses: actions/configure-pages@v5

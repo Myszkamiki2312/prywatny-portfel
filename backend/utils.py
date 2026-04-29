@@ -17,7 +17,15 @@ def now_iso() -> str:
 def to_num(value: Any, default: float = 0.0) -> float:
     if isinstance(value, (int, float)):
         return float(value)
-    text = str(value or "").strip().replace(" ", "").replace(",", ".")
+    text = re.sub(r"[^\d,.\-]", "", str(value or "").strip().replace(" ", ""))
+    last_comma = text.rfind(",")
+    last_dot = text.rfind(".")
+    if last_comma >= 0 and last_dot >= 0:
+        decimal_separator = "," if last_comma > last_dot else "."
+        thousands_separator = "." if decimal_separator == "," else ","
+        text = text.replace(thousands_separator, "").replace(decimal_separator, ".")
+    elif last_comma >= 0:
+        text = text.replace(",", ".")
     try:
         return float(text)
     except ValueError:

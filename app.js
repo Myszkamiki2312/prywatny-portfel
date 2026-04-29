@@ -313,6 +313,7 @@ const backendSync = {
   checked: false,
   pushTimer: 0,
   pushInFlight: false,
+  pendingPush: false,
   fxSyncTimer: 0,
   fxSyncInFlight: false,
   suspendPush: false,
@@ -326,6 +327,7 @@ let cloudSyncConfig = loadCloudSyncConfig();
 const cloudSyncRuntime = {
   pushTimer: 0,
   pushInFlight: false,
+  pendingPush: false,
   pullInFlight: false,
   suppressPush: false
 };
@@ -1425,6 +1427,10 @@ function assertCloudSyncReady({ requireSession = true } = {}) {
 }
 
 async function supabaseRequest(path, options = {}) {
+  return supabaseRequestWithRetry(path, options, false);
+}
+
+async function supabaseRequestWithRetry(path, options = {}, didRefresh = false) {
   assertCloudSyncReady({ requireSession: Boolean(options.requireSession) });
   const headers = {
     apikey: cloudSyncConfig.anonKey,
@@ -1445,9 +1451,49 @@ async function supabaseRequest(path, options = {}) {
     payload = { message: text };
   }
   if (!response.ok) {
-    throw new Error(normalizeSupabaseError(payload, response.status));
+    const message = normalizeSupabaseError(payload, response.status);
+    if (
+      !didRefresh &&
+      options.requireSession &&
+      cloudSyncConfig.refreshToken &&
+      (response.status === 401 || /jwt|token|expired|session/i.test(message))
+    ) {
+      await refreshSupabaseSession();
+      return supabaseRequestWithRetry(path, options, true);
+    }
+    throw new Error(message);
   }
   return payload;
+}
+
+async function refreshSupabaseSession() {
+  const response = await fetch(`${cloudSyncConfig.url}/auth/v1/token?grant_type=refresh_token`, {
+    method: "POST",
+    headers: {
+      apikey: cloudSyncConfig.anonKey,
+      Authorization: `Bearer ${cloudSyncConfig.anonKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ refresh_token: cloudSyncConfig.refreshToken })
+  });
+  const text = await response.text();
+  let payload = null;
+  try {
+    payload = text ? JSON.parse(text) : null;
+  } catch (error) {
+    payload = { message: text };
+  }
+  if (!response.ok) {
+    throw new Error(normalizeSupabaseError(payload, response.status));
+  }
+  const session = payload && (payload.session || payload);
+  cloudSyncConfig = normalizeCloudSyncConfig({
+    ...cloudSyncConfig,
+    accessToken: session && session.access_token,
+    refreshToken: session && session.refresh_token,
+    lastError: ""
+  });
+  saveCloudSyncConfig();
 }
 
 function normalizeSupabaseError(payload, status) {
@@ -1558,7 +1604,7 @@ async function authenticateWithCloud(email, password) {
     throw new Error("Konto utworzone. Sprawdź e-mail i kliknij link potwierdzający, potem wróć do logowania.");
   }
   saveCloudSyncConfig();
-  await pullCloudState({ silent: true, createIfMissing: true });
+  await pullCloudState({ silent: true, createIfMissing: true, protectLocal: true });
   closeCloudAuthOverlay();
   document.body.classList.remove("auth-open");
   renderAll();
@@ -1733,6 +1779,10 @@ function scheduleCloudPush() {
   if (!cloudSyncConfig.enabled || !cloudSyncConfig.accessToken || cloudSyncRuntime.suppressPush) {
     return;
   }
+  if (cloudSyncRuntime.pushInFlight) {
+    cloudSyncRuntime.pendingPush = true;
+    return;
+  }
   window.clearTimeout(cloudSyncRuntime.pushTimer);
   cloudSyncRuntime.pushTimer = window.setTimeout(() => {
     void pushCloudState({ reason: "auto" });
@@ -1741,6 +1791,7 @@ function scheduleCloudPush() {
 
 async function pushCloudState({ force = false, reason = "manual" } = {}) {
   if (cloudSyncRuntime.pushInFlight) {
+    cloudSyncRuntime.pendingPush = true;
     return;
   }
   try {
@@ -1772,11 +1823,15 @@ async function pushCloudState({ force = false, reason = "manual" } = {}) {
     }
   } finally {
     cloudSyncRuntime.pushInFlight = false;
+    if (cloudSyncRuntime.pendingPush) {
+      cloudSyncRuntime.pendingPush = false;
+      scheduleCloudPush();
+    }
     updateCloudSyncInfo();
   }
 }
 
-async function pullCloudState({ silent = false, createIfMissing = false } = {}) {
+async function pullCloudState({ silent = false, createIfMissing = false, protectLocal = false } = {}) {
   if (cloudSyncRuntime.pullInFlight) {
     return;
   }
@@ -1795,6 +1850,10 @@ async function pullCloudState({ silent = false, createIfMissing = false } = {}) 
       } else if (!silent) {
         window.alert("W chmurze nie ma jeszcze danych. Po pierwszej zmianie aplikacja zsynchronizuje portfel.");
       }
+      return;
+    }
+    if (protectLocal && hasMeaningfulLocalState() && stateFingerprint(row.state) !== stateFingerprint(state)) {
+      await pushCloudState({ force: true, reason: "login-local" });
       return;
     }
     cloudSyncRuntime.suppressPush = true;
@@ -4180,7 +4239,7 @@ function renderEspiRows(items) {
     escapeHtml(item.ticker || "-"),
     escapeHtml(item.title || "-"),
     escapeHtml(item.source || "-"),
-    item.link ? `<a href="${escapeHtml(item.link)}" target="_blank" rel="noopener">otwórz</a>` : "-"
+    safeExternalLink(item.link)
   ]);
   renderTable(dom.espiTable, ["Data", "Ticker", "Tytuł", "Źródło", "Link"], rows);
 }
@@ -4651,6 +4710,10 @@ function scheduleBackendPush() {
   if (!backendSync.available || backendSync.suspendPush) {
     return;
   }
+  if (backendSync.pushInFlight) {
+    backendSync.pendingPush = true;
+    return;
+  }
   if (backendSync.pushTimer) {
     window.clearTimeout(backendSync.pushTimer);
   }
@@ -4660,7 +4723,11 @@ function scheduleBackendPush() {
 }
 
 async function pushStateToBackend() {
-  if (!backendSync.available || backendSync.suspendPush || backendSync.pushInFlight) {
+  if (!backendSync.available || backendSync.suspendPush) {
+    return;
+  }
+  if (backendSync.pushInFlight) {
+    backendSync.pendingPush = true;
     return;
   }
   backendSync.pushInFlight = true;
@@ -4675,6 +4742,10 @@ async function pushStateToBackend() {
     backendSync.available = false;
   } finally {
     backendSync.pushInFlight = false;
+    if (backendSync.pendingPush) {
+      backendSync.pendingPush = false;
+      scheduleBackendPush();
+    }
     updateBackendStatus();
   }
 }
@@ -6307,10 +6378,11 @@ function onBackupImport(event) {
   reader.onload = () => {
     try {
       const payload = JSON.parse(String(reader.result || "{}"));
-      if (!payload.state) {
+      const importedState = extractImportState(payload);
+      if (!importedState) {
         throw new Error("Niepoprawny format kopii.");
       }
-      state = normalizeState(payload.state);
+      state = normalizeState(importedState);
       saveState();
       renderAll();
       window.alert("Kopia została zaimportowana.");
@@ -9155,8 +9227,14 @@ function getChartPalette() {
 
 function drawLineChart(canvas, labels, values, options = {}) {
   if (window.drawProLineChart) {
-    window.drawProLineChart(canvas, labels, values, options);
-    return;
+    try {
+      window.drawProLineChart(canvas, labels, values, options);
+      return;
+    } catch (error) {
+      if (!String(error && error.message ? error.message : error).includes("LightweightCharts")) {
+        throw error;
+      }
+    }
   }
   const frame = prepareCanvasFrame(canvas);
   if (!frame) {
@@ -9732,24 +9810,27 @@ function importOperations(rows) {
   }
   let imported = 0;
   rows.forEach((row) => {
+    const read = (...aliases) => getImportValue(row, aliases);
     const type = textOrFallback(
-      row.type || row.operation_type || row.rodzaj || row.operation,
+      read("type", "operation_type", "operationType", "rodzaj", "typ", "operacja", "operation"),
       "Operacja gotówkowa"
     );
-    const portfolioId = resolvePortfolio(row.portfolio || row.portfel || "");
-    const accountId = resolveAccount(row.account || row.konto || "");
-    const assetId = resolveAsset(row.asset || row.walor || row.ticker || "");
-    const targetAssetId = resolveAsset(row.targetAsset || row.target_asset || row.walorDocelowy || "");
+    const portfolioId = resolvePortfolio(read("portfolio", "portfolioId", "portfel", "portfelId"));
+    const accountId = resolveAccount(read("account", "accountId", "konto", "kontoId", "rachunek"));
+    const assetId = resolveAsset(read("asset", "assetId", "walor", "ticker", "symbol", "instrument"));
+    const targetAssetId = resolveAsset(
+      read("targetAsset", "targetAssetId", "target_asset", "walorDocelowy", "docelowyWalor", "target")
+    );
 
-    const date = normalizeDate(row.date || row.data || todayIso());
-    const currency = textOrFallback(row.currency || row.waluta, state.meta.baseCurrency);
-    const quantity = toNum(row.quantity || row.ilosc);
-    const targetQuantity = toNum(row.targetQuantity || row.iloscDocelowa);
-    const price = toNum(row.price || row.cena);
-    const amount = toNum(row.amount || row.kwota);
-    const fee = toNum(row.fee || row.prowizja);
-    const tags = toTags(row.tags || row.tagi);
-    const note = row.note || row.notatka || "";
+    const date = normalizeDate(read("date", "data", "operationDate", "dataOperacji") || todayIso());
+    const currency = textOrFallback(read("currency", "waluta", "ccy"), state.meta.baseCurrency);
+    const quantity = toNum(read("quantity", "ilosc", "ilość", "qty", "liczba"));
+    const targetQuantity = toNum(read("targetQuantity", "iloscDocelowa", "ilośćDocelowa", "targetQty"));
+    const price = toNum(read("price", "cena", "kurs"));
+    const amount = toNum(read("amount", "kwota", "wartosc", "wartość", "value"));
+    const fee = toNum(read("fee", "prowizja", "oplata", "opłata", "koszt"));
+    const tags = toTags(read("tags", "tagi", "etykiety"));
+    const note = read("note", "notatka", "opis", "komentarz", "comment");
 
     state.operations.push({
       id: makeId("op"),
@@ -9775,18 +9856,18 @@ function importOperations(rows) {
 }
 
 function parseDelimited(text) {
-  const lines = String(text || "")
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (!lines.length) {
+  const records = parseDelimitedRecords(String(text || "").replace(/^\uFEFF/, ""));
+  if (!records.length) {
     return [];
   }
-  const delimiter = detectDelimiter(lines[0]);
-  const headers = splitLine(lines[0], delimiter).map((header) => header.trim());
+  const delimiter = detectDelimiter(records[0]);
+  const headers = splitLine(records[0], delimiter).map((header) => header.trim().replace(/^\uFEFF/, ""));
   const output = [];
-  for (let i = 1; i < lines.length; i += 1) {
-    const cols = splitLine(lines[i], delimiter);
+  for (let i = 1; i < records.length; i += 1) {
+    const cols = splitLine(records[i], delimiter);
+    if (cols.every((value) => !String(value || "").trim())) {
+      continue;
+    }
     const row = {};
     headers.forEach((header, idx) => {
       row[header] = cols[idx] != null ? cols[idx].trim() : "";
@@ -9794,6 +9875,41 @@ function parseDelimited(text) {
     output.push(row);
   }
   return output;
+}
+
+function parseDelimitedRecords(text) {
+  const records = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    const next = text[i + 1];
+    if (char === '"') {
+      if (inQuotes && next === '"') {
+        current += '""';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+        current += char;
+      }
+      continue;
+    }
+    if ((char === "\n" || char === "\r") && !inQuotes) {
+      if (char === "\r" && next === "\n") {
+        i += 1;
+      }
+      if (current.trim()) {
+        records.push(current.trim());
+      }
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  if (current.trim()) {
+    records.push(current.trim());
+  }
+  return records;
 }
 
 function detectDelimiter(line) {
@@ -9816,8 +9932,14 @@ function splitLine(line, delimiter) {
   let inQuotes = false;
   for (let i = 0; i < line.length; i += 1) {
     const char = line[i];
+    const next = line[i + 1];
     if (char === '"') {
-      inQuotes = !inQuotes;
+      if (inQuotes && next === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
       continue;
     }
     if (char === delimiter && !inQuotes) {
@@ -9829,6 +9951,73 @@ function splitLine(line, delimiter) {
   }
   out.push(current);
   return out;
+}
+
+function getImportValue(row, aliases) {
+  if (!row || typeof row !== "object") {
+    return "";
+  }
+  const wanted = new Set(aliases.map(normalizeImportKey));
+  for (const [key, value] of Object.entries(row)) {
+    if (wanted.has(normalizeImportKey(key))) {
+      return value == null ? "" : String(value).trim();
+    }
+  }
+  return "";
+}
+
+function normalizeImportKey(value) {
+  return String(value || "")
+    .replace(/^\uFEFF/, "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]/g, "")
+    .toLowerCase();
+}
+
+function extractImportState(payload) {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const candidates = [
+    payload.state,
+    payload.appState,
+    payload.data && payload.data.state,
+    payload.data && payload.data.appState,
+    payload.state_json,
+    payload.stateJson,
+    payload
+  ];
+  for (const candidate of candidates) {
+    const parsed = parseStateCandidate(candidate);
+    if (parsed && looksLikeStatePayload(parsed)) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+function parseStateCandidate(candidate) {
+  if (!candidate) {
+    return null;
+  }
+  if (typeof candidate === "string") {
+    try {
+      return JSON.parse(candidate);
+    } catch (error) {
+      return null;
+    }
+  }
+  return typeof candidate === "object" ? candidate : null;
+}
+
+function looksLikeStatePayload(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  return ["meta", "portfolios", "accounts", "assets", "operations", "recurringOps"].some((key) =>
+    Object.prototype.hasOwnProperty.call(value, key)
+  );
 }
 
 function resolvePortfolio(value) {
@@ -10318,6 +10507,23 @@ function normalizeState(input) {
   return normalized;
 }
 
+function hasMeaningfulLocalState() {
+  return Boolean(
+    (Array.isArray(state.assets) && state.assets.length) ||
+      (Array.isArray(state.operations) && state.operations.length) ||
+      (Array.isArray(state.recurringOps) && state.recurringOps.length) ||
+      (Array.isArray(state.liabilities) && state.liabilities.length) ||
+      (Array.isArray(state.alerts) && state.alerts.length) ||
+      (Array.isArray(state.notes) && state.notes.length) ||
+      (Array.isArray(state.strategies) && state.strategies.length) ||
+      (Array.isArray(state.favorites) && state.favorites.length)
+  );
+}
+
+function stateFingerprint(value) {
+  return JSON.stringify(normalizeState(value));
+}
+
 function saveState(options = {}) {
   if (!options.preserveHistoryCache) {
     invalidateDashboardHistoryCache();
@@ -10404,10 +10610,20 @@ function toNum(value) {
     }
     return 0;
   }
-  const normalized = String(value || "")
+  const compact = String(value || "")
     .trim()
     .replace(/\s/g, "")
-    .replace(",", ".");
+    .replace(/[^\d,.\-]/g, "");
+  const lastComma = compact.lastIndexOf(",");
+  const lastDot = compact.lastIndexOf(".");
+  let normalized = compact;
+  if (lastComma >= 0 && lastDot >= 0) {
+    const decimalSeparator = lastComma > lastDot ? "," : ".";
+    const thousandsSeparator = decimalSeparator === "," ? "." : ",";
+    normalized = compact.replaceAll(thousandsSeparator, "").replace(decimalSeparator, ".");
+  } else if (lastComma >= 0) {
+    normalized = compact.replace(",", ".");
+  }
   const number = Number(normalized);
   return Number.isFinite(number) ? number : 0;
 }
@@ -10429,6 +10645,20 @@ function normalizeDate(value) {
   const text = String(value).trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
     return text;
+  }
+  const polishDate = text.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
+  if (polishDate) {
+    const day = Number(polishDate[1]);
+    const month = Number(polishDate[2]);
+    const year = Number(polishDate[3]);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (
+      date.getUTCFullYear() === year &&
+      date.getUTCMonth() === month - 1 &&
+      date.getUTCDate() === day
+    ) {
+      return date.toISOString().slice(0, 10);
+    }
   }
   const date = new Date(text);
   if (!Number.isFinite(date.getTime())) {
@@ -10570,6 +10800,22 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function safeExternalLink(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "-";
+  }
+  try {
+    const parsed = new URL(raw, window.location.href);
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      return escapeHtml(raw);
+    }
+    return `<a href="${escapeHtml(parsed.href)}" target="_blank" rel="noopener noreferrer">otwórz</a>`;
+  } catch (error) {
+    return escapeHtml(raw);
+  }
 }
 
 if (typeof globalThis !== "undefined" && globalThis.__MYFUND_ENABLE_TEST_HOOKS__) {

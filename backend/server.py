@@ -239,6 +239,10 @@ class AppHandler(SimpleHTTPRequestHandler):
 
     def _authorize_api_request(self, path: str) -> None:
         expected = str(os.environ.get(API_TOKEN_ENV) or "").strip()
+        if path in {"/api/update/check", "/api/update/apply"}:
+            client_host = str((getattr(self, "client_address", ("127.0.0.1", 0)) or ("127.0.0.1", 0))[0])
+            if client_host not in {"127.0.0.1", "::1"} and not expected:
+                raise ApiError(403, "Update endpoints require localhost or API token.")
         if not expected:
             return
         if path in {"/api/health", "/api/monitoring/healthcheck"}:
@@ -254,13 +258,14 @@ class AppHandler(SimpleHTTPRequestHandler):
         query: Dict[str, List[str]],
         payload: Dict[str, Any],
     ) -> Dict[str, Any]:
-        updater = AppUpdater(str(self.context.project_root))
+        def _app_updater() -> AppUpdater:
+            return AppUpdater(str(getattr(self.context, "project_root", PROJECT_ROOT)))
 
         def _route_update_check() -> Dict[str, Any]:
-            return updater.check_for_updates()
+            return _app_updater().check_for_updates()
 
         def _route_update_apply() -> Dict[str, Any]:
-            return updater.apply_update()
+            return _app_updater().apply_update()
 
         def _route_health() -> Dict[str, Any]:
             state = self.context.database.get_state()
