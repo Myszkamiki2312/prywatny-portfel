@@ -100,7 +100,14 @@ def start_runtime(static_root: Path, storage_root: Path, port: int, log_file: Pa
 
     class FastAPIRuntime:
         def __init__(self, port):
-            self.config = uvicorn.Config(app, host=HOST, port=port, log_level="info", access_log=False)
+            self.config = uvicorn.Config(
+                app, 
+                host=HOST, 
+                port=port, 
+                log_level="info", 
+                access_log=False,
+                log_config=None # Fixes "unable to configure formatter 'default'" in PyInstaller
+            )
             self.server = uvicorn.Server(self.config)
             self._stopped = False
 
