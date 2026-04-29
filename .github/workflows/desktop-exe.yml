@@ -57,7 +57,7 @@ jobs:
       - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pyinstaller pywebview
+          python -m pip install pyinstaller pywebview fastapi uvicorn
 
       - name: Build EXE
         run: pyinstaller desktop_launcher.spec --noconfirm

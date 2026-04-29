@@ -5,13 +5,18 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 backend_hiddenimports = collect_submodules("backend")
 webview_hiddenimports = collect_submodules("webview")
+fastapi_hiddenimports = collect_submodules("fastapi")
+uvicorn_hiddenimports = collect_submodules("uvicorn")
 webview_datas = collect_data_files("webview")
 
 datas = webview_datas + [
     ("index.html", "."),
     ("styles.css", "."),
+    ("styles-modern.css", "."),
     ("app.js", "."),
+    ("supabase-config.js", "."),
     ("frontend", "frontend"),
+    ("js", "js"),
 ]
 
 a = Analysis(
@@ -19,7 +24,7 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=datas,
-    hiddenimports=backend_hiddenimports + webview_hiddenimports,
+    hiddenimports=backend_hiddenimports + webview_hiddenimports + fastapi_hiddenimports + uvicorn_hiddenimports + ["starlette", "pydantic"],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
