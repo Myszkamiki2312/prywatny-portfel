@@ -6231,6 +6231,15 @@ async function onCheckUpdate() {
     const result = await apiRequest("/update/check", { timeoutMs: 30000 });
     if (result.error) {
       showToast("Błąd sprawdzania aktualizacji: " + result.error, "error");
+    } else if (result.is_bundled && result.latest_version) {
+      runAfterConfirm(
+        {
+          title: "Dostępna nowa wersja",
+          message: "Najnowsza wersja to " + result.latest_version + ". Aplikacja dla Windows (skompilowana) wymaga ręcznego pobrania instalatora. Otworzyć stronę z pobieraniem?",
+          confirmLabel: "Otwórz stronę"
+        },
+        () => { window.open(result.release_url || "https://github.com/Myszkamiki2312/prywatny-portfel/releases", "_blank"); }
+      );
     } else if (result.update_available) {
       runAfterConfirm(
         {
