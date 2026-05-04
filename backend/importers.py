@@ -135,23 +135,57 @@ def parse_csv_rows(text: str) -> List[Dict[str, str]]:
     payload = str(text or "").strip()
     if not payload:
         return []
-    stream = io.StringIO(payload)
-    sample = payload[:4096]
-    delimiter = ","
+    lines = [line for line in payload.splitlines() if line.strip()]
+    if not lines:
+        return []
+    sample = "\n".join(lines[:80])
     try:
         dialect = csv.Sniffer().sniff(sample, delimiters=";,|\t,")
         delimiter = dialect.delimiter
     except csv.Error:
-        delimiter = _pick_delimiter(payload)
+        delimiter = _pick_delimiter("\n".join(lines))
+    header_index = _find_header_line(lines, delimiter)
+    stream = io.StringIO("\n".join(lines[header_index:]))
     reader = csv.DictReader(stream, delimiter=delimiter)
     output = []
     for row in reader:
         if not row:
             continue
-        if not any(str(value or "").strip() for value in row.values()):
+        if None in row:
+            row.pop(None, None)
+        cleaned = {str(key or "").strip(): str(value or "").strip() for key, value in row.items()}
+        if not any(cleaned.values()):
             continue
-        output.append({str(key or "").strip(): str(value or "").strip() for key, value in row.items()})
+        if _is_summary_row(cleaned):
+            continue
+        output.append(cleaned)
     return output
+
+
+def _find_header_line(lines: List[str], delimiter: str) -> int:
+    best_index = 0
+    best_score = -1
+    for index, line in enumerate(lines[:80]):
+        try:
+            cells = next(csv.reader([line], delimiter=delimiter))
+        except csv.Error:
+            continue
+        normalized = {_normalize_key(cell) for cell in cells}
+        score = 0
+        for aliases in REQUIRED_HEADER_ALIASES.values():
+            if any(_normalize_key(alias) in normalized for alias in aliases):
+                score += 1
+        if "type" in normalized and ("time" in normalized or "date" in normalized):
+            score += 3
+        if score > best_score:
+            best_index = index
+            best_score = score
+    return best_index
+
+
+def _is_summary_row(row: Dict[str, str]) -> bool:
+    first_value = next((str(value or "").strip().lower() for value in row.values() if str(value or "").strip()), "")
+    return first_value in {"total", "suma", "summary", "razem"}
 
 
 def normalize_row_keys(row: Dict[str, str]) -> Dict[str, str]:
@@ -273,21 +307,27 @@ def _map_xtb_row(
     default_portfolio_id: str,
     default_account_id: str,
 ) -> Dict[str, Any] | None:
-    side = _simplify_text(row_value(row, "type", "side", "transakcja"))
-    symbol = row_value(row, "symbol", "instrument", "ticker")
-    quantity = to_num(row_value(row, "volume", "lots", "quantity", "ilosc"))
-    price = to_num(row_value(row, "openprice", "price", "cena"))
+    side_raw = row_value(row, "type", "side", "transakcja")
+    side = _simplify_text(side_raw)
+    symbol = row_value(row, "symbol", "ticker") or row_value(row, "instrument")
+    instrument_name = row_value(row, "instrument", "security", "name")
+    comment = row_value(row, "comment", "note", "description")
+    parsed_trade = _parse_xtb_trade_comment(comment)
+    quantity = to_num(row_value(row, "volume", "lots", "quantity", "ilosc")) or parsed_trade.get("quantity", 0.0)
+    price = to_num(row_value(row, "openprice", "price", "cena")) or parsed_trade.get("price", 0.0)
     commission = to_num(row_value(row, "commission", "fee", "prowizja"))
     profit = to_num(row_value(row, "profit", "amount", "kwota"))
     currency = text_or_fallback(row_value(row, "currency", "waluta"), state["meta"]["baseCurrency"])
 
     op_type = _normalize_operation_type(side)
-    if "buy" in side:
+    if "buy" in side or "purchase" in side:
         op_type = "Kupno waloru"
-    elif "sell" in side:
+    elif "sell" in side or "sale" in side:
         op_type = "Sprzedaż waloru"
     elif "dividend" in side:
         op_type = "Dywidenda"
+    elif "interest" in side:
+        op_type = "Odsetki"
     elif "deposit" in side:
         op_type = "Operacja gotówkowa"
     elif "withdraw" in side:
@@ -307,7 +347,14 @@ def _map_xtb_row(
         created=created,
         fallback_id=default_account_id,
     )
-    asset_id = _ensure_asset(state, token=symbol, created=created)
+    asset_id = _ensure_asset(
+        state,
+        token=symbol,
+        preferred_name=instrument_name,
+        asset_type="Akcja" if op_type in ("Kupno waloru", "Sprzedaż waloru") else "Inny",
+        currency=currency,
+        created=created,
+    )
     amount = profit
     if op_type in ("Kupno waloru", "Sprzedaż waloru") and quantity and price:
         amount = quantity * price
@@ -327,7 +374,7 @@ def _map_xtb_row(
         "fee": commission,
         "currency": currency,
         "tags": ["xtb"],
-        "note": row_value(row, "comment", "note"),
+        "note": comment,
         "createdAt": now_iso(),
     }
 
@@ -710,22 +757,33 @@ def _ensure_account(
     return created_row["id"]
 
 
-def _ensure_asset(state: Dict[str, Any], *, token: str, created: Dict[str, int]) -> str:
+def _ensure_asset(
+    state: Dict[str, Any],
+    *,
+    token: str,
+    created: Dict[str, int],
+    preferred_name: str = "",
+    asset_type: str = "Inny",
+    currency: str = "",
+) -> str:
     text = str(token or "").strip()
     if not text:
         return ""
     lookup = text.lower()
+    name = text_or_fallback(preferred_name, text.upper())
     for row in state["assets"]:
         if row["id"] == text:
             return row["id"]
         if row["ticker"].lower() == lookup or row["name"].lower() == lookup:
+            if preferred_name and row.get("name") == row.get("ticker"):
+                row["name"] = preferred_name
             return row["id"]
     created_row = {
         "id": make_id("ast"),
         "ticker": text.upper(),
-        "name": text.upper(),
-        "type": "Inny",
-        "currency": state["meta"]["baseCurrency"],
+        "name": name,
+        "type": text_or_fallback(asset_type, "Inny"),
+        "currency": text_or_fallback(currency, state["meta"]["baseCurrency"]),
         "currentPrice": 0.0,
         "risk": 5.0,
         "sector": "",
@@ -741,9 +799,9 @@ def _ensure_asset(state: Dict[str, Any], *, token: str, created: Dict[str, int])
 
 def _normalize_operation_type(raw: str) -> str:
     text = _simplify_text(raw)
-    if any(word in text for word in ["kupno", "buy"]):
+    if any(word in text for word in ["kupno", "buy", "purchase"]):
         return "Kupno waloru"
-    if any(word in text for word in ["sprzedaz", "sell"]):
+    if any(word in text for word in ["sprzedaz", "sell", "sale"]):
         return "Sprzedaż waloru"
     if any(word in text for word in ["dywid", "dividend"]):
         return "Dywidenda"
@@ -761,7 +819,7 @@ def _normalize_operation_type(raw: str) -> str:
         return "Zobowiązanie"
     if any(word in text for word in ["prowiz", "commission"]):
         return "Prowizja"
-    if any(word in text for word in ["odset"]):
+    if any(word in text for word in ["odset", "interest"]):
         return "Odsetki"
     return "Import operacji"
 
@@ -800,6 +858,14 @@ def _extract_degiro_ticker(product: str, isin: str) -> str:
         if 1 <= len(token) <= 8:
             return token
     return str(isin or "").strip().upper()
+
+
+def _parse_xtb_trade_comment(comment: str) -> Dict[str, float]:
+    text = str(comment or "")
+    match = re.search(r"(?:OPEN|CLOSE)\s+(?:BUY|SELL)\s+([0-9]+(?:[.,][0-9]+)?)\s*@\s*([0-9]+(?:[.,][0-9]+)?)", text, re.IGNORECASE)
+    if not match:
+        return {"quantity": 0.0, "price": 0.0}
+    return {"quantity": to_num(match.group(1)), "price": to_num(match.group(2))}
 
 
 def _pick_delimiter(text: str) -> str:

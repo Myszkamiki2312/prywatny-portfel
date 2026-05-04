@@ -126,6 +126,50 @@ class ExtendedBrokerImportersTests(unittest.TestCase):
         self.assertEqual(row["currency"], "PLN")
         self.assertEqual(row["tags"], ["bossa"])
 
+    def test_xtb_ike_export_with_metadata_imports_cash_interest_and_stock_purchase(self):
+        csv_text = "\n".join(
+            [
+                "Account number,52282419,,,,,,",
+                "Cash Operations,,,,,,,",
+                "Date from (UTC),2025-02-02 23:00:00,,,,,,",
+                "Date to (UTC),2026-04-29 20:30:44,,,,,,",
+                "Type,Ticker,Instrument,Time,Amount,ID,Comment,Product",
+                "Free funds interest,,,2026-04-03 16:52:43,0.22,1209208028,Free-funds Interest 2026-03,IKE",
+                "Stock purchase,CDR.PL,CD Projekt,2026-03-04 09:02:31,-241.5,1159816441,OPEN BUY 1 @ 241.50,IKE",
+                "IKE deposit,,,2026-03-03 12:50:38,498.27,1158229081,Transfer in operation on account with id 54019595,IKE",
+                "Total,,,,256.99,,,",
+            ]
+        )
+        database = FakeDatabase()
+        importer = BrokerImporter(database)
+
+        summary = importer.import_csv(broker="xtb", csv_text=csv_text, options={"fileName": "ike.csv"})
+
+        self.assertEqual(summary["broker"], "xtb")
+        self.assertEqual(summary["rowCount"], 3)
+        self.assertEqual(summary["importedCount"], 3)
+        self.assertEqual(summary["created"]["assets"], 1)
+
+        interest, buy, deposit = database.state["operations"]
+        self.assertEqual(interest["type"], "Odsetki")
+        self.assertEqual(interest["amount"], 0.22)
+        self.assertEqual(interest["assetId"], "")
+
+        self.assertEqual(buy["type"], "Kupno waloru")
+        self.assertEqual(buy["quantity"], 1.0)
+        self.assertEqual(buy["price"], 241.5)
+        self.assertEqual(buy["amount"], 241.5)
+        self.assertEqual(buy["tags"], ["xtb"])
+
+        asset = database.state["assets"][0]
+        self.assertEqual(asset["ticker"], "CDR.PL")
+        self.assertEqual(asset["name"], "CD Projekt")
+        self.assertEqual(asset["type"], "Akcja")
+
+        self.assertEqual(deposit["type"], "Operacja gotówkowa")
+        self.assertEqual(deposit["amount"], 498.27)
+        self.assertEqual(deposit["assetId"], "")
+
     def test_ibkr_rejects_csv_without_required_headers(self):
         database = FakeDatabase()
         importer = BrokerImporter(database)

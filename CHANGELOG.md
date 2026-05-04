@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.7.8 - 2026-05-04
+
+### Fixed
+- Import XTB/IKE CSV obsługuje pliki z metadanymi przed właściwym nagłówkiem.
+- Import XTB/IKE rozpoznaje `Stock purchase`, `Stock sale`, `IKE deposit` i `Free funds interest`.
+- Ilość i cena dla transakcji XTB/IKE są pobierane z komentarza w formacie `OPEN BUY 1 @ 241.50`.
+- Wiersz `Total` z eksportu brokera jest pomijany zamiast trafiać do operacji.
+- Import tworzy walory z nazwą instrumentu, typem `Akcja` i walutą z operacji.
+
+### Stability
+- Zweryfikowane lokalnie:
+  - `python3 -m unittest tests.test_importers_ibkr_bossa -v`
+  - test importu realnego pliku `IKE_54019595_2025-02-02_2026-04-29.csv`
+  - `python3 -m unittest discover -s tests -p 'test_*.py' -v`
+  - `node --check app.js`
+  - `node --check frontend/dashboard.js`
+  - `node --check frontend/operations.js`
+
 ## v0.7.7 - 2026-04-29
 
 ### Fixed
