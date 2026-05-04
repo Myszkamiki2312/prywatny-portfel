@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.7.9 - 2026-05-04
+
+### Fixed
+- Odświeżanie notowań dla polskich tickerów z eksportu XTB/IKE (`CDR.PL`, `KGH.PL`, `LPP.PL`) pobiera ceny ze Stooq przez symbol bazowy (`CDR`, `KGH`, `LPP`).
+- Ceny pobrane przez alias Stooq dalej wracają pod oryginalnym tickerem z aplikacji, więc walory nie są dublowane.
+- Waluta dla tickerów `.PL`/`.WA` pozostaje `PLN`, dzięki czemu zysk/strata po imporcie liczy się w złotówkach.
+
+### Stability
+- Zweryfikowane lokalnie:
+  - realne pobranie notowań `CDR.PL`, `KGH.PL`, `LPP.PL`,
+  - `python3 -m unittest discover -s tests -p 'test_*.py' -v`,
+  - `node --check app.js`,
+  - `node --check frontend/dashboard.js`,
+  - `node --check frontend/operations.js`,
+  - `node --check frontend/tools.js`,
+  - `node --check js/charts-pro.js`,
+  - `git diff --check`.
+
 ## v0.7.8 - 2026-05-04
 
 ### Fixed

@@ -285,7 +285,9 @@ class QuoteService:
             return {
                 "ticker": ticker,
                 "price": price,
-                "currency": _guess_currency_from_ticker(candidate),
+                "currency": _guess_currency_from_ticker(ticker)
+                if "." in str(ticker or "")
+                else _guess_currency_from_ticker(candidate),
                 "provider": "stooq",
                 "fetched_at": now_iso(),
             }
@@ -509,7 +511,11 @@ def _stooq_candidates(ticker: str) -> List[str]:
     if not base:
         return []
     candidates = [base]
-    if "." not in base:
+    if "." in base:
+        root, suffix = base.split(".", 1)
+        if suffix in {"pl", "wa"} and root and root not in candidates:
+            candidates.append(root)
+    else:
         candidates.extend([f"{base}.us", f"{base}.pl"])
     return candidates
 
