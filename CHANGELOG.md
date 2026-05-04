@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.7.10 - 2026-05-04
+
+### Fixed
+- Po imporcie brokera aplikacja automatycznie odświeża notowania, zanim pokaże finalny komunikat importu.
+- P/L po imporcie nie zostaje na fallbacku z ostatniej ceny zakupu, jeśli backend może pobrać aktualne ceny.
+- Komunikat importu pokazuje także liczbę odświeżonych notowań.
+
+### Stability
+- Zweryfikowane lokalnie:
+  - `node --check app.js`,
+  - `python3 -m unittest discover -s tests -p 'test_*.py' -v`,
+  - `git diff --check`.
+
 ## v0.7.9 - 2026-05-04
 
 ### Fixed

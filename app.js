@@ -2122,9 +2122,13 @@ async function onBrokerCsvImport(event) {
       saveState({ skipBackend: true });
       renderAll();
     }
+    if (dom.brokerImportInfo) {
+      dom.brokerImportInfo.textContent = "Import zakończony. Odświeżam notowania, żeby policzyć aktualny zysk/stratę...";
+    }
+    const refreshedQuotes = await refreshQuotesAfterImport();
     const message = `Broker ${broker}: wiersze ${summary.rowCount || 0}, zaimportowane ${
       summary.importedCount || 0
-    }`;
+    }${refreshedQuotes > 0 ? `, notowania ${refreshedQuotes}` : ""}`;
     dom.brokerImportInfo.textContent = message;
     window.alert(message);
   } catch (error) {
@@ -2132,6 +2136,35 @@ async function onBrokerCsvImport(event) {
     window.alert(`Import brokera nieudany: ${error.message}`);
   } finally {
     event.target.value = "";
+  }
+}
+
+async function refreshQuotesAfterImport() {
+  if (!backendSync.available || backendSync.fxSyncInFlight) {
+    return 0;
+  }
+  const tickers = state.assets.map((asset) => String(asset.ticker || "").trim()).filter(Boolean);
+  if (!tickers.length) {
+    return 0;
+  }
+  backendSync.fxSyncInFlight = true;
+  try {
+    const payload = await apiRequest("/quotes/refresh", {
+      method: "POST",
+      body: { tickers },
+      timeoutMs: 15000
+    });
+    const quotes = Array.isArray(payload.quotes) ? payload.quotes : [];
+    applyQuotes(quotes);
+    applyFxRates(payload.fxRates || extractFxRatesFromQuotes(quotes));
+    saveState({ skipBackend: true });
+    renderAll();
+    return quotes.length;
+  } catch (error) {
+    showToast("Import działa, ale nie udało się automatycznie odświeżyć notowań. Kliknij Odśwież notowania.", "error");
+    return 0;
+  } finally {
+    backendSync.fxSyncInFlight = false;
   }
 }
 
