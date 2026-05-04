@@ -73,13 +73,15 @@ export function renderDashboard(deps) {
       valueFormatter: (value) => (chartView.mode === "return" ? formatPercent(value) : formatMoney(value)),
       seriesName: "Portfel",
       series: chartView.comparisonSeries,
-      interaction: chartView.interaction
+      interaction: chartView.interaction,
+      preferCanvas: true
     }
   );
 
   if (dom.dashboardDetails) {
+    const movers = buildDashboardMovers(metrics.holdings, formatMoney, escapeHtml);
     dom.dashboardDetails.innerHTML = metrics.holdings.length
-      ? `<div class="record-list">${metrics.holdings
+      ? `${movers}<div class="record-list">${metrics.holdings
           .map(
             (holding) => `
               <article class="record-card" data-action="show-record" data-kind="holding" data-id="${holding.assetId}">
@@ -117,4 +119,50 @@ function applyTrendCard(pctNode, valueNode, payload, formatPercent, formatMoney)
     valueNode.textContent = available ? formatMoney(amount) : "Brak pełnego zakresu";
     valueNode.style.color = !available ? "var(--muted)" : pct >= 0 ? "var(--brand-strong)" : "var(--danger)";
   }
+}
+
+function buildDashboardMovers(holdings, formatMoney, escapeHtml) {
+  const items = Array.isArray(holdings)
+    ? holdings
+        .filter((holding) => Math.abs(Number(holding.unrealized || 0)) > 0.000001)
+        .slice()
+        .sort((a, b) => Number(b.unrealized || 0) - Number(a.unrealized || 0))
+    : [];
+  if (!items.length) {
+    return "";
+  }
+  const winners = items.filter((holding) => Number(holding.unrealized || 0) >= 0).slice(0, 3);
+  const losers = items.filter((holding) => Number(holding.unrealized || 0) < 0).reverse().slice(0, 3);
+  const renderItem = (holding) => {
+    const pl = Number(holding.unrealized || 0);
+    const tone = pl >= 0 ? "positive" : "negative";
+    return `
+      <li class="dashboard-mover ${tone}" data-action="show-record" data-kind="holding" data-id="${escapeHtml(holding.assetId)}">
+        <span>
+          <strong>${escapeHtml(holding.ticker || "")}</strong>
+          <small>${escapeHtml(holding.name || "")}</small>
+        </span>
+        <b>${formatMoney(pl)}</b>
+      </li>
+    `;
+  };
+  const empty = '<li class="dashboard-mover muted"><span><strong>Brak</strong><small>Nie ma pozycji w tej grupie</small></span><b>—</b></li>';
+  return `
+    <section class="dashboard-movers-panel" aria-label="Największe plusy i minusy">
+      <div class="dashboard-movers-head">
+        <span>Rozbicie zysku/straty</span>
+        <strong>Największe plusy/minusy</strong>
+      </div>
+      <div class="dashboard-movers-grid">
+        <article>
+          <h3>Na plusie</h3>
+          <ul>${winners.length ? winners.map(renderItem).join("") : empty}</ul>
+        </article>
+        <article>
+          <h3>Na minusie</h3>
+          <ul>${losers.length ? losers.map(renderItem).join("") : empty}</ul>
+        </article>
+      </div>
+    </section>
+  `;
 }

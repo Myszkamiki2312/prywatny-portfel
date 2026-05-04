@@ -7,6 +7,9 @@
 const proChartsStore = new Map();
 
 function getOrCreateProChart(canvas, type = 'line') {
+  if (!window.LightweightCharts || !canvas || !canvas.parentElement) {
+    return null;
+  }
   const canvasId = canvas.id || 'default-chart';
   const container = canvas.parentElement;
 
@@ -92,9 +95,10 @@ function getOrCreateProChart(canvas, type = 'line') {
 }
 
 window.drawProLineChart = function(canvas, labels, values, options = {}) {
-  if (!canvas || !labels || labels.length === 0) return;
+  if (!canvas || !labels || labels.length === 0) return false;
   try {
     const chartInstance = getOrCreateProChart(canvas, 'line');
+    if (!chartInstance) return false;
     const { chart, series } = chartInstance;
     
     const data = labels.map((label, i) => {
@@ -158,15 +162,19 @@ window.drawProLineChart = function(canvas, labels, values, options = {}) {
     }
 
     chart.timeScale().fitContent();
+    return true;
   } catch (e) {
     console.error('Pro Chart Error:', e);
+    return false;
   }
 };
 
 window.drawProCandleChart = function(canvas, candles) {
-  if (!canvas || !candles || candles.length === 0) return;
+  if (!canvas || !candles || candles.length === 0) return false;
   try {
-    const { chart, series } = getOrCreateProChart(canvas, 'candle');
+    const chartInstance = getOrCreateProChart(canvas, 'candle');
+    if (!chartInstance) return false;
+    const { chart, series } = chartInstance;
     
     const data = candles.map(c => ({
       time: c.date.includes('T') ? c.date.split('T')[0] : c.date,
@@ -191,7 +199,9 @@ window.drawProCandleChart = function(canvas, candles) {
         series.setData(uniqueData);
         chart.timeScale().fitContent();
     }
+    return true;
   } catch (e) {
     console.error('Pro Candle Chart Error:', e);
+    return false;
   }
 };

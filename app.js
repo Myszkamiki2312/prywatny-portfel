@@ -9258,17 +9258,31 @@ function getChartPalette() {
   };
 }
 
+function restoreCanvasChartFallback(canvas) {
+  if (!canvas) {
+    return;
+  }
+  canvas.style.display = "block";
+  canvas.style.visibility = "";
+  canvas.style.height = "";
+  if (canvas.parentElement) {
+    canvas.parentElement.querySelectorAll(".pro-chart-container").forEach((node) => node.remove());
+  }
+}
+
 function drawLineChart(canvas, labels, values, options = {}) {
-  if (window.drawProLineChart) {
+  if (window.drawProLineChart && !options.preferCanvas) {
     try {
-      window.drawProLineChart(canvas, labels, values, options);
-      return;
+      if (window.drawProLineChart(canvas, labels, values, options) === true) {
+        return;
+      }
     } catch (error) {
       if (!String(error && error.message ? error.message : error).includes("LightweightCharts")) {
         throw error;
       }
     }
   }
+  restoreCanvasChartFallback(canvas);
   const frame = prepareCanvasFrame(canvas);
   if (!frame) {
     return;
@@ -9671,9 +9685,11 @@ function ensureCandlestickChartState(canvas) {
 
 function drawCandlestickChart(canvas, candles) {
   if (window.drawProCandleChart) {
-    window.drawProCandleChart(canvas, candles);
-    return;
+    if (window.drawProCandleChart(canvas, candles) === true) {
+      return;
+    }
   }
+  restoreCanvasChartFallback(canvas);
   const frame = prepareCanvasFrame(canvas);
   if (!frame) {
     return;

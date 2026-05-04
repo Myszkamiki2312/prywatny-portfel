@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.7.11 - 2026-05-04
+
+### Fixed
+- Kokpit nie pokazuje już pustego kontenera wykresu, gdy wykres `LightweightCharts` nie narysuje serii danych.
+- Główny wykres portfela ma stabilny fallback canvasowy z tooltipem, zoomem i eksportem PNG.
+- Canvas wykresu nie jest już ukrywany na sztywno przez styl `styles-modern.css`.
+
+### Added
+- Kokpit pokazuje sekcję `Największe plusy/minusy`, żeby od razu było widać, które walory robią zysk albo stratę.
+
+### Stability
+- Zweryfikowane lokalnie:
+  - `node --check app.js`,
+  - `node --check frontend/dashboard.js`,
+  - `node --check js/charts-pro.js`,
+  - `python3 -m unittest discover -s tests -p 'test_*.py' -v`,
+  - `git diff --check`.
+
 ## v0.7.10 - 2026-05-04
 
 ### Fixed

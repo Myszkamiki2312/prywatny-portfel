@@ -49,7 +49,7 @@ jobs:
         shell: pwsh
         run: |
           $refName = "${env:GITHUB_REF_NAME}"
-          $versionName = "0.7.10"
+          $versionName = "0.7.11"
           if ($refName -like "v*") {
             $versionName = $refName.Substring(1)
           }

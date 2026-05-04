@@ -998,6 +998,111 @@ textarea:focus {
   color: var(--muted);
 }
 
+.dashboard-movers-panel {
+  margin: 1rem 0;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  padding: 1rem;
+  background:
+    radial-gradient(520px 220px at 100% 0%, rgba(122, 216, 199, 0.12), transparent 70%),
+    linear-gradient(180deg, var(--panel-strong), var(--surface-soft));
+}
+
+.dashboard-movers-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.8rem;
+}
+
+.dashboard-movers-head span {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.dashboard-movers-head strong {
+  font-size: 1.05rem;
+}
+
+.dashboard-movers-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.dashboard-movers-grid article {
+  border: 1px solid rgba(122, 216, 199, 0.12);
+  border-radius: 18px;
+  padding: 0.75rem;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.dashboard-movers-grid h3 {
+  margin: 0 0 0.55rem;
+  font-size: 0.86rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.dashboard-movers-grid ul {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dashboard-mover {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  padding: 0.62rem 0.7rem;
+  background: rgba(255, 255, 255, 0.045);
+  cursor: pointer;
+}
+
+.dashboard-mover:hover {
+  border-color: rgba(122, 216, 199, 0.26);
+}
+
+.dashboard-mover span,
+.dashboard-mover small,
+.dashboard-mover strong {
+  display: block;
+}
+
+.dashboard-mover small {
+  margin-top: 0.12rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.dashboard-mover b {
+  white-space: nowrap;
+  font-size: 0.95rem;
+}
+
+.dashboard-mover.positive b {
+  color: var(--brand-strong);
+}
+
+.dashboard-mover.negative b {
+  color: var(--danger);
+}
+
+.dashboard-mover.muted {
+  cursor: default;
+  opacity: 0.72;
+}
+
 .empty-hero {
   display: flex;
   align-items: center;
@@ -2024,6 +2129,10 @@ hr {
     min-width: 0;
   }
 
+  .dashboard-movers-grid {
+    grid-template-columns: 1fr;
+  }
+
   .topbar {
     position: static;
     flex-direction: column;
@@ -2152,6 +2261,11 @@ hr {
 
   .stats-grid {
     grid-template-columns: 1fr;
+  }
+
+  .dashboard-movers-head {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .dashboard-mini-stats {
