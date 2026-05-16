@@ -1837,6 +1837,7 @@ async function pullCloudState({ silent = false, createIfMissing = false, protect
   if (cloudSyncRuntime.pullInFlight) {
     return;
   }
+  let didSuppressPush = false;
   try {
     assertCloudSyncReady({ requireSession: true });
     cloudSyncRuntime.pullInFlight = true;
@@ -1858,7 +1859,9 @@ async function pullCloudState({ silent = false, createIfMissing = false, protect
       await pushCloudState({ force: true, reason: "login-local" });
       return;
     }
+    // Suppress auto-push triggered by renderAll/saveState during state replacement
     cloudSyncRuntime.suppressPush = true;
+    didSuppressPush = true;
     state = normalizeState(row.state);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     invalidateDashboardHistoryCache();
@@ -1879,7 +1882,9 @@ async function pullCloudState({ silent = false, createIfMissing = false, protect
       window.alert(`Supabase: ${error.message}`);
     }
   } finally {
-    cloudSyncRuntime.suppressPush = false;
+    if (didSuppressPush) {
+      cloudSyncRuntime.suppressPush = false;
+    }
     cloudSyncRuntime.pullInFlight = false;
     updateCloudSyncInfo();
   }
@@ -3821,15 +3826,15 @@ async function onTaxOptimizeSubmit() {
     const rows = (result.actions || [])
       .map(
         (item) =>
-          `${item.ticker}: harvest ${formatMoney(toNum(item.suggestedHarvestLoss))} (strata ${formatMoney(toNum(item.unrealizedLoss))})`
+          `${escapeHtml(String(item.ticker || ""))}: harvest ${escapeHtml(formatMoney(toNum(item.suggestedHarvestLoss)))} (strata ${escapeHtml(formatMoney(toNum(item.unrealizedLoss)))})`
       )
       .join("<br/>");
     dom.taxOptimizeOutput.innerHTML = [
-      `<p>Podstawa przed: <strong>${formatMoney(toNum(result.taxableBaseBefore))}</strong></p>`,
-      `<p>Podatek przed: <strong>${formatMoney(toNum(result.taxBefore))}</strong></p>`,
-      `<p>Podstawa po: <strong>${formatMoney(toNum(result.taxableBaseAfter))}</strong></p>`,
-      `<p>Podatek po: <strong>${formatMoney(toNum(result.taxAfter))}</strong></p>`,
-      `<p>Oszczędność: <strong>${formatMoney(toNum(result.taxSaved))}</strong></p>`,
+      `<p>Podstawa przed: <strong>${escapeHtml(formatMoney(toNum(result.taxableBaseBefore)))}</strong></p>`,
+      `<p>Podatek przed: <strong>${escapeHtml(formatMoney(toNum(result.taxBefore)))}</strong></p>`,
+      `<p>Podstawa po: <strong>${escapeHtml(formatMoney(toNum(result.taxableBaseAfter)))}</strong></p>`,
+      `<p>Podatek po: <strong>${escapeHtml(formatMoney(toNum(result.taxAfter)))}</strong></p>`,
+      `<p>Oszczędność: <strong>${escapeHtml(formatMoney(toNum(result.taxSaved)))}</strong></p>`,
       rows ? `<p>Proponowane transakcje:<br/>${rows}</p>` : "<p>Brak rekomendowanych transakcji loss harvesting.</p>"
     ].join("");
   } catch (error) {
@@ -3850,10 +3855,10 @@ async function onForeignDividendTaxSubmit() {
       timeoutMs: 10000
     });
     dom.foreignDividendTaxOutput.innerHTML = [
-      `<p>Podatek zagraniczny: <strong>${formatMoney(toNum(result.foreignWithheld))}</strong></p>`,
-      `<p>Podatek do dopłaty w PL: <strong>${formatMoney(toNum(result.localTaxDue))}</strong></p>`,
-      `<p>Potencjalny zwrot z zagranicy: <strong>${formatMoney(toNum(result.foreignRefundPotential))}</strong></p>`,
-      `<p>Dywidenda netto: <strong>${formatMoney(toNum(result.netDividendAfterTax))}</strong></p>`
+      `<p>Podatek zagraniczny: <strong>${escapeHtml(formatMoney(toNum(result.foreignWithheld)))}</strong></p>`,
+      `<p>Podatek do dopłaty w PL: <strong>${escapeHtml(formatMoney(toNum(result.localTaxDue)))}</strong></p>`,
+      `<p>Potencjalny zwrot z zagranicy: <strong>${escapeHtml(formatMoney(toNum(result.foreignRefundPotential)))}</strong></p>`,
+      `<p>Dywidenda netto: <strong>${escapeHtml(formatMoney(toNum(result.netDividendAfterTax)))}</strong></p>`
     ].join("");
   } catch (error) {
     dom.foreignDividendTaxOutput.textContent = `Błąd: ${error.message}`;
@@ -3873,9 +3878,9 @@ async function onCryptoTaxSubmit() {
       timeoutMs: 10000
     });
     dom.cryptoTaxOutput.innerHTML = [
-      `<p>Dochód krypto: <strong>${formatMoney(toNum(result.cryptoIncomeBeforeCarry))}</strong></p>`,
-      `<p>Podstawa po kompensacji: <strong>${formatMoney(toNum(result.taxableBase))}</strong></p>`,
-      `<p>Podatek do zapłaty: <strong>${formatMoney(toNum(result.taxDue))}</strong></p>`
+      `<p>Dochód krypto: <strong>${escapeHtml(formatMoney(toNum(result.cryptoIncomeBeforeCarry)))}</strong></p>`,
+      `<p>Podstawa po kompensacji: <strong>${escapeHtml(formatMoney(toNum(result.taxableBase)))}</strong></p>`,
+      `<p>Podatek do zapłaty: <strong>${escapeHtml(formatMoney(toNum(result.taxDue)))}</strong></p>`
     ].join("");
   } catch (error) {
     dom.cryptoTaxOutput.textContent = `Błąd: ${error.message}`;
@@ -3895,9 +3900,9 @@ async function onForeignInterestTaxSubmit() {
       timeoutMs: 10000
     });
     dom.foreignInterestTaxOutput.innerHTML = [
-      `<p>Podatek zagraniczny: <strong>${formatMoney(toNum(result.foreignWithheld))}</strong></p>`,
-      `<p>Podatek do dopłaty w PL: <strong>${formatMoney(toNum(result.localTaxDue))}</strong></p>`,
-      `<p>Odsetki netto: <strong>${formatMoney(toNum(result.netInterestAfterTax))}</strong></p>`
+      `<p>Podatek zagraniczny: <strong>${escapeHtml(formatMoney(toNum(result.foreignWithheld)))}</strong></p>`,
+      `<p>Podatek do dopłaty w PL: <strong>${escapeHtml(formatMoney(toNum(result.localTaxDue)))}</strong></p>`,
+      `<p>Odsetki netto: <strong>${escapeHtml(formatMoney(toNum(result.netInterestAfterTax)))}</strong></p>`
     ].join("");
   } catch (error) {
     dom.foreignInterestTaxOutput.textContent = `Błąd: ${error.message}`;
@@ -3917,8 +3922,8 @@ async function onBondInterestTaxSubmit() {
       timeoutMs: 10000
     });
     dom.bondInterestTaxOutput.innerHTML = [
-      `<p>Podstawa: <strong>${formatMoney(toNum(result.taxableBase))}</strong></p>`,
-      `<p>Podatek: <strong>${formatMoney(toNum(result.taxDue))}</strong></p>`
+      `<p>Podstawa: <strong>${escapeHtml(formatMoney(toNum(result.taxableBase)))}</strong></p>`,
+      `<p>Podatek: <strong>${escapeHtml(formatMoney(toNum(result.taxDue)))}</strong></p>`
     ].join("");
   } catch (error) {
     dom.bondInterestTaxOutput.textContent = `Błąd: ${error.message}`;
@@ -3990,10 +3995,10 @@ async function onOptionCalcSubmit() {
       timeoutMs: 10000
     });
     dom.optionCalcOutput.innerHTML = [
-      `<p>Break-even: <strong>${formatFloat(toNum(result.breakEven))}</strong></p>`,
+      `<p>Break-even: <strong>${escapeHtml(formatFloat(toNum(result.breakEven)))}</strong></p>`,
       `<p>Status: <strong>${escapeHtml(result.status || "-")}</strong></p>`,
-      `<p>Wartość wewnętrzna: <strong>${formatFloat(toNum(result.intrinsicValue))}</strong></p>`,
-      `<p>P/L pozycji: <strong>${formatMoney(toNum(result.positionPL))}</strong></p>`,
+      `<p>Wartość wewnętrzna: <strong>${escapeHtml(formatFloat(toNum(result.intrinsicValue)))}</strong></p>`,
+      `<p>P/L pozycji: <strong>${escapeHtml(formatMoney(toNum(result.positionPL)))}</strong></p>`,
       `<p>Rekomendacja: <strong>${escapeHtml(result.recommendation || "-")}</strong></p>`
     ].join("");
   } catch (error) {
@@ -4453,7 +4458,8 @@ function localCalendar(days, portfolioId) {
     if (!liability.dueDate) {
       return;
     }
-    const due = new Date(`${liability.dueDate}T00:00:00`);
+    // Use UTC noon to avoid DST-boundary off-by-one-day errors
+    const due = new Date(`${liability.dueDate}T12:00:00Z`);
     if (!Number.isFinite(due.getTime()) || due < now || due > end) {
       return;
     }
@@ -4472,7 +4478,7 @@ function localCalendar(days, portfolioId) {
       return;
     }
     const nextDate = nextOccurrence(item.startDate, item.frequency);
-    const due = new Date(`${nextDate}T00:00:00`);
+    const due = new Date(`${nextDate}T12:00:00Z`);
     if (!Number.isFinite(due.getTime()) || due < now || due > end) {
       return;
     }
@@ -5989,13 +5995,16 @@ function onRecurringSubmit(event) {
 function onRunRecurring() {
   const today = todayIso();
   let created = 0;
+  const MAX_ITERATIONS_PER_RULE = 1500; // safety cap: ~125 years of monthly ops
   state.recurringOps.forEach((rule) => {
     let cursor = rule.lastGeneratedDate || rule.startDate;
     if (!cursor) {
       cursor = today;
     }
     cursor = nextOccurrence(cursor, rule.frequency);
-    while (cursor <= today) {
+    let iterations = 0;
+    while (cursor <= today && iterations < MAX_ITERATIONS_PER_RULE) {
+      iterations += 1;
       state.operations.push({
         id: makeId("op"),
         date: cursor,
@@ -6302,11 +6311,9 @@ function onTaxSubmit(event) {
   const tax = taxableBase * rate;
   const optimizationHint = Math.max(0, tax - Math.max(0, realized - costs) * rate);
   dom.taxOutput.innerHTML = [
-    `<p>Podstawa opodatkowania: <strong>${formatMoney(taxableBase)}</strong></p>`,
-    `<p>Szacowany podatek: <strong>${formatMoney(tax)}</strong></p>`,
-    `<p>Potencjalna ulga po kompensacji dywidend i kosztów: <strong>${formatMoney(
-      optimizationHint
-    )}</strong></p>`
+    `<p>Podstawa opodatkowania: <strong>${escapeHtml(formatMoney(taxableBase))}</strong></p>`,
+    `<p>Szacowany podatek: <strong>${escapeHtml(formatMoney(tax))}</strong></p>`,
+    `<p>Potencjalna ulga po kompensacji dywidend i kosztów: <strong>${escapeHtml(formatMoney(optimizationHint))}</strong></p>`
   ].join("");
 }
 
@@ -6554,7 +6561,7 @@ function closeRecordSheet() {
 function recordDetailRows(rows) {
   return rows
     .map(([label, value]) => {
-      const safeValue = value == null || value === "" ? "-" : value;
+      const safeValue = value == null || value === "" ? "-" : escapeHtml(String(value));
       return `<div class="record-detail-row"><span>${escapeHtml(label)}</span><strong>${safeValue}</strong></div>`;
     })
     .join("");
@@ -9924,6 +9931,10 @@ function renderTable(container, headers, rows) {
     return;
   }
   const head = `<tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr>`;
+  // Cells may contain trusted HTML (badges, buttons, links) built with escapeHtml
+  // and safeExternalLink internally. We do NOT re-escape them here. Callers that
+  // pass raw string values are responsible for escaping — see renderScannerRows,
+  // renderAlerts, etc., which already call escapeHtml() on every string field.
   const body = rows
     .map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`)
     .join("");
@@ -10725,6 +10736,11 @@ function lookupAssetLabel(assetId) {
 }
 
 function makeId(prefix) {
+  // Use crypto.randomUUID when available (all modern browsers + Node 15+)
+  // to avoid same-millisecond collisions in bulk imports.
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `${prefix}_${crypto.randomUUID()}`;
+  }
   const random = Math.random().toString(36).slice(2, 8);
   return `${prefix}_${Date.now()}_${random}`;
 }
@@ -10855,16 +10871,17 @@ function textOrFallback(value, fallback) {
 }
 
 function nextOccurrence(date, frequency) {
-  const value = new Date(`${date}T00:00:00`);
+  // Use UTC noon to avoid DST-boundary shifts when adding days/months.
+  const value = new Date(`${date}T12:00:00Z`);
   if (!Number.isFinite(value.getTime())) {
     return todayIso();
   }
   if (frequency === "weekly") {
-    value.setDate(value.getDate() + 7);
+    value.setUTCDate(value.getUTCDate() + 7);
   } else if (frequency === "quarterly") {
-    value.setMonth(value.getMonth() + 3);
+    value.setUTCMonth(value.getUTCMonth() + 3);
   } else {
-    value.setMonth(value.getMonth() + 1);
+    value.setUTCMonth(value.getUTCMonth() + 1);
   }
   return value.toISOString().slice(0, 10);
 }
