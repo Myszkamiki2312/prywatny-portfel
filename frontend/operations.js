@@ -115,8 +115,9 @@ export function renderOperations(deps) {
           ? `Docelowo: ${targetAssetLabel}`
           : operation.note || "";
       const tags = Array.isArray(operation.tags) ? operation.tags : [];
+      const safeId = escapeHtml(operation.id);
       return `
-        <article class="record-card" data-action="show-record" data-kind="operation" data-id="${operation.id}">
+        <article class="record-card" data-action="show-record" data-kind="operation" data-id="${safeId}">
           <div class="record-main">
             <span class="record-kicker">${escapeHtml(operation.date)} · ${escapeHtml(operation.type)}</span>
             <h3 class="record-title">${escapeHtml(title)}</h3>
@@ -134,8 +135,8 @@ export function renderOperations(deps) {
               : ""
           }
           <div class="record-actions">
-            <button class="btn secondary" data-action="edit-operation" data-id="${operation.id}">Edytuj</button>
-            <button class="btn danger" data-action="delete-operation" data-id="${operation.id}">Usuń</button>
+            <button class="btn secondary" data-action="edit-operation" data-id="${safeId}">Edytuj</button>
+            <button class="btn danger" data-action="delete-operation" data-id="${safeId}">Usuń</button>
           </div>
         </article>
       `;
@@ -177,8 +178,8 @@ export function renderRecurring(deps) {
     escapeHtml(lookupAssetLabel(item.assetId)),
     escapeHtml(item.lastGeneratedDate || "-"),
     [
-      `<button class="btn secondary" data-action="edit-recurring" data-id="${item.id}">Edytuj</button>`,
-      `<button class="btn danger" data-action="delete-recurring" data-id="${item.id}">Usuń</button>`
+      `<button class="btn secondary" data-action="edit-recurring" data-id="${escapeHtml(item.id)}">Edytuj</button>`,
+      `<button class="btn danger" data-action="delete-recurring" data-id="${escapeHtml(item.id)}">Usuń</button>`
     ].join(" ")
   ]);
   renderTable(

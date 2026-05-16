@@ -2193,7 +2193,13 @@ function applyQuotes(quotes) {
       return;
     }
     asset.currentPrice = toNum(quote.price);
-    asset.currency = textOrFallback(quote.currency, asset.currency || state.meta.baseCurrency);
+    // Only accept ISO 4217-style currency codes from quote payloads. Anything
+    // else (HTML, scripts, garbage) is rejected and the existing currency
+    // (or base currency) is kept — prevents stored XSS via backend response.
+    asset.currency = normalizeCurrency(
+      quote.currency,
+      normalizeCurrency(asset.currency, state.meta.baseCurrency)
+    );
   });
 }
 
@@ -6342,8 +6348,15 @@ function onExportCsv() {
   closeAccountMenu();
 
   function csvCell(value) {
-    const s = value == null ? "" : String(value);
-    return s.includes(";") || s.includes('"') || s.includes("\n")
+    let s = value == null ? "" : String(value);
+    // CSV injection / formula injection guard: Excel/LibreOffice/Numbers
+    // interpret leading =, +, -, @, tab and carriage return as a formula
+    // trigger. Prefix any such cell with a single quote so the spreadsheet
+    // engine treats it as literal text. See OWASP "CSV Injection".
+    if (s && /^[=+\-@\t\r]/.test(s)) {
+      s = "'" + s;
+    }
+    return s.includes(";") || s.includes('"') || s.includes("\n") || s.includes("\r")
       ? '"' + s.replace(/"/g, '""') + '"'
       : s;
   }
@@ -6581,18 +6594,21 @@ function openRecordSheet(kind, id) {
     }
     kicker = "Operacja";
     title = `${operation.type || "Operacja"} · ${operation.date || "-"}`;
+    // recordDetailRows() escapes each value on its own; pass raw strings to
+    // avoid double-escaping (which previously displayed "&amp;" / "&lt;" for
+    // names containing ampersands or angle brackets).
     rows = [
-      ["Portfel", escapeHtml(lookupName(state.portfolios, operation.portfolioId))],
-      ["Konto", escapeHtml(lookupName(state.accounts, operation.accountId))],
-      ["Walor", escapeHtml(lookupAssetLabel(operation.assetId))],
-      ["Walor docelowy", escapeHtml(lookupAssetLabel(operation.targetAssetId))],
-      ["Ilość", escapeHtml(formatFloat(operation.quantity))],
-      ["Ilość docelowa", escapeHtml(formatFloat(operation.targetQuantity))],
-      ["Cena", escapeHtml(formatFloat(operation.price))],
+      ["Portfel", lookupName(state.portfolios, operation.portfolioId)],
+      ["Konto", lookupName(state.accounts, operation.accountId)],
+      ["Walor", lookupAssetLabel(operation.assetId)],
+      ["Walor docelowy", lookupAssetLabel(operation.targetAssetId)],
+      ["Ilość", formatFloat(operation.quantity)],
+      ["Ilość docelowa", formatFloat(operation.targetQuantity)],
+      ["Cena", formatFloat(operation.price)],
       ["Kwota", formatMoney(operation.amount, operation.currency || state.meta.baseCurrency)],
       ["Prowizja", formatMoney(operation.fee, operation.currency || state.meta.baseCurrency)],
-      ["Tagi", escapeHtml(Array.isArray(operation.tags) ? operation.tags.join(", ") : "")],
-      ["Notatka", escapeHtml(operation.note || "")]
+      ["Tagi", Array.isArray(operation.tags) ? operation.tags.join(", ") : ""],
+      ["Notatka", operation.note || ""]
     ];
   } else if (kind === "asset") {
     const asset = findById(state.assets, id);
@@ -6602,13 +6618,13 @@ function openRecordSheet(kind, id) {
     kicker = "Walor";
     title = `${asset.ticker || "-"} · ${asset.name || "-"}`;
     rows = [
-      ["Typ", escapeHtml(asset.type || "-")],
+      ["Typ", asset.type || "-"],
       ["Cena", formatMoney(asset.currentPrice, asset.currency || state.meta.baseCurrency)],
-      ["Ryzyko", escapeHtml(String(asset.risk || "-"))],
-      ["Sektor", escapeHtml(asset.sector || "-")],
-      ["Branża", escapeHtml(asset.industry || "-")],
-      ["Tagi", escapeHtml(Array.isArray(asset.tags) ? asset.tags.join(", ") : "")],
-      ["Benchmark", escapeHtml(asset.benchmark || "-")]
+      ["Ryzyko", String(asset.risk || "-")],
+      ["Sektor", asset.sector || "-"],
+      ["Branża", asset.industry || "-"],
+      ["Tagi", Array.isArray(asset.tags) ? asset.tags.join(", ") : ""],
+      ["Benchmark", asset.benchmark || "-"]
     ];
   } else if (kind === "account") {
     const account = findById(state.accounts, id);
@@ -6618,9 +6634,9 @@ function openRecordSheet(kind, id) {
     kicker = "Konto";
     title = account.name || "Konto";
     rows = [
-      ["Typ", escapeHtml(account.type || "-")],
-      ["Waluta", escapeHtml(account.currency || state.meta.baseCurrency)],
-      ["Utworzono", escapeHtml(formatDateTime(account.createdAt) || account.createdAt || "-")]
+      ["Typ", account.type || "-"],
+      ["Waluta", account.currency || state.meta.baseCurrency],
+      ["Utworzono", formatDateTime(account.createdAt) || account.createdAt || "-"]
     ];
   } else if (kind === "portfolio") {
     const portfolio = findById(state.portfolios, id);
@@ -6630,14 +6646,14 @@ function openRecordSheet(kind, id) {
     kicker = "Portfel";
     title = portfolio.name || "Portfel";
     rows = [
-      ["Waluta", escapeHtml(portfolio.currency || state.meta.baseCurrency)],
-      ["Benchmark", escapeHtml(portfolio.benchmark || "-")],
-      ["Cel", escapeHtml(portfolio.goal || "-")],
-      ["Grupa", escapeHtml(portfolio.groupName || "-")],
-      ["Sub-portfel", escapeHtml(portfolio.parentId ? lookupName(state.portfolios, portfolio.parentId) : "-")],
-      ["Portfel bliźniaczy", escapeHtml(portfolio.twinOf ? lookupName(state.portfolios, portfolio.twinOf) : "-")],
+      ["Waluta", portfolio.currency || state.meta.baseCurrency],
+      ["Benchmark", portfolio.benchmark || "-"],
+      ["Cel", portfolio.goal || "-"],
+      ["Grupa", portfolio.groupName || "-"],
+      ["Sub-portfel", portfolio.parentId ? lookupName(state.portfolios, portfolio.parentId) : "-"],
+      ["Portfel bliźniaczy", portfolio.twinOf ? lookupName(state.portfolios, portfolio.twinOf) : "-"],
       ["Publiczny", portfolio.isPublic ? "Tak" : "Nie"],
-      ["Utworzono", escapeHtml(formatDateTime(portfolio.createdAt) || portfolio.createdAt || "-")]
+      ["Utworzono", formatDateTime(portfolio.createdAt) || portfolio.createdAt || "-"]
     ];
   } else if (kind === "holding") {
     const portfolioId = dom.dashboardPortfolioSelect ? dom.dashboardPortfolioSelect.value || "" : "";
@@ -6649,13 +6665,13 @@ function openRecordSheet(kind, id) {
     kicker = "Pozycja";
     title = `${holding.ticker || "-"} · ${holding.name || "-"}`;
     rows = [
-      ["Typ", escapeHtml(holding.type || "-")],
-      ["Ilość", escapeHtml(formatFloat(holding.qty))],
+      ["Typ", holding.type || "-"],
+      ["Ilość", formatFloat(holding.qty)],
       ["Cena", formatMoney(holding.price, holding.currency || state.meta.baseCurrency)],
       ["Wartość", formatMoney(holding.value)],
       ["Koszt", formatMoney(holding.cost)],
       ["Niezrealizowany P/L", formatMoney(holding.unrealized)],
-      ["Udział", `${escapeHtml(formatFloat(holding.share))}%`]
+      ["Udział", `${formatFloat(holding.share)}%`]
     ];
   } else {
     return;
@@ -7171,8 +7187,9 @@ function renderPortfolioList() {
       const parent = portfolio.parentId ? lookupName(state.portfolios, portfolio.parentId) : "";
       const twin = portfolio.twinOf ? lookupName(state.portfolios, portfolio.twinOf) : "";
       const metrics = computeMetrics(portfolio.id);
+      const safeId = escapeHtml(portfolio.id);
       return `
-        <article class="record-card" data-action="show-record" data-kind="portfolio" data-id="${portfolio.id}">
+        <article class="record-card" data-action="show-record" data-kind="portfolio" data-id="${safeId}">
           <div class="record-main">
             <span class="record-kicker">${escapeHtml(portfolio.currency || state.meta.baseCurrency)} · ${
               portfolio.isPublic ? "publiczny" : "prywatny"
@@ -7189,10 +7206,10 @@ function renderPortfolioList() {
             <span>${metrics.holdings.length} pozycji</span>
           </div>
           <div class="record-actions">
-            <button class="btn secondary" data-action="edit-portfolio" data-id="${portfolio.id}">Edytuj</button>
-            <button class="btn secondary" data-action="copy-portfolio" data-id="${portfolio.id}">Kopiuj</button>
-            <button class="btn secondary" data-action="export-portfolio" data-id="${portfolio.id}">Eksport</button>
-            <button class="btn danger" data-action="delete-portfolio" data-id="${portfolio.id}">Usuń</button>
+            <button class="btn secondary" data-action="edit-portfolio" data-id="${safeId}">Edytuj</button>
+            <button class="btn secondary" data-action="copy-portfolio" data-id="${safeId}">Kopiuj</button>
+            <button class="btn secondary" data-action="export-portfolio" data-id="${safeId}">Eksport</button>
+            <button class="btn danger" data-action="delete-portfolio" data-id="${safeId}">Usuń</button>
           </div>
         </article>
       `;
@@ -7209,9 +7226,10 @@ function renderAccounts() {
     return;
   }
   dom.accountList.innerHTML = `<div class="record-list">${state.accounts
-    .map(
-      (account) => `
-        <article class="record-card" data-action="show-record" data-kind="account" data-id="${account.id}">
+    .map((account) => {
+      const safeId = escapeHtml(account.id);
+      return `
+        <article class="record-card" data-action="show-record" data-kind="account" data-id="${safeId}">
           <div class="record-main">
             <span class="record-kicker">${escapeHtml(account.type || "Konto")}</span>
             <h3 class="record-title">${escapeHtml(account.name)}</h3>
@@ -7222,12 +7240,12 @@ function renderAccounts() {
             <span>Konto</span>
           </div>
           <div class="record-actions">
-            <button class="btn secondary" data-action="edit-account" data-id="${account.id}">Edytuj</button>
-            <button class="btn danger" data-action="delete-account" data-id="${account.id}">Usuń</button>
+            <button class="btn secondary" data-action="edit-account" data-id="${safeId}">Edytuj</button>
+            <button class="btn danger" data-action="delete-account" data-id="${safeId}">Usuń</button>
           </div>
         </article>
-      `
-    )
+      `;
+    })
     .join("")}</div>`;
 }
 
@@ -7243,8 +7261,9 @@ function renderAssets() {
     .map((asset) => {
       const favorite = state.favorites.includes(asset.id);
       const tags = Array.isArray(asset.tags) ? asset.tags : [];
+      const safeId = escapeHtml(asset.id);
       return `
-        <article class="record-card" data-action="show-record" data-kind="asset" data-id="${asset.id}">
+        <article class="record-card" data-action="show-record" data-kind="asset" data-id="${safeId}">
           <div class="record-main">
             <span class="record-kicker">${escapeHtml(asset.type || "Walor")}</span>
             <h3 class="record-title">${escapeHtml(asset.ticker)} · ${escapeHtml(asset.name)}</h3>
@@ -7262,12 +7281,12 @@ function renderAssets() {
               : ""
           }
           <div class="record-actions">
-            <button class="btn secondary" data-action="toggle-favorite" data-id="${asset.id}">${
+            <button class="btn secondary" data-action="toggle-favorite" data-id="${safeId}">${
               favorite ? "Usuń z ulubionych" : "Dodaj do ulubionych"
             }</button>
-            <button class="btn secondary" data-action="edit-asset" data-id="${asset.id}">Edytuj</button>
-            <button class="btn secondary" data-action="update-asset-price" data-id="${asset.id}">Cena</button>
-            <button class="btn danger" data-action="delete-asset" data-id="${asset.id}">Usuń</button>
+            <button class="btn secondary" data-action="edit-asset" data-id="${safeId}">Edytuj</button>
+            <button class="btn secondary" data-action="update-asset-price" data-id="${safeId}">Cena</button>
+            <button class="btn danger" data-action="delete-asset" data-id="${safeId}">Usuń</button>
           </div>
         </article>
       `;
@@ -7794,6 +7813,7 @@ function renderAlerts() {
     const asset = findById(state.assets, alert.assetId);
     const current = asset ? toNum(asset.currentPrice) : 0;
     const triggered = alert.direction === "gte" ? current >= alert.targetPrice : current <= alert.targetPrice;
+    const safeId = escapeHtml(alert.id);
     return [
       escapeHtml(asset ? `${asset.ticker} - ${asset.name}` : "Brak waloru"),
       escapeHtml(alert.direction === "gte" ? ">=" : "<="),
@@ -7802,8 +7822,8 @@ function renderAlerts() {
       triggered ? '<span class="badge ok">Tak</span>' : '<span class="badge off">Nie</span>',
       escapeHtml(formatDateTime(alert.lastTriggerAt) || "-"),
       [
-        `<button class="btn secondary" data-action="edit-alert" data-id="${alert.id}">Edytuj</button>`,
-        `<button class="btn danger" data-action="delete-alert" data-id="${alert.id}">Usuń</button>`
+        `<button class="btn secondary" data-action="edit-alert" data-id="${safeId}">Edytuj</button>`,
+        `<button class="btn danger" data-action="delete-alert" data-id="${safeId}">Usuń</button>`
       ].join(" ")
     ];
   });
@@ -7814,7 +7834,7 @@ function renderNotes() {
   const rows = state.notes.map((note) => [
     escapeHtml(formatDateTime(note.createdAt)),
     escapeHtml(note.content),
-    `<button class="btn danger" data-action="delete-note" data-id="${note.id}">Usuń</button>`
+    `<button class="btn danger" data-action="delete-note" data-id="${escapeHtml(note.id)}">Usuń</button>`
   ]);
   renderTable(dom.notesList, ["Data", "Treść", "Akcje"], rows);
 }
@@ -7824,22 +7844,25 @@ function renderStrategies() {
     escapeHtml(formatDateTime(strategy.createdAt)),
     escapeHtml(strategy.name),
     escapeHtml(strategy.description),
-    `<button class="btn danger" data-action="delete-strategy" data-id="${strategy.id}">Usuń</button>`
+    `<button class="btn danger" data-action="delete-strategy" data-id="${escapeHtml(strategy.id)}">Usuń</button>`
   ]);
   renderTable(dom.strategyList, ["Data", "Nazwa", "Opis", "Akcje"], rows);
 }
 
 function renderLiabilities() {
-  const rows = state.liabilities.map((liability) => [
-    escapeHtml(liability.name),
-    formatMoney(liability.amount, liability.currency),
-    `${formatFloat(liability.rate)}%`,
-    escapeHtml(liability.dueDate || "-"),
-    [
-      `<button class="btn secondary" data-action="edit-liability" data-id="${liability.id}">Edytuj</button>`,
-      `<button class="btn danger" data-action="delete-liability" data-id="${liability.id}">Usuń</button>`
-    ].join(" ")
-  ]);
+  const rows = state.liabilities.map((liability) => {
+    const safeId = escapeHtml(liability.id);
+    return [
+      escapeHtml(liability.name),
+      formatMoney(liability.amount, liability.currency),
+      `${formatFloat(liability.rate)}%`,
+      escapeHtml(liability.dueDate || "-"),
+      [
+        `<button class="btn secondary" data-action="edit-liability" data-id="${safeId}">Edytuj</button>`,
+        `<button class="btn danger" data-action="delete-liability" data-id="${safeId}">Usuń</button>`
+      ].join(" ")
+    ];
+  });
   renderTable(dom.liabilityList, ["Nazwa", "Kwota", "Oprocentowanie", "Termin", "Akcje"], rows);
 }
 
@@ -10505,10 +10528,11 @@ function loadState() {
 function normalizeState(input) {
   const stateValue = input || {};
   const fallback = defaultState();
+  const fallbackBase = normalizeCurrency(fallback.meta.baseCurrency, "PLN");
   const normalized = {
     meta: {
       activePlan: "Expert",
-      baseCurrency: textOrFallback(stateValue.meta && stateValue.meta.baseCurrency, fallback.meta.baseCurrency),
+      baseCurrency: normalizeCurrency(stateValue.meta && stateValue.meta.baseCurrency, fallbackBase),
       createdAt: (stateValue.meta && stateValue.meta.createdAt) || fallback.meta.createdAt,
       fxRates: normalizeFxRates(stateValue.meta && stateValue.meta.fxRates),
       theme: normalizeTheme(stateValue.meta && stateValue.meta.theme),
@@ -10526,7 +10550,7 @@ function normalizeState(input) {
       ? stateValue.portfolios.map((portfolio) => ({
           id: portfolio.id || makeId("ptf"),
           name: textOrFallback(portfolio.name, "Portfel"),
-          currency: textOrFallback(portfolio.currency, fallback.meta.baseCurrency),
+          currency: normalizeCurrency(portfolio.currency, fallbackBase),
           benchmark: portfolio.benchmark || "",
           goal: portfolio.goal || "",
           parentId: portfolio.parentId || "",
@@ -10541,7 +10565,7 @@ function normalizeState(input) {
           id: account.id || makeId("acc"),
           name: textOrFallback(account.name, "Konto"),
           type: textOrFallback(account.type, "Broker"),
-          currency: textOrFallback(account.currency, fallback.meta.baseCurrency),
+          currency: normalizeCurrency(account.currency, fallbackBase),
           createdAt: account.createdAt || nowIso()
         }))
       : fallback.accounts,
@@ -10551,7 +10575,7 @@ function normalizeState(input) {
           ticker: textOrFallback(asset.ticker, "N/A").toUpperCase(),
           name: textOrFallback(asset.name, "Brak nazwy"),
           type: textOrFallback(asset.type, "Inny"),
-          currency: textOrFallback(asset.currency, fallback.meta.baseCurrency),
+          currency: normalizeCurrency(asset.currency, fallbackBase),
           currentPrice: toNum(asset.currentPrice),
           risk: clamp(toNum(asset.risk) || 5, 1, 10),
           sector: asset.sector || "",
@@ -10575,7 +10599,7 @@ function normalizeState(input) {
           price: toNum(operation.price),
           amount: toNum(operation.amount),
           fee: toNum(operation.fee),
-          currency: textOrFallback(operation.currency, fallback.meta.baseCurrency),
+          currency: normalizeCurrency(operation.currency, fallbackBase),
           tags: Array.isArray(operation.tags) ? operation.tags : toTags(operation.tags),
           note: operation.note || "",
           createdAt: operation.createdAt || nowIso()
@@ -10592,7 +10616,7 @@ function normalizeState(input) {
           portfolioId: item.portfolioId || "",
           accountId: item.accountId || "",
           assetId: item.assetId || "",
-          currency: textOrFallback(item.currency, fallback.meta.baseCurrency),
+          currency: normalizeCurrency(item.currency, fallbackBase),
           lastGeneratedDate: item.lastGeneratedDate || "",
           createdAt: item.createdAt || nowIso()
         }))
@@ -10602,7 +10626,7 @@ function normalizeState(input) {
           id: item.id || makeId("liab"),
           name: textOrFallback(item.name, "Zobowiązanie"),
           amount: toNum(item.amount),
-          currency: textOrFallback(item.currency, fallback.meta.baseCurrency),
+          currency: normalizeCurrency(item.currency, fallbackBase),
           rate: toNum(item.rate),
           dueDate: item.dueDate || "",
           createdAt: item.createdAt || nowIso()
@@ -10811,14 +10835,20 @@ function normalizeDate(value) {
 
 function formatMoney(value, currency = state.meta.baseCurrency) {
   const safeValue = Number.isFinite(value) ? value : 0;
+  // Constrain currency to a 3-letter ISO code to prevent untrusted strings
+  // (from imported state, cloud pull, or backend quotes) from being injected
+  // into downstream HTML via the fallback path below.
+  const safeCurrency = normalizeCurrency(currency, "PLN");
   try {
     return new Intl.NumberFormat("pl-PL", {
       style: "currency",
-      currency,
+      currency: safeCurrency,
       maximumFractionDigits: 2
     }).format(safeValue);
   } catch (error) {
-    return `${safeValue.toFixed(2)} ${currency}`;
+    // safeCurrency is already a 3-letter A-Z string, but keep escapeHtml as
+    // defense in depth in case normalizeCurrency is ever loosened.
+    return `${safeValue.toFixed(2)} ${escapeHtml(safeCurrency)}`;
   }
 }
 
@@ -10851,7 +10881,15 @@ function nowIso() {
 }
 
 function todayIso() {
-  return new Date().toISOString().slice(0, 10);
+  // Use local date components, not UTC: investment operations are entered
+  // and reported in the user's local timezone. Using toISOString() would
+  // return tomorrow's date for Polish users after ~22:00 local time
+  // (UTC+2 in summer) and corrupt operation dates near midnight.
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function formatDateTime(value) {

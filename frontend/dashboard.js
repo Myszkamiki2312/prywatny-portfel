@@ -84,7 +84,7 @@ export function renderDashboard(deps) {
       ? `${movers}<div class="record-list">${metrics.holdings
           .map(
             (holding) => `
-              <article class="record-card" data-action="show-record" data-kind="holding" data-id="${holding.assetId}">
+              <article class="record-card" data-action="show-record" data-kind="holding" data-id="${escapeHtml(holding.assetId)}">
                 <div class="record-main">
                   <span class="record-kicker">${escapeHtml(holding.type || "Pozycja")}</span>
                   <h3 class="record-title">${escapeHtml(holding.ticker)} · ${escapeHtml(holding.name)}</h3>
