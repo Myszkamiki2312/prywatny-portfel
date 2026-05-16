@@ -532,6 +532,7 @@ function cacheDom() {
   dom.baseCurrencySelect = document.getElementById("baseCurrencySelect");
   dom.themeToggleBtn = document.getElementById("themeToggleBtn");
   dom.exportBackupBtn = document.getElementById("exportBackupBtn");
+  dom.exportCsvBtn = document.getElementById("exportCsvBtn");
   dom.checkUpdateBtn = document.getElementById("checkUpdateBtn");
   dom.importBackupInput = document.getElementById("importBackupInput");
   dom.resetStateBtn = document.getElementById("resetStateBtn");
@@ -1177,6 +1178,7 @@ function bindEvents() {
 
   dom.csvImportInput.addEventListener("change", onCsvImport);
   dom.exportBackupBtn.addEventListener("click", onBackupExport);
+  if (dom.exportCsvBtn) dom.exportCsvBtn.addEventListener("click", onExportCsv);
   if (dom.checkUpdateBtn) {
     dom.checkUpdateBtn.addEventListener("click", onCheckUpdate);
   }
@@ -6327,6 +6329,81 @@ function onBackupExport() {
   link.remove();
   URL.revokeObjectURL(url);
   showToast("Kopia danych została pobrana.", "success");
+}
+
+function onExportCsv() {
+  closeAccountMenu();
+
+  function csvCell(value) {
+    const s = value == null ? "" : String(value);
+    return s.includes(";") || s.includes('"') || s.includes("\n")
+      ? '"' + s.replace(/"/g, '""') + '"'
+      : s;
+  }
+
+  function csvRow(cells) {
+    return cells.map(csvCell).join(";");
+  }
+
+  function downloadCsv(filename, rows) {
+    const bom = "﻿";
+    const blob = new Blob([bom + rows.join("\r\n")], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  const opsHeader = csvRow([
+    "Data", "Typ", "Portfel", "Konto",
+    "Ticker", "Walor", "Ilość", "Cena",
+    "Kwota", "Waluta", "Prowizja", "Notatka"
+  ]);
+  const opsRows = [opsHeader];
+  for (const op of (state.operations || [])) {
+    const asset = findById(state.assets, op.assetId);
+    opsRows.push(csvRow([
+      op.date || "",
+      op.type || "",
+      lookupName(state.portfolios, op.portfolioId),
+      lookupName(state.accounts, op.accountId),
+      asset ? (asset.ticker || "") : "",
+      asset ? (asset.name || "") : "",
+      toNum(op.quantity),
+      toNum(op.price),
+      toNum(op.amount),
+      op.currency || state.meta.baseCurrency || "",
+      toNum(op.fee),
+      op.note || ""
+    ]));
+  }
+  downloadCsv(`portfel-operacje-${todayIso()}.csv`, opsRows);
+
+  const assetsHeader = csvRow([
+    "Ticker", "Nazwa", "Typ", "Sektor", "Branża",
+    "Cena bieżąca", "Waluta", "Ryzyko", "Tagi"
+  ]);
+  const assetsRows = [assetsHeader];
+  for (const a of (state.assets || [])) {
+    assetsRows.push(csvRow([
+      a.ticker || "",
+      a.name || "",
+      a.type || "",
+      a.sector || "",
+      a.industry || "",
+      toNum(a.currentPrice),
+      a.currency || "",
+      toNum(a.risk),
+      Array.isArray(a.tags) ? a.tags.join(", ") : (a.tags || "")
+    ]));
+  }
+  downloadCsv(`portfel-walory-${todayIso()}.csv`, assetsRows);
+
+  showToast("Pobrano 2 pliki CSV: operacje i walory.", "success");
 }
 
 async function onCheckUpdate() {
