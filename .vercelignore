@@ -1,0 +1,16 @@
+# Only the static frontend is deployed to Vercel. The Python backend is hosted separately
+# (Render/Docker) — keep its source (and tests/data) out of the public static bundle.
+backend/
+tests/
+frontend_tests/
+installer/
+docs/
+data/
+__pycache__/
+.github/
+*.py
+*.spec
+*.backup
+Dockerfile
+render.yaml
+*.md

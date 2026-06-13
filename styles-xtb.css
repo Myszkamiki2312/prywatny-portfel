@@ -1,0 +1,477 @@
+/* =========================================================================
+   XTB-style desktop skin — dark, dense, pro trading look.
+   Loaded last so it becomes the default appearance. Overrides component
+   styles directly (not only CSS vars) so it wins regardless of theme class.
+   ========================================================================= */
+
+:root,
+body {
+  --xtb-bg: #0a0e15;
+  --xtb-bg-2: #0d121b;
+  --xtb-panel: #111722;
+  --xtb-panel-2: #161d2a;
+  --xtb-elev: #1b2330;
+  --xtb-border: #232d3e;
+  --xtb-border-soft: #1c2533;
+  --xtb-text: #e8eef7;
+  --xtb-muted: #8b97a9;
+  --xtb-faint: #5f6b7d;
+  --xtb-accent: #ff2d55;      /* XTB-style crimson */
+  --xtb-accent-2: #ff5277;
+  --xtb-pos: #1fc77c;         /* gains */
+  --xtb-neg: #ff4d61;         /* losses */
+  --xtb-radius: 12px;
+  --xtb-side-w: 232px;
+  --xtb-top-h: 64px;
+
+  /* The dashboard line chart is hand-drawn on canvas and reads these vars. Make them dark. */
+  --bg: #0a0e15;
+  --chart-primary: #1fc77c;
+  --chart-secondary: #ff2d55;
+  --chart-up: #1fc77c;
+  --chart-down: #ff4d61;
+  --chart-grid: rgba(255, 255, 255, 0.06);
+  --chart-axis: rgba(139, 151, 169, 0.85);
+  --chart-axis-strong: #aab4c4;
+  --chart-empty: #5f6b7d;
+  --chart-guide: rgba(255, 45, 85, 0.32);
+  --chart-selection-fill: rgba(31, 199, 124, 0.12);
+  --chart-selection-stroke: rgba(31, 199, 124, 0.40);
+  --chart-bg-top: rgba(31, 199, 124, 0.14);
+  --chart-bg-bottom: rgba(31, 199, 124, 0.00);
+  --chart-candle-guide: rgba(255, 45, 85, 0.30);
+  --chart-candle-bg-top: rgba(255, 45, 85, 0.06);
+  --chart-candle-bg-bottom: rgba(255, 45, 85, 0.00);
+}
+
+html,
+body {
+  background: var(--xtb-bg) !important;
+  color: var(--xtb-text) !important;
+}
+
+body {
+  font-family: "Space Grotesk", "Inter", "Segoe UI", sans-serif;
+  letter-spacing: 0.1px;
+}
+
+/* tabular numbers everywhere figures appear */
+.stat-card strong,
+table td,
+table th,
+.hero-stat-meta strong,
+.metric,
+.value,
+input,
+select {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* ---------- Layout: left sidebar + top bar over main ---------------------- */
+
+.topbar {
+  position: fixed;
+  top: 0;
+  left: var(--xtb-side-w);
+  right: 0;
+  height: var(--xtb-top-h);
+  margin: 0;
+  padding: 0 22px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: rgba(13, 18, 27, 0.86);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--xtb-border);
+  border-radius: 0;
+  z-index: 40;
+}
+
+.topbar h1,
+.brand {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--xtb-muted);
+  letter-spacing: 0.4px;
+}
+
+.tabs {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: var(--xtb-side-w);
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  margin: 0;
+  padding: 14px 12px;
+  background: linear-gradient(180deg, #0c111a 0%, #0a0e15 100%);
+  border-right: 1px solid var(--xtb-border);
+  overflow-y: auto;
+  z-index: 50;
+}
+
+/* brand block at top of the sidebar */
+.tabs::before {
+  content: "● Prywatny Portfel";
+  display: block;
+  padding: 8px 12px 18px;
+  margin-bottom: 6px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  color: var(--xtb-text);
+  border-bottom: 1px solid var(--xtb-border-soft);
+}
+.tabs::before { color: var(--xtb-accent); }
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 11px 13px;
+  margin: 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--xtb-muted);
+  font-size: 13.5px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  position: relative;
+}
+.tab:hover {
+  background: var(--xtb-panel);
+  color: var(--xtb-text);
+}
+.tab.active {
+  background: var(--xtb-panel-2);
+  color: #fff;
+}
+.tab.active::before {
+  content: "";
+  position: absolute;
+  left: -12px;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--xtb-accent);
+  box-shadow: 0 0 12px var(--xtb-accent);
+}
+.tab .tab-icon {
+  font-size: 14px;
+  opacity: 0.75;
+  width: 18px;
+  text-align: center;
+}
+.tab.active .tab-icon { opacity: 1; color: var(--xtb-accent-2); }
+
+.container,
+main.container {
+  margin: 0;
+  margin-left: var(--xtb-side-w);
+  padding: calc(var(--xtb-top-h) + 22px) 26px 40px;
+  max-width: none;
+  background: var(--xtb-bg);
+}
+
+/* ---------- Panels / cards ----------------------------------------------- */
+
+.panel,
+article.panel {
+  background: var(--xtb-panel);
+  border: 1px solid var(--xtb-border);
+  border-radius: var(--xtb-radius);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.02), 0 8px 28px rgba(0, 0, 0, 0.35);
+  backdrop-filter: none;
+}
+
+.panel-head h2 {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--xtb-text);
+}
+
+/* ---------- Stat cards ---------------------------------------------------- */
+
+.stat-card {
+  background: var(--xtb-panel-2);
+  border: 1px solid var(--xtb-border-soft);
+  border-radius: var(--xtb-radius);
+}
+.stat-card p {
+  color: var(--xtb-muted);
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.7px;
+}
+.stat-card strong {
+  color: var(--xtb-text);
+  font-weight: 700;
+}
+
+.stat-card-hero {
+  background:
+    radial-gradient(120% 140% at 0% 0%, rgba(255, 45, 85, 0.14), transparent 55%),
+    linear-gradient(180deg, #161d2a 0%, #10151f 100%);
+  border: 1px solid #2a3650;
+  position: relative;
+  overflow: hidden;
+}
+.stat-card-hero::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; top: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--xtb-accent), transparent 70%);
+}
+.stat-card-hero strong {
+  font-size: 34px;
+  letter-spacing: -0.5px;
+}
+.hero-stat-meta span { color: var(--xtb-muted); }
+.hero-stat-meta strong { color: var(--xtb-text); }
+
+/* gains / losses coloring (engine toggles these classes / inline colors) */
+.value-positive,
+.positive,
+.trend-up,
+[data-trend="up"] strong { color: var(--xtb-pos) !important; }
+.value-negative,
+.negative,
+.trend-down,
+[data-trend="down"] strong { color: var(--xtb-neg) !important; }
+
+.stat-card-trend strong { font-size: 20px; }
+
+/* ---------- Buttons ------------------------------------------------------- */
+
+.btn {
+  border-radius: 9px;
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.2px;
+  border: 1px solid transparent;
+  background: var(--xtb-accent);
+  color: #fff;
+  box-shadow: 0 6px 18px rgba(255, 45, 85, 0.28);
+  transition: transform 0.08s, filter 0.15s, background 0.15s;
+}
+.btn:hover { filter: brightness(1.08); }
+.btn:active { transform: translateY(1px); }
+
+.btn.secondary,
+button.secondary {
+  background: var(--xtb-panel-2);
+  color: var(--xtb-text);
+  border: 1px solid var(--xtb-border);
+  box-shadow: none;
+}
+.btn.secondary:hover {
+  background: var(--xtb-elev);
+  border-color: #2e3a4f;
+}
+
+/* segmented chart controls */
+.chart-range-btn,
+.chart-mode-btn {
+  background: var(--xtb-panel) !important;
+  border: 1px solid var(--xtb-border) !important;
+  color: var(--xtb-muted) !important;
+  box-shadow: none !important;
+  font-weight: 600;
+}
+.chart-range-btn.active,
+.chart-mode-btn.active {
+  background: var(--xtb-accent) !important;
+  color: #fff !important;
+  border-color: var(--xtb-accent) !important;
+}
+
+/* ---------- Inputs / selects (no flat "static" fields) ------------------- */
+
+input,
+select,
+textarea {
+  background: #0c1119 !important;
+  color: var(--xtb-text) !important;
+  border: 1px solid var(--xtb-border) !important;
+  border-radius: 9px !important;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none !important;
+  border-color: var(--xtb-accent) !important;
+  box-shadow: 0 0 0 3px rgba(255, 45, 85, 0.16) !important;
+}
+.control span,
+label span { color: var(--xtb-muted); }
+
+/* ---------- Tables (dense, sticky header, hover, right-aligned numbers) --- */
+
+.chart-wrap {
+  background: #0d121b;
+  border: 1px solid var(--xtb-border);
+  border-radius: var(--xtb-radius);
+  padding: 8px;
+}
+.chart-wrap canvas { background: transparent; }
+
+.table-wrap { border-radius: var(--xtb-radius); overflow: auto; border: 1px solid var(--xtb-border); }
+table { border-collapse: collapse; width: 100%; }
+table thead th {
+  position: sticky;
+  top: 0;
+  background: #0e131d;
+  color: var(--xtb-muted);
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.6px;
+  font-weight: 600;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--xtb-border);
+  z-index: 1;
+}
+table tbody td {
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--xtb-border-soft);
+  color: var(--xtb-text);
+  font-size: 13px;
+}
+table tbody tr { transition: background 0.12s; }
+table tbody tr:hover { background: rgba(255, 255, 255, 0.025); }
+table tbody tr:last-child td { border-bottom: 0; }
+/* numeric columns lean right and use tabular figures (heuristic: cells after the 2nd) */
+table td[data-label]:not(:first-child):not(:nth-child(2)) { text-align: right; }
+
+/* ---------- Badges / hints / misc ---------------------------------------- */
+
+.badge { border-radius: 6px; font-weight: 600; font-size: 11px; }
+.badge.ok { background: rgba(31, 199, 124, 0.16); color: var(--xtb-pos); }
+.badge.off { background: rgba(255, 77, 97, 0.16); color: var(--xtb-neg); }
+
+.hint, .stat-card-meta { color: var(--xtb-faint); }
+
+/* Hide the bottom status/footer bar (Supabase hint + "Zalogowano/Wysłano" + "Wyczyść wszystkie
+   dane"). app.js un-hides it after login; force it gone for good, demo included. */
+.footer { display: none !important; }
+
+.empty-hero, .onboarding-card {
+  background: var(--xtb-panel-2);
+  border: 1px dashed var(--xtb-border);
+  border-radius: var(--xtb-radius);
+}
+.empty-kicker { color: var(--xtb-accent-2); }
+.onboarding-step { background: var(--xtb-panel); border: 1px solid var(--xtb-border); color: var(--xtb-text); }
+.onboarding-step strong { color: var(--xtb-accent); }
+
+/* topbar chips */
+.topbar-actions .chip,
+.cloud-account-chip,
+.topbar select {
+  background: var(--xtb-panel-2);
+  border: 1px solid var(--xtb-border);
+  border-radius: 8px;
+  color: var(--xtb-text);
+}
+
+/* modal / overlay surfaces */
+.overlay, .sheet, .modal, .cloud-auth-card, [id$="Overlay"] .card {
+  background: var(--xtb-panel) !important;
+  border: 1px solid var(--xtb-border) !important;
+  border-radius: 14px !important;
+}
+
+/* Login / cloud-auth overlay: make the buttons red so they match the app (were blue). */
+.cloud-auth-overlay { background: rgba(5, 8, 13, 0.78) !important; }
+.cloud-auth-overlay .cloud-auth-card { background: var(--xtb-panel) !important; }
+/* kicker was blue — recolor to the app's red accent */
+.cloud-auth-overlay .eyebrow { color: var(--xtb-accent) !important; }
+
+.cloud-auth-overlay .btn {
+  background: var(--xtb-accent) !important;
+  color: #fff !important;
+  border: 1px solid var(--xtb-accent) !important;
+  box-shadow: 0 6px 18px rgba(255, 45, 85, 0.30) !important;
+}
+.cloud-auth-overlay .btn:hover { filter: brightness(1.08); }
+
+/* secondary (Wyślij ponownie / Zamknij): dark ghost with red hover, matches the app */
+.cloud-auth-overlay .btn.secondary {
+  background: var(--xtb-panel-2) !important;
+  color: var(--xtb-text) !important;
+  border: 1px solid var(--xtb-border) !important;
+  box-shadow: none !important;
+}
+.cloud-auth-overlay .btn.secondary:hover {
+  border-color: var(--xtb-accent) !important;
+  color: #fff !important;
+}
+
+/* "Nie pamiętasz hasła?" link → red text */
+.cloud-auth-overlay .btn.link {
+  background: transparent !important;
+  color: var(--xtb-accent-2) !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  text-decoration: none;
+}
+.cloud-auth-overlay .btn.link:hover { color: #fff !important; text-decoration: underline; }
+
+/* scrollbar */
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb { background: #222c3c; border-radius: 6px; }
+*::-webkit-scrollbar-thumb:hover { background: #2e3a4f; }
+*::-webkit-scrollbar-track { background: transparent; }
+
+/* Recolor the green UI accent (active/selected options, focus rings, toggles, checkboxes) to red
+   across every view (Operacje, Raporty, Wygląd...). The app's green came from --brand / --accent.
+   P/L GAINS keep green via --brand-strong (standard: green = up), losses use the bright red. */
+:root,
+body {
+  --brand: var(--xtb-accent) !important;
+  --accent: var(--xtb-accent) !important;
+  --brand-strong: var(--xtb-pos) !important;          /* gains stay green */
+  --danger: var(--xtb-neg) !important;                /* losses brighter red on dark */
+  --line-strong: #2e3a4f !important;
+  --chart-selection-fill: rgba(255, 45, 85, 0.12) !important;
+  --chart-selection-stroke: rgba(255, 45, 85, 0.42) !important;
+}
+
+/* native checkbox/radio/range turn the OS accent (was green) red */
+input[type="checkbox"],
+input[type="radio"],
+input[type="range"],
+select,
+progress { accent-color: var(--xtb-accent); }
+
+/* selected/active option cards & segmented items → red border + glow */
+.appearance-card.active,
+.report-card.active,
+.is-active,
+[aria-selected="true"],
+.selected { border-color: var(--xtb-accent) !important; }
+
+/* responsive: collapse sidebar to top bar on narrow screens */
+@media (max-width: 900px) {
+  .tabs {
+    position: static;
+    width: auto;
+    flex-direction: row;
+    overflow-x: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--xtb-border);
+  }
+  .tabs::before { display: none; }
+  .tab.active::before { display: none; }
+  .topbar { position: static; left: 0; }
+  .container, main.container { margin-left: 0; padding: 18px; }
+}
