@@ -7,3 +7,4 @@ build/
 dist/
 installer/windows/bin/
 installer/windows/obj/
+.vercel

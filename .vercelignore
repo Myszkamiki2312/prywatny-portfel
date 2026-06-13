@@ -1,6 +1,8 @@
-# Only the static frontend is deployed to Vercel. The Python backend is hosted separately
-# (Render/Docker) — keep its source (and tests/data) out of the public static bundle.
-backend/
+# Frontend (static) + the Python serverless function in api/ (which imports backend/) are deployed.
+# Keep tests, data, packaging and helper sources out of the bundle. backend/ source is NOT served
+# statically: vercel.json rewrites /backend/* into the function, which 404s non-/api paths.
+# backend/ stays in the bundle so the serverless function can import it. The source is already
+# public (this GitHub repo is public), so serving it statically leaks nothing new.
 tests/
 frontend_tests/
 installer/
@@ -8,9 +10,9 @@ docs/
 data/
 __pycache__/
 .github/
-*.py
 *.spec
 *.backup
+*.md
 Dockerfile
 render.yaml
-*.md
+desktop_launcher.py
