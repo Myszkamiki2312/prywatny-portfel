@@ -2022,7 +2022,7 @@ async function onRefreshQuotes() {
   try {
     const payload = await apiRequest("/quotes/refresh", {
       method: "POST",
-      body: { tickers }
+      body: { tickers, currencies: assetCurrencyMap() }
     });
     const quotes = Array.isArray(payload.quotes) ? payload.quotes : [];
     applyQuotes(quotes);
@@ -2082,7 +2082,7 @@ async function refreshQuotesAndFxSilently() {
     });
     const payload = await apiRequest("/quotes/refresh", {
       method: "POST",
-      body: { tickers },
+      body: { tickers, currencies: assetCurrencyMap() },
       timeoutMs: 10000
     });
     const quotes = Array.isArray(payload.quotes) ? payload.quotes : [];
@@ -2158,7 +2158,7 @@ async function refreshQuotesAfterImport() {
   try {
     const payload = await apiRequest("/quotes/refresh", {
       method: "POST",
-      body: { tickers },
+      body: { tickers, currencies: assetCurrencyMap() },
       timeoutMs: 15000
     });
     const quotes = Array.isArray(payload.quotes) ? payload.quotes : [];
@@ -2173,6 +2173,20 @@ async function refreshQuotesAfterImport() {
   } finally {
     backendSync.fxSyncInFlight = false;
   }
+}
+
+// Ticker -> currency from the local assets, sent with quote refreshes so the backend can pick the
+// right exchange even when its own state is empty (e.g. stateless serverless function).
+function assetCurrencyMap() {
+  const map = {};
+  state.assets.forEach((asset) => {
+    const ticker = String(asset.ticker || "").trim().toUpperCase();
+    const currency = String(asset.currency || "").trim().toUpperCase();
+    if (ticker && currency) {
+      map[ticker] = currency;
+    }
+  });
+  return map;
 }
 
 function applyQuotes(quotes) {

@@ -470,6 +470,15 @@ class AppHandler(SimpleHTTPRequestHandler):
                 for asset in state["assets"]
                 if str(asset.get("ticker") or "").strip()
             }
+            # Currencies sent by the client override/augment DB state — this is what makes the hint
+            # work on a stateless serverless backend whose own state is empty between invocations.
+            payload_currencies = payload.get("currencies")
+            if isinstance(payload_currencies, dict):
+                for raw_ticker, raw_currency in payload_currencies.items():
+                    ticker_key = str(raw_ticker or "").upper().strip()
+                    currency_value = str(raw_currency or "").upper().strip()
+                    if ticker_key and currency_value:
+                        asset_currency[ticker_key] = currency_value
             tickers = _payload_tickers(payload)
             if not tickers:
                 tickers = [asset["ticker"] for asset in state["assets"] if str(asset.get("ticker") or "").strip()]
