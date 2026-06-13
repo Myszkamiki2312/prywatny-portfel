@@ -9,7 +9,7 @@ import json
 import ssl
 import threading
 import time
-from typing import Any, Dict, Iterable, List, TypedDict
+from typing import Any, Dict, Iterable, List, Optional, TypedDict
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -153,56 +153,52 @@ class QuoteService:
             rows = rows[-safe_limit:]
         return rows
 
-    def _fetch_yahoo(self, tickers: List[str]) -> List[QuoteRow]:
-        symbols = ",".join(tickers)
-        query = urllib.parse.urlencode({"symbols": symbols})
-        url = f"https://query1.finance.yahoo.com/v7/finance/quote?{query}"
-        request = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": "PrywatnyPortfel/1.0",
-                "Accept": "application/json",
-            },
-        )
-        try:
-            raw = self._urlopen_bytes(request)
-            payload = json.loads(raw.decode("utf-8", errors="ignore"))
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ssl.SSLError):
-            return []
+    # Yahoo's v7 /finance/quote endpoint is blocked/deprecated (HTTP 429, no data) and a non-browser
+    # User-Agent gets rejected. The v8 /finance/chart/{symbol} endpoint with a browser UA is the only
+    # reliable free method from a datacenter IP (e.g. Vercel). Per-symbol, with exchange-suffix fallback.
+    _YAHOO_SUFFIXES = (".WA", ".DE", ".L", ".PA", ".MI", ".MC", ".AS", ".SW", ".US")
 
-        rows = payload.get("quoteResponse", {}).get("result", [])
+    def _fetch_yahoo(self, tickers: List[str]) -> List[QuoteRow]:
         output: List[QuoteRow] = []
-        for row in rows:
-            symbol = str(row.get("symbol") or "").upper().strip()
-            price = row.get("regularMarketPrice")
-            if not symbol or not isinstance(price, (float, int)):
+        for ticker in tickers:
+            row = self._fetch_yahoo_chart_quote(ticker)
+            if row is not None:
+                output.append(row)
+        return output
+
+    def _fetch_yahoo_chart_quote(self, ticker: str) -> Optional[QuoteRow]:
+        symbol = str(ticker or "").upper().strip()
+        if not symbol:
+            return None
+        candidates = [symbol]
+        if "." not in symbol:
+            candidates += [symbol + suffix for suffix in self._YAHOO_SUFFIXES]
+        for candidate in candidates:
+            meta = self._yahoo_chart_meta(candidate)
+            if not meta:
                 continue
-            currency = str(row.get("currency") or _guess_currency_from_ticker(symbol))
-            output.append(
-                {
+            price = meta.get("regularMarketPrice")
+            if isinstance(price, (float, int)) and price > 0:
+                currency = str(meta.get("currency") or _guess_currency_from_ticker(symbol))
+                return {
                     "ticker": symbol,
                     "price": float(price),
                     "currency": currency,
                     "provider": "yahoo",
                     "fetched_at": now_iso(),
                 }
-            )
-        return output
+        return None
 
-    def _fetch_yahoo_fx(self, tickers: List[str]) -> List[QuoteRow]:
-        mapping = {
-            ticker: _fx_provider_symbol(ticker)
-            for ticker in tickers
-            if _fx_provider_symbol(ticker)
-        }
-        if not mapping:
-            return []
-        query = urllib.parse.urlencode({"symbols": ",".join(mapping.values())})
-        url = f"https://query1.finance.yahoo.com/v7/finance/quote?{query}"
+    def _yahoo_chart_meta(self, symbol: str) -> Optional[Dict[str, Any]]:
+        url = (
+            "https://query1.finance.yahoo.com/v8/finance/chart/"
+            + urllib.parse.quote(symbol)
+            + "?interval=1d&range=2d"
+        )
         request = urllib.request.Request(
             url,
             headers={
-                "User-Agent": "PrywatnyPortfel/1.0",
+                "User-Agent": "Mozilla/5.0",
                 "Accept": "application/json",
             },
         )
@@ -210,17 +206,26 @@ class QuoteService:
             raw = self._urlopen_bytes(request)
             payload = json.loads(raw.decode("utf-8", errors="ignore"))
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ssl.SSLError):
-            return []
+            return None
+        result = (payload.get("chart") or {}).get("result") or []
+        if not result:
+            return None
+        meta = result[0].get("meta")
+        return meta if isinstance(meta, dict) else None
 
-        reverse_mapping = {symbol: ticker for ticker, symbol in mapping.items()}
-        rows = payload.get("quoteResponse", {}).get("result", [])
+    def _fetch_yahoo_fx(self, tickers: List[str]) -> List[QuoteRow]:
+        # Same v8 chart method as stocks; FX pairs use Yahoo symbols like "USDPLN=X".
         output: List[QuoteRow] = []
-        for row in rows:
-            provider_symbol = str(row.get("symbol") or "").upper().strip()
-            ticker = reverse_mapping.get(provider_symbol)
+        for ticker in tickers:
+            provider_symbol = _fx_provider_symbol(ticker)
             pair_key = normalize_fx_pair_key(ticker)
-            price = row.get("regularMarketPrice")
-            if not ticker or not pair_key or not isinstance(price, (float, int)):
+            if not provider_symbol or not pair_key:
+                continue
+            meta = self._yahoo_chart_meta(provider_symbol)
+            if not meta:
+                continue
+            price = meta.get("regularMarketPrice")
+            if not isinstance(price, (float, int)) or price <= 0:
                 continue
             _, quote_currency = pair_key.split("/", 1)
             output.append(
