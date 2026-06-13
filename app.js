@@ -1468,7 +1468,22 @@ async function supabaseRequestWithRetry(path, options = {}, didRefresh = false) 
   return payload;
 }
 
-async function refreshSupabaseSession() {
+let _refreshSessionInFlight = null;
+
+// Single-flight: Supabase rotates the refresh token on use, so two concurrent 401s (e.g. an auto
+// push firing during a pull) must NOT each spend the token — the second would fail and log the user
+// out. Share one in-flight refresh between all callers.
+function refreshSupabaseSession() {
+  if (_refreshSessionInFlight) {
+    return _refreshSessionInFlight;
+  }
+  _refreshSessionInFlight = _performRefreshSupabaseSession().finally(() => {
+    _refreshSessionInFlight = null;
+  });
+  return _refreshSessionInFlight;
+}
+
+async function _performRefreshSupabaseSession() {
   const response = await fetch(`${cloudSyncConfig.url}/auth/v1/token?grant_type=refresh_token`, {
     method: "POST",
     headers: {
@@ -1897,8 +1912,16 @@ async function hydrateFromBackend() {
     await apiRequest("/health", { timeoutMs: 1400 });
     const payload = await apiRequest("/state", { timeoutMs: 5000 });
     if (payload && payload.state) {
-      state = normalizeState(payload.state);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      const incoming = normalizeState(payload.state);
+      const incomingHasData = Boolean((incoming.operations && incoming.operations.length) || (incoming.assets && incoming.assets.length));
+      const localHasData = Boolean((state.operations && state.operations.length) || (state.assets && state.assets.length));
+      // The hosted (serverless) backend has ephemeral storage and returns an empty default state;
+      // never let that clobber real local/cloud data. Adopt it only if it has content, or if there
+      // is nothing locally to lose.
+      if (incomingHasData || !localHasData) {
+        state = incoming;
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      }
     }
     backendSync.available = true;
     await hydrateReportCatalog();
