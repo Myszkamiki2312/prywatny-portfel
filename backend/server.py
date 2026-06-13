@@ -793,7 +793,22 @@ class AppHandler(SimpleHTTPRequestHandler):
             ("POST", "/api/update/apply"): _route_update_apply,
         }
 
+        # Hosted (serverless) backends have ephemeral per-invocation storage. Let the client carry
+        # its current portfolio in the request body so state-dependent tools (reports, scanner,
+        # metrics, signals, calendar, recommendations, catalyst, funds) compute on real data within
+        # the same invocation instead of the empty default state.
+        incoming_state = payload.get("state") if isinstance(payload, dict) else None
+        if isinstance(incoming_state, dict) and incoming_state:
+            try:
+                self.context.database.replace_state(incoming_state)
+            except Exception:
+                pass
+
         handler = routes.get((method, path))
+        if handler is None and method == "POST":
+            # Allow POSTing a normally-GET route so a state body can be attached; the GET handler
+            # still reads its params from the (URL) query string.
+            handler = routes.get(("GET", path))
         if handler:
             return handler()
 

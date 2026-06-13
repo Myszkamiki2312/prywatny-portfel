@@ -4834,7 +4834,27 @@ async function pushStateToBackend() {
   }
 }
 
+const STATE_DEPENDENT_BACKEND_PATHS = new Set([
+  "/metrics/portfolio",
+  "/metrics/history",
+  "/reports/generate",
+  "/scanner",
+  "/tools/scanner",
+  "/tools/signals",
+  "/tools/calendar",
+  "/tools/recommendations",
+  "/tools/catalyst",
+  "/tools/funds/ranking"
+]);
+
 async function apiRequest(path, options = {}) {
+  // The hosted (serverless) backend has no persistent storage, so its DB-read tools would compute on
+  // an empty portfolio. Attach the live state and POST it — the backend writes it for the duration of
+  // the request so reports/scanner/metrics/etc. run on real data. (Query params stay in the URL.)
+  if (STATE_DEPENDENT_BACKEND_PATHS.has(String(path).split("?")[0])) {
+    const existingBody = options.body && typeof options.body === "object" ? options.body : {};
+    options = { ...options, method: "POST", body: { ...existingBody, state } };
+  }
   const method = options.method || "GET";
   const timeoutMs = options.timeoutMs || 8000;
   const controller = new AbortController();
