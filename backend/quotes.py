@@ -58,10 +58,19 @@ class QuoteService:
         self._history_cache: Dict[str, Dict[str, object]] = {}
         self._lock = threading.RLock()
 
-    def refresh(self, tickers: Iterable[str]) -> List[ApiQuoteRow]:
+    def refresh(
+        self,
+        tickers: Iterable[str],
+        currency_by_ticker: Optional[Dict[str, str]] = None,
+    ) -> List[ApiQuoteRow]:
         requested = _normalize_tickers(tickers)
         if not requested:
             return []
+        currency_hints = {
+            str(k).upper().strip(): str(v).upper().strip()
+            for k, v in (currency_by_ticker or {}).items()
+            if k and v
+        }
 
         now_ts = time.time()
         found: Dict[str, ApiQuoteRow] = {}
@@ -79,7 +88,7 @@ class QuoteService:
         missing_market = [ticker for ticker in missing if not _is_fx_ticker(ticker)]
 
         if missing_market:
-            for row in self._fetch_yahoo(missing_market):
+            for row in self._fetch_yahoo(missing_market, currency_hints):
                 normalized = self._normalize_quote_row(row)
                 if normalized:
                     fetched[normalized["ticker"]] = normalized
@@ -157,22 +166,37 @@ class QuoteService:
     # User-Agent gets rejected. The v8 /finance/chart/{symbol} endpoint with a browser UA is the only
     # reliable free method from a datacenter IP (e.g. Vercel). Per-symbol, with exchange-suffix fallback.
     _YAHOO_SUFFIXES = (".WA", ".DE", ".L", ".PA", ".MI", ".MC", ".AS", ".SW", ".US")
+    # Prefer the exchange matching the asset's currency to avoid ticker collisions
+    # (e.g. a PLN asset "DNP" is Dino Polska on GPW -> DNP.WA, not the US-listed DNP fund).
+    _SUFFIX_FOR_CURRENCY = {"PLN": ".WA", "GBP": ".L", "GBX": ".L", "CHF": ".SW"}
 
-    def _fetch_yahoo(self, tickers: List[str]) -> List[QuoteRow]:
+    def _fetch_yahoo(
+        self,
+        tickers: List[str],
+        currency_by_ticker: Optional[Dict[str, str]] = None,
+    ) -> List[QuoteRow]:
+        hints = currency_by_ticker or {}
         output: List[QuoteRow] = []
         for ticker in tickers:
-            row = self._fetch_yahoo_chart_quote(ticker)
+            row = self._fetch_yahoo_chart_quote(ticker, hints.get(str(ticker).upper().strip()))
             if row is not None:
                 output.append(row)
         return output
 
-    def _fetch_yahoo_chart_quote(self, ticker: str) -> Optional[QuoteRow]:
+    def _fetch_yahoo_chart_quote(self, ticker: str, currency_hint: Optional[str] = None) -> Optional[QuoteRow]:
         symbol = str(ticker or "").upper().strip()
         if not symbol:
             return None
         candidates = [symbol]
         if "." not in symbol:
-            candidates += [symbol + suffix for suffix in self._YAHOO_SUFFIXES]
+            preferred = self._SUFFIX_FOR_CURRENCY.get(str(currency_hint or "").upper().strip())
+            if preferred:
+                # Try the currency-matched exchange BEFORE the bare (often US) symbol.
+                candidates = [symbol + preferred, symbol] + [
+                    symbol + suffix for suffix in self._YAHOO_SUFFIXES if suffix != preferred
+                ]
+            else:
+                candidates += [symbol + suffix for suffix in self._YAHOO_SUFFIXES]
         for candidate in candidates:
             meta = self._yahoo_chart_meta(candidate)
             if not meta:

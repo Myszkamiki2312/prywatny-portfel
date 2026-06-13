@@ -463,6 +463,13 @@ class AppHandler(SimpleHTTPRequestHandler):
 
         def _route_quotes_refresh() -> Dict[str, Any]:
             state = self.context.database.get_state()
+            # Map each asset ticker to its currency so the quote provider picks the right exchange
+            # (e.g. a PLN "DNP" resolves to GPW's DNP.WA, not the US-listed DNP fund).
+            asset_currency = {
+                str(asset.get("ticker") or "").upper().strip(): str(asset.get("currency") or "").upper().strip()
+                for asset in state["assets"]
+                if str(asset.get("ticker") or "").strip()
+            }
             tickers = _payload_tickers(payload)
             if not tickers:
                 tickers = [asset["ticker"] for asset in state["assets"] if str(asset.get("ticker") or "").strip()]
@@ -473,7 +480,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             def merge_quotes(requested: List[str]) -> None:
                 if not requested:
                     return
-                refreshed_quotes = self.context.quote_service.refresh(requested)
+                refreshed_quotes = self.context.quote_service.refresh(requested, asset_currency)
                 refreshed_map: Dict[str, ApiQuoteRow] = {
                     str(row.get("ticker") or "").upper(): _api_quote_row(row, default_source="market-data")
                     for row in refreshed_quotes
