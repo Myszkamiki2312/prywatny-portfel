@@ -525,8 +525,8 @@ def _yahoo_quote_candidates(
         if text and text not in candidates:
             candidates.append(text)
 
-    add(normalized)
     if "." in normalized:
+        add(normalized)
         root, suffix = normalized.rsplit(".", 1)
         if suffix in {"PL", "WA"} and root:
             add(f"{root}.WA")

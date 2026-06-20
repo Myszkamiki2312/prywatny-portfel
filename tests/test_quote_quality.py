@@ -152,7 +152,7 @@ class QuoteQualityTests(unittest.TestCase):
         )
         self.assertEqual(
             _yahoo_quote_candidates("DNP", "PLN", suffixes, suffix_by_currency)[:2],
-            ["DNP", "DNP.WA"],
+            ["DNP.WA", "DNP"],
         )
 
     def test_urlopen_retries_after_transient_error(self):
