@@ -192,3 +192,26 @@ test("computeMetrics converts USD portfolio values to PLN using stored FX rates"
   assert.equal(metrics.holdings[0].value, 880);
   assert.equal(metrics.holdings[0].currency, "USD");
 });
+
+test("refresh payload derives FX rates from FX quotes when fxRates is empty", () => {
+  const hooks = createHarness();
+
+  const rates = hooks.resolveFxRatesFromRefreshPayload(
+    { fxRates: {} },
+    [
+      {
+        ticker: "FX:USD/PLN",
+        price: 3.7098,
+        currency: "PLN"
+      },
+      {
+        ticker: "AAPL",
+        price: 210,
+        currency: "USD"
+      }
+    ]
+  );
+
+  assert.equal(rates["USD/PLN"], 3.7098);
+  assert.equal(Object.keys(rates).length, 1);
+});

@@ -2030,8 +2030,10 @@ async function onRefreshQuotes() {
     return;
   }
   const tickers = state.assets.map((asset) => asset.ticker).filter(Boolean);
-  if (!tickers.length) {
-    showToast("Brak walorów do odświeżenia notowań.", "info");
+  const fxTickers = requiredFxQuoteTickers();
+  const requestTickers = uniqueTickers(tickers.concat(fxTickers));
+  if (!requestTickers.length) {
+    showToast("Brak walorów lub kursów FX do odświeżenia.", "info");
     return;
   }
   const refreshButton = dom.refreshQuotesBtn;
@@ -2045,11 +2047,11 @@ async function onRefreshQuotes() {
   try {
     const payload = await apiRequest("/quotes/refresh", {
       method: "POST",
-      body: { tickers, currencies: assetCurrencyMap() }
+      body: { tickers: requestTickers, currencies: assetCurrencyMap() }
     });
     const quotes = Array.isArray(payload.quotes) ? payload.quotes : [];
     applyQuotes(quotes);
-    applyFxRates(payload.fxRates || extractFxRatesFromQuotes(quotes));
+    applyFxRates(resolveFxRatesFromRefreshPayload(payload, quotes));
     saveState({ skipBackend: true });
     renderAll();
     showToast(
@@ -2093,7 +2095,8 @@ async function refreshQuotesAndFxSilently() {
   }
   const tickers = state.assets.map((asset) => String(asset.ticker || "").trim()).filter(Boolean);
   const fxTickers = requiredFxQuoteTickers();
-  if (!tickers.length && !fxTickers.length) {
+  const requestTickers = uniqueTickers(tickers.concat(fxTickers));
+  if (!requestTickers.length) {
     return;
   }
   backendSync.fxSyncInFlight = true;
@@ -2105,12 +2108,12 @@ async function refreshQuotesAndFxSilently() {
     });
     const payload = await apiRequest("/quotes/refresh", {
       method: "POST",
-      body: { tickers, currencies: assetCurrencyMap() },
+      body: { tickers: requestTickers, currencies: assetCurrencyMap() },
       timeoutMs: 10000
     });
     const quotes = Array.isArray(payload.quotes) ? payload.quotes : [];
     applyQuotes(quotes);
-    applyFxRates(payload.fxRates || extractFxRatesFromQuotes(quotes));
+    applyFxRates(resolveFxRatesFromRefreshPayload(payload, quotes));
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     renderAll();
   } catch (error) {
@@ -2174,19 +2177,20 @@ async function refreshQuotesAfterImport() {
     return 0;
   }
   const tickers = state.assets.map((asset) => String(asset.ticker || "").trim()).filter(Boolean);
-  if (!tickers.length) {
+  const requestTickers = uniqueTickers(tickers.concat(requiredFxQuoteTickers()));
+  if (!requestTickers.length) {
     return 0;
   }
   backendSync.fxSyncInFlight = true;
   try {
     const payload = await apiRequest("/quotes/refresh", {
       method: "POST",
-      body: { tickers, currencies: assetCurrencyMap() },
+      body: { tickers: requestTickers, currencies: assetCurrencyMap() },
       timeoutMs: 15000
     });
     const quotes = Array.isArray(payload.quotes) ? payload.quotes : [];
     applyQuotes(quotes);
-    applyFxRates(payload.fxRates || extractFxRatesFromQuotes(quotes));
+    applyFxRates(resolveFxRatesFromRefreshPayload(payload, quotes));
     saveState({ skipBackend: true });
     renderAll();
     return quotes.length;
@@ -2210,6 +2214,16 @@ function assetCurrencyMap() {
     }
   });
   return map;
+}
+
+function uniqueTickers(tickers) {
+  return Array.from(
+    new Set(
+      tickers
+        .map((ticker) => String(ticker || "").trim())
+        .filter(Boolean)
+    )
+  );
 }
 
 function applyQuotes(quotes) {
@@ -2243,6 +2257,12 @@ function applyQuotes(quotes) {
 function applyFxRates(rates) {
   const merged = { ...normalizeFxRates(state.meta.fxRates), ...normalizeFxRates(rates) };
   state.meta.fxRates = merged;
+}
+
+function resolveFxRatesFromRefreshPayload(payload, quotes) {
+  const payloadRates = normalizeFxRates(payload && payload.fxRates);
+  const quoteRates = extractFxRatesFromQuotes(quotes);
+  return Object.keys(payloadRates).length ? payloadRates : quoteRates;
 }
 
 async function pullQuotesFromBackend() {
@@ -11091,6 +11111,7 @@ if (typeof globalThis !== "undefined" && globalThis.__MYFUND_ENABLE_TEST_HOOKS__
     normalizeIconSet,
     normalizeFontScale,
     normalizeFxRates,
+    resolveFxRatesFromRefreshPayload,
     findCurrencyConversionRate,
     applyAppearanceSettings,
     appearanceIconSetConfig,
