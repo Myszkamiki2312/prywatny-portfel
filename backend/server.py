@@ -1001,6 +1001,8 @@ def _state_currencies_for_fx(state: Dict[str, Any], quote_map: Dict[str, Dict[st
         ticker = str(asset.get("ticker") or "").upper().strip()
         quote = quote_map.get(ticker, {})
         currencies.add(normalize_currency(quote.get("currency") or asset.get("currency"), base_currency))
+    for quote in quote_map.values():
+        currencies.add(normalize_currency(quote.get("currency"), base_currency))
     return sorted(currency for currency in currencies if currency)
 
 

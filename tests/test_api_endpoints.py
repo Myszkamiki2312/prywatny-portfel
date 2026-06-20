@@ -134,9 +134,11 @@ class QuoteDbMock:
 
 class QuoteServiceMock:
     def __init__(self, response):
-        self.response = [dict(item) for item in response]
+        self.response = response if callable(response) else [dict(item) for item in response]
 
     def refresh(self, tickers, currency_hints=None):  # noqa: ARG002
+        if callable(self.response):
+            return [dict(item) for item in self.response(tickers, currency_hints)]
         return [dict(item) for item in self.response]
 
 
@@ -365,6 +367,52 @@ class QuoteEndpointTests(unittest.TestCase):
 
         self.assertEqual(response["fxRates"]["USD/PLN"], 3.71)
         self.assertEqual(self.database.state["meta"]["fxRates"]["USD/PLN"], 3.71)
+
+    def test_quotes_refresh_auto_fetches_fx_rates_from_payload_quote_currency(self):
+        self.state["assets"] = []
+        self.database = QuoteDbMock(state=self.state, quotes=[])
+
+        def quote_response(tickers, _currency_hints):
+            if "AAPL" in tickers:
+                return [
+                    {
+                        "ticker": "AAPL",
+                        "price": 298.01,
+                        "currency": "USD",
+                        "provider": "yahoo",
+                        "fetchedAt": "2026-01-01T00:00:00+00:00",
+                        "stale": False,
+                    }
+                ]
+            if "FX:USD/PLN" in tickers:
+                return [
+                    {
+                        "ticker": "FX:USD/PLN",
+                        "price": 3.71,
+                        "currency": "PLN",
+                        "provider": "yahoo-fx",
+                        "fetchedAt": "2026-01-01T00:00:00+00:00",
+                        "stale": False,
+                    }
+                ]
+            return []
+
+        self.handler = FakeHandler(
+            SimpleNamespace(
+                database=self.database,
+                quote_service=QuoteServiceMock(response=quote_response),
+            )
+        )
+
+        response = self.handler.dispatch(
+            "POST",
+            "/api/quotes/refresh",
+            payload={"tickers": ["AAPL"], "currencies": {"AAPL": "USD"}},
+        )
+
+        self.assertEqual(response["resolved"], 1)
+        self.assertEqual(response["fxRates"]["USD/PLN"], 3.71)
+        self.assertEqual(response["fxUpdated"], 1)
 
     def test_quotes_refresh_uses_db_alias_fallback_for_equivalent_ticker(self):
         self.database = QuoteDbMock(
