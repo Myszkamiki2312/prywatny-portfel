@@ -188,6 +188,9 @@ class QuoteService:
         if not symbol:
             return None
         candidates = [symbol]
+        if symbol.endswith(".PL"):
+            root = symbol.rsplit(".", 1)[0]
+            candidates = [symbol, f"{root}.WA", root]
         if "." not in symbol:
             preferred = self._SUFFIX_FOR_CURRENCY.get(str(currency_hint or "").upper().strip())
             if preferred:

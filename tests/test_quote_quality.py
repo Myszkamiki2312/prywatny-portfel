@@ -49,6 +49,18 @@ class RetryQuoteService(QuoteService):
         return b"ok"
 
 
+class YahooCandidateQuoteService(QuoteService):
+    def __init__(self):
+        super().__init__()
+        self.candidates = []
+
+    def _yahoo_chart_meta(self, symbol):
+        self.candidates.append(symbol)
+        if symbol == "CDR.WA":
+            return {"regularMarketPrice": 224.1, "currency": "PLN"}
+        return None
+
+
 class QuoteQualityTests(unittest.TestCase):
     def test_refresh_uses_fresh_memory_cache_before_requery(self):
         service = StubQuoteService()
@@ -114,6 +126,17 @@ class QuoteQualityTests(unittest.TestCase):
     def test_polish_xtb_suffix_uses_stooq_root_candidate(self):
         self.assertEqual(_stooq_candidates("CDR.PL")[:2], ["cdr.pl", "cdr"])
         self.assertEqual(_stooq_candidates("KGH.WA")[:2], ["kgh.wa", "kgh"])
+
+    def test_yahoo_quote_for_polish_pl_suffix_falls_back_to_warsaw_suffix(self):
+        service = YahooCandidateQuoteService()
+
+        quote = service._fetch_yahoo_chart_quote("CDR.PL", "PLN")
+
+        self.assertIsNotNone(quote)
+        self.assertEqual(quote["ticker"], "CDR.PL")
+        self.assertEqual(quote["price"], 224.1)
+        self.assertEqual(quote["currency"], "PLN")
+        self.assertEqual(service.candidates[:2], ["CDR.PL", "CDR.WA"])
 
     def test_urlopen_retries_after_transient_error(self):
         service = RetryQuoteService()
