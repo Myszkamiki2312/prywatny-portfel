@@ -1,7 +1,7 @@
 import unittest
 import urllib.request
 
-from backend.quotes import QuoteService, _stooq_candidates, _stooq_history_candidates, now_iso
+from backend.quotes import QuoteService, _stooq_candidates, _stooq_history_candidates, _yahoo_quote_candidates, now_iso
 
 
 class StubQuoteService(QuoteService):
@@ -137,6 +137,23 @@ class QuoteQualityTests(unittest.TestCase):
         self.assertEqual(quote["price"], 224.1)
         self.assertEqual(quote["currency"], "PLN")
         self.assertEqual(service.candidates[:2], ["CDR.PL", "CDR.WA"])
+
+    def test_yahoo_candidates_handle_common_user_suffixes_and_currency_hints(self):
+        suffixes = (".WA", ".DE", ".L", ".PA", ".MI", ".MC", ".AS", ".SW", ".US")
+        suffix_by_currency = {"PLN": ".WA", "GBP": ".L", "GBX": ".L", "CHF": ".SW"}
+
+        self.assertEqual(
+            _yahoo_quote_candidates("AAPL.US", "USD", suffixes, suffix_by_currency)[:2],
+            ["AAPL.US", "AAPL"],
+        )
+        self.assertEqual(
+            _yahoo_quote_candidates("CDR.PL", "PLN", suffixes, suffix_by_currency)[:3],
+            ["CDR.PL", "CDR.WA", "CDR"],
+        )
+        self.assertEqual(
+            _yahoo_quote_candidates("DNP", "PLN", suffixes, suffix_by_currency)[:2],
+            ["DNP", "DNP.WA"],
+        )
 
     def test_urlopen_retries_after_transient_error(self):
         service = RetryQuoteService()

@@ -187,19 +187,7 @@ class QuoteService:
         symbol = str(ticker or "").upper().strip()
         if not symbol:
             return None
-        candidates = [symbol]
-        if symbol.endswith(".PL"):
-            root = symbol.rsplit(".", 1)[0]
-            candidates = [symbol, f"{root}.WA", root]
-        if "." not in symbol:
-            preferred = self._SUFFIX_FOR_CURRENCY.get(str(currency_hint or "").upper().strip())
-            if preferred:
-                # Try the currency-matched exchange BEFORE the bare (often US) symbol.
-                candidates = [symbol + preferred, symbol] + [
-                    symbol + suffix for suffix in self._YAHOO_SUFFIXES if suffix != preferred
-                ]
-            else:
-                candidates += [symbol + suffix for suffix in self._YAHOO_SUFFIXES]
+        candidates = _yahoo_quote_candidates(symbol, currency_hint, self._YAHOO_SUFFIXES, self._SUFFIX_FOR_CURRENCY)
         for candidate in candidates:
             meta = self._yahoo_chart_meta(candidate)
             if not meta:
@@ -518,6 +506,49 @@ def _fx_provider_symbol(ticker: str) -> str:
         return ""
     base_currency, quote_currency = pair_key.split("/", 1)
     return f"{normalize_currency(base_currency)}{normalize_currency(quote_currency)}=X"
+
+
+def _yahoo_quote_candidates(
+    symbol: str,
+    currency_hint: Optional[str],
+    suffixes: Iterable[str],
+    suffix_by_currency: Dict[str, str],
+) -> List[str]:
+    normalized = str(symbol or "").upper().strip()
+    if not normalized:
+        return []
+
+    candidates: List[str] = []
+
+    def add(candidate: str) -> None:
+        text = str(candidate or "").upper().strip()
+        if text and text not in candidates:
+            candidates.append(text)
+
+    add(normalized)
+    if "." in normalized:
+        root, suffix = normalized.rsplit(".", 1)
+        if suffix in {"PL", "WA"} and root:
+            add(f"{root}.WA")
+            add(root)
+        elif suffix == "US" and root:
+            add(root)
+        return candidates
+
+    preferred = suffix_by_currency.get(str(currency_hint or "").upper().strip())
+    if preferred:
+        # Try the currency-matched exchange BEFORE the bare (often US) symbol.
+        add(normalized + preferred)
+        add(normalized)
+        for suffix in suffixes:
+            if suffix != preferred:
+                add(normalized + suffix)
+        return candidates
+
+    add(normalized)
+    for suffix in suffixes:
+        add(normalized + suffix)
+    return candidates
 
 
 def _parse_stooq_history_csv(text: str) -> List[HistoryRow]:
