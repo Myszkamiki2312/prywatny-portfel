@@ -136,16 +136,23 @@ class RealtimeRunner:
         ]
         if not tickers:
             return
-        quotes = self.quote_service.refresh(tickers)
+        asset_currency = {
+            str(asset.get("ticker", "")).strip().upper(): str(asset.get("currency", "")).strip().upper()
+            for asset in state.get("assets", [])
+            if str(asset.get("ticker", "")).strip()
+        }
+        quotes = self.quote_service.refresh(tickers, asset_currency)
         if not quotes:
             return
-        self.database.upsert_quotes(quotes)
+        fresh_quotes = [quote for quote in quotes if not bool(quote.get("stale")) and float(quote.get("price") or 0) > 0]
+        if fresh_quotes:
+            self.database.upsert_quotes(fresh_quotes)
         quote_map = {str(item.get("ticker", "")).upper(): item for item in quotes}
         updated = False
         for asset in state.get("assets", []):
             ticker = str(asset.get("ticker", "")).upper()
             quote = quote_map.get(ticker)
-            if not quote:
+            if not quote or bool(quote.get("stale")) or float(quote.get("price") or 0) <= 0:
                 continue
             asset["currentPrice"] = float(quote.get("price", asset.get("currentPrice", 0)))
             asset["currency"] = str(quote.get("currency", asset.get("currency", "PLN")))

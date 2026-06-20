@@ -2025,7 +2025,8 @@ async function hydrateBrokerCatalog() {
 }
 
 async function onRefreshQuotes() {
-  if (!backendSync.available) {
+  const backendReady = backendSync.available || (await ensureBackendAvailable({ timeoutMs: 2200 }));
+  if (!backendReady) {
     showToast("Backend jest offline. Uruchom aplikację z launcherem, aby odświeżyć notowania.", "error");
     return;
   }
@@ -2054,9 +2055,13 @@ async function onRefreshQuotes() {
     applyFxRates(resolveFxRatesFromRefreshPayload(payload, quotes));
     saveState({ skipBackend: true });
     renderAll();
+    const freshCount = quotes.filter((quote) => !quote.stale).length;
+    const staleCount = quotes.length - freshCount;
     showToast(
-      `Zaktualizowano notowania: ${quotes.length} walorów.${payload.fxUpdated ? ` Kursy FX: ${payload.fxUpdated}.` : ""}`,
-      "success"
+      `Zaktualizowano notowania: ${freshCount} walorów${
+        staleCount ? `, pominięto nieświeże: ${staleCount}` : ""
+      }.${payload.fxUpdated ? ` Kursy FX: ${payload.fxUpdated}.` : ""}`,
+      staleCount ? "info" : "success"
     );
   } catch (error) {
     backendSync.available = false;
@@ -2232,14 +2237,20 @@ function applyQuotes(quotes) {
   }
   const quoteByTicker = {};
   quotes.forEach((row) => {
-    const ticker = String(row.ticker || "").toUpperCase();
-    if (!ticker || normalizeFxPairKey(ticker)) {
+    const ticker = String(row.ticker || "").trim().toUpperCase();
+    const price = toNum(row.price);
+    if (!ticker || normalizeFxPairKey(ticker) || price <= 0 || row.stale) {
       return;
     }
-    quoteByTicker[ticker] = row;
+    quoteTickerAliases(ticker, row.currency).forEach((alias) => {
+      if (!quoteByTicker[alias]) {
+        quoteByTicker[alias] = row;
+      }
+    });
   });
   state.assets.forEach((asset) => {
-    const quote = quoteByTicker[String(asset.ticker || "").toUpperCase()];
+    const assetTicker = String(asset.ticker || "").trim().toUpperCase();
+    const quote = quoteTickerAliases(assetTicker, asset.currency).map((alias) => quoteByTicker[alias]).find(Boolean);
     if (!quote) {
       return;
     }
@@ -2252,6 +2263,54 @@ function applyQuotes(quotes) {
       normalizeCurrency(asset.currency, state.meta.baseCurrency)
     );
   });
+}
+
+function quoteTickerAliases(ticker, currencyHint = "") {
+  const normalized = String(ticker || "").trim().toUpperCase();
+  if (!normalized) {
+    return [];
+  }
+  const currency = normalizeCurrency(currencyHint, "");
+  const aliases = [normalized];
+  const add = (value) => {
+    const text = String(value || "").trim().toUpperCase();
+    if (text && !aliases.includes(text)) {
+      aliases.push(text);
+    }
+  };
+  if (normalized === "ORLEN") {
+    add("PKN");
+    add("PKN.WA");
+  }
+  if (normalized === "PKN") {
+    add("ORLEN");
+  }
+  if (normalized.includes(".")) {
+    const [root, suffix] = normalized.split(".", 2);
+    if ((suffix === "PL" || suffix === "WA") && root) {
+      add(root);
+      add(`${root}.PL`);
+      add(`${root}.WA`);
+    } else if (suffix === "US" && root) {
+      add(root);
+    } else if (suffix === "DE" && root) {
+      add(root);
+    }
+  } else {
+    if (currency === "PLN") {
+      add(`${normalized}.WA`);
+      add(`${normalized}.PL`);
+      add(`${normalized}.US`);
+    } else if (currency === "EUR") {
+      add(`${normalized}.DE`);
+      add(`${normalized}.US`);
+    } else {
+      add(`${normalized}.US`);
+      add(`${normalized}.PL`);
+      add(`${normalized}.WA`);
+    }
+  }
+  return aliases;
 }
 
 function applyFxRates(rates) {
@@ -11111,6 +11170,8 @@ if (typeof globalThis !== "undefined" && globalThis.__MYFUND_ENABLE_TEST_HOOKS__
     normalizeIconSet,
     normalizeFontScale,
     normalizeFxRates,
+    applyQuotes,
+    quoteTickerAliases,
     resolveFxRatesFromRefreshPayload,
     findCurrencyConversionRate,
     applyAppearanceSettings,

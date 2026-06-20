@@ -308,3 +308,90 @@ class QuoteEndpointTests(unittest.TestCase):
         self.assertEqual(response["quotes"][0]["source"], "db-cache")
         self.assertEqual(response["quotes"][0]["stale"], True)
         self.assertEqual(len(self.database.upserted), 0)
+
+    def test_quotes_refresh_does_not_overwrite_asset_with_stale_quote(self):
+        self.handler = FakeHandler(
+            SimpleNamespace(
+                database=self.database,
+                quote_service=QuoteServiceMock(
+                    response=[
+                        {
+                            "ticker": "CDR",
+                            "price": 1.0,
+                            "currency": "PLN",
+                            "provider": "memory",
+                            "fetchedAt": "2000-01-01T00:00:00+00:00",
+                            "stale": True,
+                        }
+                    ]
+                ),
+            )
+        )
+
+        response = self.handler.dispatch(
+            "POST",
+            "/api/quotes/refresh",
+            payload={"tickers": ["CDR"]},
+        )
+
+        self.assertEqual(response["fallbackUsed"], 1)
+        self.assertEqual(self.database.state["assets"][0]["currentPrice"], 120.0)
+        self.assertEqual(len(self.database.upserted), 0)
+
+    def test_quotes_refresh_updates_fx_rates_from_explicit_fx_ticker(self):
+        self.handler = FakeHandler(
+            SimpleNamespace(
+                database=self.database,
+                quote_service=QuoteServiceMock(
+                    response=[
+                        {
+                            "ticker": "FX:USD/PLN",
+                            "price": 3.71,
+                            "currency": "PLN",
+                            "provider": "yahoo-fx",
+                            "fetchedAt": "2026-01-01T00:00:00+00:00",
+                            "stale": False,
+                        }
+                    ]
+                ),
+            )
+        )
+
+        response = self.handler.dispatch(
+            "POST",
+            "/api/quotes/refresh",
+            payload={"tickers": ["FX:USD/PLN"]},
+        )
+
+        self.assertEqual(response["fxRates"]["USD/PLN"], 3.71)
+        self.assertEqual(self.database.state["meta"]["fxRates"]["USD/PLN"], 3.71)
+
+    def test_quotes_refresh_uses_db_alias_fallback_for_equivalent_ticker(self):
+        self.database = QuoteDbMock(
+            state=self.state,
+            quotes=[
+                {
+                    "ticker": "CDR.WA",
+                    "price": 224.1,
+                    "currency": "PLN",
+                    "provider": "db-seed",
+                    "fetchedAt": "2026-01-01T00:00:00+00:00",
+                }
+            ],
+        )
+        self.handler = FakeHandler(
+            SimpleNamespace(
+                database=self.database,
+                quote_service=QuoteServiceMock(response=[]),
+            )
+        )
+
+        response = self.handler.dispatch(
+            "POST",
+            "/api/quotes/refresh",
+            payload={"tickers": ["CDR.PL"]},
+        )
+
+        self.assertEqual(response["resolved"], 1)
+        self.assertEqual(response["quotes"][0]["ticker"], "CDR.PL")
+        self.assertEqual(response["quotes"][0]["price"], 224.1)

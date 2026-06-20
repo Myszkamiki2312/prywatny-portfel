@@ -1,7 +1,14 @@
 import unittest
 import urllib.request
 
-from backend.quotes import QuoteService, _stooq_candidates, _stooq_history_candidates, _yahoo_quote_candidates, now_iso
+from backend.quotes import (
+    QuoteService,
+    _guess_currency_from_ticker,
+    _stooq_candidates,
+    _stooq_history_candidates,
+    _yahoo_quote_candidates,
+    now_iso,
+)
 
 
 class StubQuoteService(QuoteService):
@@ -140,7 +147,7 @@ class QuoteQualityTests(unittest.TestCase):
 
     def test_yahoo_candidates_handle_common_user_suffixes_and_currency_hints(self):
         suffixes = (".WA", ".DE", ".L", ".PA", ".MI", ".MC", ".AS", ".SW", ".US")
-        suffix_by_currency = {"PLN": ".WA", "GBP": ".L", "GBX": ".L", "CHF": ".SW"}
+        suffix_by_currency = {"PLN": ".WA", "EUR": ".DE", "GBP": ".L", "GBX": ".L", "CHF": ".SW"}
 
         self.assertEqual(
             _yahoo_quote_candidates("AAPL.US", "USD", suffixes, suffix_by_currency)[:2],
@@ -154,6 +161,16 @@ class QuoteQualityTests(unittest.TestCase):
             _yahoo_quote_candidates("DNP", "PLN", suffixes, suffix_by_currency)[:2],
             ["DNP.WA", "DNP"],
         )
+        self.assertEqual(
+            _yahoo_quote_candidates("SAP", "EUR", suffixes, suffix_by_currency)[:2],
+            ["SAP.DE", "SAP"],
+        )
+        self.assertEqual(
+            _yahoo_quote_candidates("ORLEN", "PLN", suffixes, suffix_by_currency)[:3],
+            ["PKN.WA", "PKN", "ORLEN.WA"],
+        )
+        self.assertEqual(_guess_currency_from_ticker("AIR.PA"), "EUR")
+        self.assertEqual(_guess_currency_from_ticker("ENEL.MI"), "EUR")
 
     def test_urlopen_retries_after_transient_error(self):
         service = RetryQuoteService()

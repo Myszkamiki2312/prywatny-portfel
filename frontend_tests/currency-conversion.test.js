@@ -215,3 +215,88 @@ test("refresh payload derives FX rates from FX quotes when fxRates is empty", ()
   assert.equal(rates["USD/PLN"], 3.7098);
   assert.equal(Object.keys(rates).length, 1);
 });
+
+test("applyQuotes ignores stale or zero quotes and preserves existing price", () => {
+  const hooks = createHarness();
+  hooks.setState({
+    meta: { baseCurrency: "PLN", fxRates: {} },
+    portfolios: [{ id: "ptf_1", name: "P", currency: "PLN", createdAt: "2026-01-01T00:00:00.000Z" }],
+    accounts: [{ id: "acc_1", name: "A", type: "Broker", currency: "PLN", createdAt: "2026-01-01T00:00:00.000Z" }],
+    assets: [
+      {
+        id: "ast_1",
+        ticker: "CDR.PL",
+        name: "CD Projekt",
+        type: "Akcja",
+        currency: "PLN",
+        currentPrice: 224.1,
+        risk: 5,
+        tags: [],
+        createdAt: "2026-01-01T00:00:00.000Z"
+      }
+    ],
+    operations: [],
+    recurringOps: [],
+    liabilities: [],
+    alerts: [],
+    notes: [],
+    strategies: [],
+    favorites: []
+  });
+
+  hooks.applyQuotes([
+    { ticker: "CDR.PL", price: 0, currency: "PLN", stale: false },
+    { ticker: "CDR.PL", price: 100, currency: "PLN", stale: true }
+  ]);
+
+  assert.equal(hooks.getState().assets[0].currentPrice, 224.1);
+});
+
+test("applyQuotes matches common stock ticker aliases", () => {
+  const hooks = createHarness();
+  hooks.setState({
+    meta: { baseCurrency: "PLN", fxRates: {} },
+    portfolios: [{ id: "ptf_1", name: "P", currency: "PLN", createdAt: "2026-01-01T00:00:00.000Z" }],
+    accounts: [{ id: "acc_1", name: "A", type: "Broker", currency: "PLN", createdAt: "2026-01-01T00:00:00.000Z" }],
+    assets: [
+      {
+        id: "ast_1",
+        ticker: "CDR.PL",
+        name: "CD Projekt",
+        type: "Akcja",
+        currency: "PLN",
+        currentPrice: 0,
+        risk: 5,
+        tags: [],
+        createdAt: "2026-01-01T00:00:00.000Z"
+      },
+      {
+        id: "ast_2",
+        ticker: "AAPL.US",
+        name: "Apple",
+        type: "Akcja",
+        currency: "USD",
+        currentPrice: 0,
+        risk: 5,
+        tags: [],
+        createdAt: "2026-01-01T00:00:00.000Z"
+      }
+    ],
+    operations: [],
+    recurringOps: [],
+    liabilities: [],
+    alerts: [],
+    notes: [],
+    strategies: [],
+    favorites: []
+  });
+
+  hooks.applyQuotes([
+    { ticker: "CDR.WA", price: 224.1, currency: "PLN", stale: false },
+    { ticker: "AAPL", price: 298.01, currency: "USD", stale: false }
+  ]);
+
+  const state = hooks.getState();
+  assert.equal(state.assets[0].currentPrice, 224.1);
+  assert.equal(state.assets[1].currentPrice, 298.01);
+});

@@ -168,7 +168,7 @@ class QuoteService:
     _YAHOO_SUFFIXES = (".WA", ".DE", ".L", ".PA", ".MI", ".MC", ".AS", ".SW", ".US")
     # Prefer the exchange matching the asset's currency to avoid ticker collisions
     # (e.g. a PLN asset "DNP" is Dino Polska on GPW -> DNP.WA, not the US-listed DNP fund).
-    _SUFFIX_FOR_CURRENCY = {"PLN": ".WA", "GBP": ".L", "GBX": ".L", "CHF": ".SW"}
+    _SUFFIX_FOR_CURRENCY = {"PLN": ".WA", "EUR": ".DE", "GBP": ".L", "GBX": ".L", "CHF": ".SW"}
 
     def _fetch_yahoo(
         self,
@@ -535,6 +535,12 @@ def _yahoo_quote_candidates(
             add(root)
         return candidates
 
+    alias_map = {
+        "ORLEN": ["PKN.WA", "PKN"],
+    }
+    for alias in alias_map.get(normalized, []):
+        add(alias)
+
     preferred = suffix_by_currency.get(str(currency_hint or "").upper().strip())
     if preferred:
         # Try the currency-matched exchange BEFORE the bare (often US) symbol.
@@ -574,6 +580,12 @@ def _stooq_candidates(ticker: str) -> List[str]:
     if not base:
         return []
     candidates = [base]
+    alias_map = {
+        "orlen": ["pkn.pl", "pkn"],
+    }
+    for alias in alias_map.get(base, []):
+        if alias not in candidates:
+            candidates.append(alias)
     if "." in base:
         root, suffix = base.split(".", 1)
         if suffix in {"pl", "wa"} and root and root not in candidates:
@@ -636,7 +648,7 @@ def _guess_currency_from_ticker(ticker: str) -> str:
     lower = ticker.lower()
     if lower.endswith(".pl") or lower.endswith(".wa"):
         return "PLN"
-    if lower.endswith(".de"):
+    if lower.endswith(".de") or lower.endswith(".pa") or lower.endswith(".mi") or lower.endswith(".mc") or lower.endswith(".as"):
         return "EUR"
     if lower.endswith(".l"):
         return "GBP"

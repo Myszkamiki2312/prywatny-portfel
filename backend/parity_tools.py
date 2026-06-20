@@ -590,9 +590,17 @@ class ParityToolsService:
         rows = self.database.list_option_positions(limit=1000)
         tickers = sorted({str(item.get("ticker") or "").upper() for item in rows if str(item.get("ticker") or "").strip()})
         if refresh_quotes and tickers:
-            quotes = self.quote_service.refresh(tickers)
+            state = self.database.get_state()
+            currency_hints = {
+                str(asset.get("ticker") or "").strip().upper(): str(asset.get("currency") or "").strip().upper()
+                for asset in state.get("assets", [])
+                if str(asset.get("ticker") or "").strip()
+            }
+            quotes = self.quote_service.refresh(tickers, currency_hints)
             if quotes:
-                self.database.upsert_quotes(quotes)
+                self.database.upsert_quotes(
+                    [quote for quote in quotes if not bool(quote.get("stale")) and float(quote.get("price") or 0) > 0]
+                )
         quote_map = {str(item["ticker"]).upper(): item for item in self.database.get_quotes(tickers)}
         parsed = []
         for item in rows:

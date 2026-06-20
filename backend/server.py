@@ -504,11 +504,24 @@ class AppHandler(SimpleHTTPRequestHandler):
                     if ticker not in refreshed_map or bool(refreshed_map[ticker].get("stale"))
                 ]
                 if missing_or_stale:
-                    for db_row in self.context.database.get_quotes(missing_or_stale):
+                    db_lookup_tickers = []
+                    for ticker in missing_or_stale:
+                        for alias in _quote_ticker_aliases(ticker, asset_currency.get(ticker)):
+                            if alias not in db_lookup_tickers:
+                                db_lookup_tickers.append(alias)
+                    for db_row in self.context.database.get_quotes(db_lookup_tickers):
                         mapped = _api_quote_row(db_row, default_source="db-cache")
-                        existing = refreshed_map.get(mapped["ticker"])
-                        if not existing or (bool(existing.get("stale")) and not bool(mapped.get("stale"))):
-                            refreshed_map[mapped["ticker"]] = mapped
+                        matching_requested = [
+                            ticker
+                            for ticker in missing_or_stale
+                            if mapped["ticker"] in _quote_ticker_aliases(ticker, asset_currency.get(ticker))
+                        ]
+                        for requested_ticker in matching_requested:
+                            aliased = dict(mapped)
+                            aliased["ticker"] = requested_ticker
+                            existing = refreshed_map.get(requested_ticker)
+                            if not existing or (bool(existing.get("stale")) and not bool(aliased.get("stale"))):
+                                refreshed_map[requested_ticker] = aliased
                 quote_map.update(refreshed_map)
 
             merge_quotes(requested_asset_tickers)
@@ -517,18 +530,26 @@ class AppHandler(SimpleHTTPRequestHandler):
             merge_quotes(fx_tickers)
 
             quotes = [quote_map[ticker] for ticker in requested_asset_tickers if ticker in quote_map]
-            fx_quotes = [quote_map[ticker] for ticker in fx_tickers if ticker in quote_map]
+            explicit_fx_tickers = [ticker for ticker in requested_asset_tickers if normalize_fx_pair_key(ticker)]
+            fx_quote_tickers = []
+            for ticker in explicit_fx_tickers + fx_tickers:
+                if ticker not in fx_quote_tickers:
+                    fx_quote_tickers.append(ticker)
+            fx_quotes = [quote_map[ticker] for ticker in fx_quote_tickers if ticker in quote_map]
             updated = False
             if quotes:
                 for asset in state["assets"]:
                     ticker = str(asset.get("ticker") or "").upper()
                     if ticker in quote_map:
-                        asset["currentPrice"] = float(quote_map[ticker]["price"])
-                        asset["currency"] = str(quote_map[ticker]["currency"])
+                        quote = quote_map[ticker]
+                        if bool(quote.get("stale")) or float(quote.get("price") or 0) <= 0:
+                            continue
+                        asset["currentPrice"] = float(quote["price"])
+                        asset["currency"] = str(quote["currency"])
                         updated = True
             if fx_quotes:
                 next_fx_rates = normalize_fx_rates(state["meta"].get("fxRates"))
-                next_fx_rates.update(_extract_fx_rates_from_quotes(fx_quotes))
+                next_fx_rates.update(_extract_fx_rates_from_quotes([row for row in fx_quotes if not bool(row.get("stale"))]))
                 if next_fx_rates != normalize_fx_rates(state["meta"].get("fxRates")):
                     state["meta"]["fxRates"] = next_fx_rates
                     updated = True
@@ -922,6 +943,49 @@ def _payload_tickers(payload: Dict[str, Any]) -> List[str]:
         if text and text not in values:
             values.append(text)
     return values
+
+
+def _quote_ticker_aliases(ticker: str, currency_hint: str = "") -> List[str]:
+    normalized = str(ticker or "").strip().upper()
+    if not normalized:
+        return []
+    aliases = [normalized]
+    currency = str(currency_hint or "").strip().upper()
+
+    def add(value: str) -> None:
+        text = str(value or "").strip().upper()
+        if text and text not in aliases:
+            aliases.append(text)
+
+    if normalized == "ORLEN":
+        add("PKN")
+        add("PKN.WA")
+    elif normalized == "PKN":
+        add("ORLEN")
+
+    if "." in normalized:
+        root, suffix = normalized.split(".", 1)
+        if root and suffix in {"PL", "WA"}:
+            add(root)
+            add(f"{root}.PL")
+            add(f"{root}.WA")
+        elif root and suffix == "US":
+            add(root)
+        elif root and suffix == "DE":
+            add(root)
+    else:
+        if currency == "PLN":
+            add(f"{normalized}.WA")
+            add(f"{normalized}.PL")
+            add(f"{normalized}.US")
+        elif currency == "EUR":
+            add(f"{normalized}.DE")
+            add(f"{normalized}.US")
+        else:
+            add(f"{normalized}.US")
+            add(f"{normalized}.PL")
+            add(f"{normalized}.WA")
+    return aliases
 
 
 def _state_currencies_for_fx(state: Dict[str, Any], quote_map: Dict[str, Dict[str, Any]]) -> List[str]:
