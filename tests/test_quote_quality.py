@@ -20,7 +20,7 @@ class StubQuoteService(QuoteService):
         self.stooq_responses = []
         self.history_response = []
 
-    def _fetch_yahoo(self, tickers):  # noqa: ARG002
+    def _fetch_yahoo(self, tickers, currency_hints=None):  # noqa: ARG002
         self.yahoo_calls += 1
         if self.yahoo_responses:
             return [dict(item) for item in self.yahoo_responses.pop(0)]

@@ -136,7 +136,7 @@ class QuoteServiceMock:
     def __init__(self, response):
         self.response = [dict(item) for item in response]
 
-    def refresh(self, tickers):  # noqa: ARG002
+    def refresh(self, tickers, currency_hints=None):  # noqa: ARG002
         return [dict(item) for item in self.response]
 
 

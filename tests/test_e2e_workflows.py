@@ -27,7 +27,7 @@ class StaticQuoteService:
                 continue
             self.rows_by_ticker[ticker] = dict(item)
 
-    def refresh(self, tickers):
+    def refresh(self, tickers, currency_hints=None):  # noqa: ARG002
         output = []
         for ticker in tickers:
             key = str(ticker or "").upper().strip()
