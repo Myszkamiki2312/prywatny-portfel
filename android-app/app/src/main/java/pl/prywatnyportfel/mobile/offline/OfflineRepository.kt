@@ -6,6 +6,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import pl.prywatnyportfel.tax.FxConversion
 import pl.prywatnyportfel.tax.TaxCalculations
 import java.io.File
 import java.time.Instant
@@ -494,6 +495,25 @@ class OfflineRepository(private val context: Context) {
         val state = loadStateObject()
         val assets = state.optJSONArray("assets") ?: JSONArray()
         val operations = state.optJSONArray("operations") ?: JSONArray()
+
+        // Everything below is accumulated in the base currency. Without this the snapshot summed
+        // holdings and cash across currencies as raw numbers, so a portfolio holding USD and PLN
+        // reported a net worth the web never showed. Rates arrive in the synced state; when they
+        // are missing the shared conversion leaves amounts untouched rather than zeroing them.
+        val meta = state.optJSONObject("meta")
+        val baseCurrency = FxConversion.normalizeCurrency(meta?.optString("baseCurrency"), "PLN")
+        val fxRates = meta?.optJSONObject("fxRates")?.toTaxPayload() ?: emptyMap()
+
+        val accountsById = HashMap<String, JSONObject>()
+        val accounts = state.optJSONArray("accounts") ?: JSONArray()
+        for (i in 0 until accounts.length()) {
+            val account = accounts.optJSONObject(i) ?: continue
+            val id = account.optString("id", "")
+            if (id.isNotBlank()) {
+                accountsById[id] = account
+            }
+        }
+
         val assetsById = HashMap<String, JSONObject>()
         for (i in 0 until assets.length()) {
             val asset = assets.optJSONObject(i) ?: continue
@@ -518,13 +538,28 @@ class OfflineRepository(private val context: Context) {
             val type = normalizeKey(op.optString("type", ""))
             val quantity = kotlin.math.abs(num(op.opt("quantity")))
             val price = num(op.opt("price"))
-            val amountRaw = num(op.opt("amount"))
-            val fee = num(if (op.has("fee")) op.opt("fee") else op.opt("commission"))
-            val amount = if (amountRaw != 0.0) kotlin.math.abs(amountRaw) else quantity * price
             val assetId = op.optString("assetId", "")
             if (assetId.isNotBlank() && price > 0.0) {
+                // Prices stay in their own currency; only the amounts derived from them convert.
                 lastPriceByAsset[assetId] = price
             }
+
+            // Asset, then account, then the operation itself — the order the web resolves it in.
+            val opCurrency = FxConversion.normalizeCurrency(
+                assetsById[assetId]?.optString("currency")?.takeIf { it.isNotBlank() }
+                    ?: accountsById[op.optString("accountId", "")]?.optString("currency")
+                        ?.takeIf { it.isNotBlank() }
+                    ?: op.optString("currency").takeIf { it.isNotBlank() }
+                    ?: baseCurrency,
+                baseCurrency,
+            )
+            val toBase = { value: Double ->
+                FxConversion.convertCurrency(value, opCurrency, baseCurrency, fxRates)
+            }
+
+            val amountRaw = toBase(num(op.opt("amount")))
+            val fee = toBase(num(if (op.has("fee")) op.opt("fee") else op.opt("commission")))
+            val amount = if (amountRaw != 0.0) kotlin.math.abs(amountRaw) else toBase(quantity * price)
 
             when {
                 type.contains("gotowk") || type.contains("wplata") || type.contains("cash") || type.contains("transfer") -> {
@@ -579,7 +614,14 @@ class OfflineRepository(private val context: Context) {
             val fallbackPrice = lastPriceByAsset[assetId] ?: 0.0
             val currentPrice = if (assetPrice > 0.0) assetPrice else fallbackPrice
             val costValue = (costByAsset[assetId] ?: 0.0).coerceAtLeast(0.0)
-            val value = quantity * currentPrice
+            // Cost is already in base currency, so the market value has to be too.
+            val assetCurrency = FxConversion.normalizeCurrency(asset.optString("currency"), baseCurrency)
+            val value = FxConversion.convertCurrency(
+                quantity * currentPrice,
+                assetCurrency,
+                baseCurrency,
+                fxRates,
+            )
             val unrealized = value - costValue
             holdings += HoldingRow(
                 assetId = assetId,
