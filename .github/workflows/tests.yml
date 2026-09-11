@@ -21,8 +21,20 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
       - name: Run backend unit tests
         run: python -m unittest discover -s tests -p "test_*.py" -v
 
       - name: Run frontend edit-flow tests
         run: node --test frontend_tests/*.test.js
+
+      # :tax is plain JVM Kotlin, so this needs no Android SDK. It checks the phone's copy of the
+      # tax calculations against the same fixture the Python tests use.
+      - name: Run Kotlin tax-spec tests
+        working-directory: android-app
+        run: ./gradlew :tax:test --console=plain

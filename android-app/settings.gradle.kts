@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "PrywatnyPortfelMobile"
 include(":app")
+include(":tax")
