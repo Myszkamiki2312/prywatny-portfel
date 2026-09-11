@@ -804,6 +804,51 @@ textarea:focus {
   box-shadow: 0 0 0 3px rgba(14, 122, 100, 0.15);
 }
 
+/* Keyboard focus for everything that is not a form field. Inputs get the ring above; buttons,
+   links and tabs previously fell back to the browser default, which disappears against the
+   darker themes. :focus-visible keeps it off mouse clicks. */
+a:focus-visible,
+button:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
+  outline: 3px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.skip-link {
+  position: absolute;
+  left: 0.5rem;
+  top: -3rem;
+  z-index: 100;
+  padding: 0.6rem 1rem;
+  border-radius: 0 0 8px 8px;
+  background: var(--brand);
+  color: #f5fffc;
+  font-weight: 600;
+  text-decoration: none;
+  transition: top 0.15s ease-in-out;
+}
+
+.skip-link:focus {
+  top: 0;
+}
+
+#mainContent:focus {
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 .btn {
   border: 1px solid transparent;
   border-radius: 999px;

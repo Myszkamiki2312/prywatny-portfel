@@ -400,9 +400,26 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 });
 
+async function registerServiceWorker() {
+  // The worker is network-first (see sw.js), so this only buys an offline shell and
+  // installability. Failure to register must never block the app from starting.
+  if (typeof navigator === "undefined" || !navigator.serviceWorker || typeof window === "undefined") {
+    return;
+  }
+  if (window.location.protocol !== "https:" && window.location.hostname !== "localhost") {
+    return;
+  }
+  try {
+    await navigator.serviceWorker.register("sw.js");
+  } catch (error) {
+    console.warn("Service worker registration failed:", error);
+  }
+}
+
 async function init() {
   await loadUiModules();
   setupGlobalErrorReporting();
+  void registerServiceWorker();
   cacheDom();
   installToastNotifications();
   applyAppearanceSettings();
