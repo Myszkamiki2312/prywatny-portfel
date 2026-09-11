@@ -1689,13 +1689,25 @@ class OfflineRepository(private val context: Context) {
             val optionType = item.optString("optionType", "call").lowercase()
             val strike = num(item.opt("strike"))
             val premium = num(item.opt("premium"))
-            val quantity = num(item.opt("quantity")).coerceAtLeast(1.0)
             val spot = quotesByTicker[ticker] ?: num(item.opt("spotPrice"))
-            val intrinsic = if (optionType == "put") (strike - spot).coerceAtLeast(0.0) else (spot - strike).coerceAtLeast(0.0)
-            val positionPl = (intrinsic - premium) * quantity
-            val breakEven = if (optionType == "put") strike - premium else strike + premium
-            val status = if (intrinsic > 0) "ITM" else "OTM"
-            val recommendation = if (positionPl > 0.0) "Rozważ realizację" else "Monitoruj"
+            // One option calculation, the way option_positions does it on the backend. The inline
+            // copy that used to live here read a "quantity" field, which stored positions do not
+            // have — they carry contracts and multiplier — so it silently priced every row as a
+            // single unit and left position P/L at least a hundred times too small.
+            val calc = TaxCalculations.optionExercisePrice(
+                mapOf(
+                    "optionType" to optionType,
+                    "strike" to strike,
+                    "premium" to premium,
+                    "spotPrice" to spot,
+                    "contracts" to item.opt("contracts"),
+                    "multiplier" to item.opt("multiplier"),
+                )
+            )
+            val breakEven = calc["breakEven"] as Double
+            val status = calc["status"] as String
+            val positionPl = calc["positionPL"] as Double
+            val recommendation = calc["recommendation"] as String
             rows.put(
                 JSONObject()
                     .put("id", item.optString("id", "opt-$i"))
