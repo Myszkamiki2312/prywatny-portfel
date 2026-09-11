@@ -1,0 +1,55 @@
+{
+  "_comment": [
+    "Shared contract for resolving a user-facing ticker into the symbols a provider might use.",
+    "Two implementations encode this: backend/quotes.py (requests the quote) and",
+    "quoteTickerAliases in app.js (matches the returned quote back onto the asset). They are NOT",
+    "required to produce the same list — each provider spells exchanges its own way — but every",
+    "case below must appear in both, or a symbol fixed on one side silently stays broken on the",
+    "other. tests/test_ticker_alias_spec.py and frontend_tests/ticker-alias-spec.test.js read this",
+    "same file, so a new case is added once."
+  ],
+  "cases": [
+    {
+      "symbol": "ORLEN",
+      "currency": "PLN",
+      "mustInclude": ["PKN"],
+      "why": "Users type the brand; the exchange lists the old ticker."
+    },
+    {
+      "symbol": "DNP",
+      "currency": "PLN",
+      "mustInclude": ["DNP.WA"],
+      "why": "A PLN holding must reach the Warsaw listing, not the US-listed fund of the same name."
+    },
+    {
+      "symbol": "CDR.PL",
+      "currency": "PLN",
+      "mustInclude": ["CDR"],
+      "why": "Broker exports use the .PL suffix; providers want the bare root too."
+    },
+    {
+      "symbol": "KGH.WA",
+      "currency": "PLN",
+      "mustInclude": ["KGH"],
+      "why": "Same as .PL, for the .WA spelling."
+    },
+    {
+      "symbol": "SAP",
+      "currency": "EUR",
+      "mustInclude": ["SAP.DE"],
+      "why": "A EUR holding should resolve on Xetra before the US line."
+    },
+    {
+      "symbol": "AAPL",
+      "currency": "USD",
+      "mustInclude": ["AAPL"],
+      "why": "A plain US symbol must always be tried as written."
+    },
+    {
+      "symbol": "AAPL.US",
+      "currency": "USD",
+      "mustInclude": ["AAPL"],
+      "why": "Broker exports suffix US tickers; the bare form has to be reachable."
+    }
+  ]
+}
