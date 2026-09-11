@@ -190,6 +190,68 @@ class ServiceWorkerShellTests(unittest.TestCase):
         )
 
 
+class GitHubPagesPublishTests(unittest.TestCase):
+    """The Pages workflow copies an explicit file list, so anything new has to be added by hand.
+    styles-xtb.css never made it, which meant the theme that loads last — and the phone fix in it —
+    was silently absent from that deployment for months. Same failure shape as the precache list."""
+
+    def setUp(self):
+        self.workflow = read(".github/workflows/pages.yml")
+        self.published = self._published()
+        self.triggers = re.findall(r'^\s+- "([^"]+)"', self.workflow, re.M)
+
+    def _published(self):
+        published = set()
+        for line in self.workflow.splitlines():
+            stripped = line.strip()
+            if not stripped.startswith("cp "):
+                continue
+            tokens = stripped.split()
+            if tokens[1] == "-R":
+                published.add(tokens[2].rstrip("/"))
+            else:
+                published.update(tokens[1:-1])
+        return published
+
+    def is_published(self, asset):
+        return asset in self.published or asset.split("/", 1)[0] in self.published
+
+    def test_every_asset_index_html_needs_is_published(self):
+        html = read("index.html")
+        referenced = re.findall(r'<script[^>]+src="(?!https?:)([^"?]+)"', html)
+        referenced += re.findall(r'<link[^>]+href="(?!https?:|#)([^"?]+)"', html)
+        for asset in sorted(set(referenced)):
+            with self.subTest(asset=asset):
+                self.assertTrue(
+                    self.is_published(asset),
+                    f"index.html loads {asset}, but the Pages workflow never copies it.",
+                )
+
+    def test_every_frontend_module_is_published(self):
+        for module in sorted((ROOT / "frontend").glob("*.js")):
+            with self.subTest(module=module.name):
+                self.assertTrue(self.is_published(f"frontend/{module.name}"))
+
+    def test_progressive_web_app_files_are_published(self):
+        for asset in ("manifest.json", "sw.js"):
+            with self.subTest(asset=asset):
+                self.assertTrue(self.is_published(asset), f"{asset} would 404 on Pages.")
+        for icon in json.loads(read("manifest.json"))["icons"]:
+            with self.subTest(icon=icon["src"]):
+                self.assertTrue(self.is_published(icon["src"]))
+
+    def test_publishing_a_file_also_triggers_a_deploy(self):
+        """A file copied by the job but absent from `paths:` ships only when something else changes."""
+        for asset in sorted(self.published):
+            if asset in {"public/"} or asset.endswith(".html"):
+                continue  # the HTML entries are already listed individually
+            with self.subTest(asset=asset):
+                self.assertTrue(
+                    asset in self.triggers or f"{asset}/**" in self.triggers,
+                    f"{asset} is published but no path filter triggers a rebuild when it changes.",
+                )
+
+
 class ResponsiveCssTests(unittest.TestCase):
     def test_breakpoints_are_ordered_widest_first(self):
         """Both blocks match on a phone, so the narrower one has to come later in the file."""
