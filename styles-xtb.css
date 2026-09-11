@@ -475,3 +475,14 @@ progress { accent-color: var(--xtb-accent); }
   .topbar { position: static; left: 0; }
   .container, main.container { margin-left: 0; padding: 18px; }
 }
+
+/* styles-modern.css pins .account-menu to `width: 260px !important`. That also outranks the
+   mobile rule in styles.css, which turns the menu into a full-width sheet anchored to the bottom
+   of the screen — so on a phone the menu stayed a narrow 260px box instead. This sheet loads
+   last, so it is the only place to restore that without editing the !important above. The
+   !important here is needed to outrank an earlier !important, not for convenience. */
+@media (max-width: 760px) {
+  .account-menu {
+    width: auto !important;
+  }
+}
