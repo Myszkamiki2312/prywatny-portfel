@@ -6,6 +6,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import pl.prywatnyportfel.tax.TaxCalculations
 import java.io.File
 import java.time.Instant
 import java.time.LocalDate
@@ -1620,76 +1621,31 @@ class OfflineRepository(private val context: Context) {
     }
 
     private suspend fun taxOptimize(payload: JSONObject): JSONObject {
-        val gain = num(payload.opt("realizedGain"))
-        val loss = num(payload.opt("realizedLoss"))
-        val dividends = num(payload.opt("dividends"))
-        val costs = num(payload.opt("costs"))
-        val rate = num(payload.opt("taxRatePct")) / 100.0
-        val baseBefore = (gain - loss + dividends - costs).coerceAtLeast(0.0)
-        val taxBefore = baseBefore * rate
-        return JSONObject()
-            .put("taxableBaseBefore", round2(baseBefore))
-            .put("taxBefore", round2(taxBefore))
-            .put("taxableBaseAfter", round2(baseBefore))
-            .put("taxAfter", round2(taxBefore))
-            .put("taxSaved", 0.0)
-            .put("actions", JSONArray())
+        // Previously this returned the base unchanged with taxSaved 0 and no actions, so the phone
+        // always reported that nothing could be harvested. The shared module does the real work.
+        val raw = payload.optJSONArray("unrealizedPositions") ?: JSONArray()
+        val positions = (0 until raw.length()).mapNotNull { index ->
+            raw.optJSONObject(index)?.toTaxPayload()
+        }
+        return taxResultToJson(TaxCalculations.taxOptimize(payload.toTaxPayload(), positions))
     }
 
-    private fun taxForeignDividend(payload: JSONObject): JSONObject {
-        val gross = num(payload.opt("grossDividend"))
-        val foreignPct = num(payload.opt("foreignWithholdingPct")) / 100.0
-        val localPct = num(payload.opt("localTaxPct")) / 100.0
-        val treatyCapPct = num(payload.opt("treatyCreditCapPct")) / 100.0
-        val foreignWithheld = gross * foreignPct
-        val localGrossTax = gross * localPct
-        val credit = minOf(foreignWithheld, gross * treatyCapPct)
-        val localDue = (localGrossTax - credit).coerceAtLeast(0.0)
-        val net = gross - foreignWithheld - localDue
-        return JSONObject()
-            .put("foreignWithheld", round2(foreignWithheld))
-            .put("localTaxDue", round2(localDue))
-            .put("foreignRefundPotential", round2((foreignWithheld - credit).coerceAtLeast(0.0)))
-            .put("netDividendAfterTax", round2(net))
-    }
+    private fun taxForeignDividend(payload: JSONObject): JSONObject =
+        // An absent localTaxPct used to mean 0% here and 19% on the backend.
+        taxResultToJson(TaxCalculations.taxForeignDividend(payload.toTaxPayload()))
 
-    private fun taxCrypto(payload: JSONObject): JSONObject {
-        val proceeds = num(payload.opt("proceeds"))
-        val acquisitionCost = num(payload.opt("acquisitionCost"))
-        val transactionCosts = num(payload.opt("transactionCosts"))
-        val carryForwardLoss = num(payload.opt("carryForwardLoss"))
-        val beforeCarry = proceeds - acquisitionCost - transactionCosts
-        val taxable = (beforeCarry - carryForwardLoss).coerceAtLeast(0.0)
-        val tax = taxable * 0.19
-        return JSONObject()
-            .put("cryptoIncomeBeforeCarry", round2(beforeCarry))
-            .put("taxableBase", round2(taxable))
-            .put("taxDue", round2(tax))
-    }
+    private fun taxCrypto(payload: JSONObject): JSONObject =
+        // The rate used to be hardcoded at 19% here, ignoring taxRatePct.
+        taxResultToJson(TaxCalculations.taxCrypto(payload.toTaxPayload()))
 
-    private fun taxForeignInterest(payload: JSONObject): JSONObject {
-        val gross = num(payload.opt("grossInterest"))
-        val foreignPct = num(payload.opt("foreignWithholdingPct")) / 100.0
-        val localPct = num(payload.opt("localTaxPct")) / 100.0
-        val foreignWithheld = gross * foreignPct
-        val localGrossTax = gross * localPct
-        val localDue = (localGrossTax - foreignWithheld).coerceAtLeast(0.0)
-        return JSONObject()
-            .put("foreignWithheld", round2(foreignWithheld))
-            .put("localTaxDue", round2(localDue))
-            .put("netInterestAfterTax", round2(gross - foreignWithheld - localDue))
-    }
+    private fun taxForeignInterest(payload: JSONObject): JSONObject =
+        // This credited the full foreign withholding and ignored the treaty cap entirely,
+        // under-reporting the Polish tax due.
+        taxResultToJson(TaxCalculations.taxForeignInterest(payload.toTaxPayload()))
 
-    private fun taxBondInterest(payload: JSONObject): JSONObject {
-        val couponInterest = num(payload.opt("couponInterest"))
-        val discountGain = num(payload.opt("discountGain"))
-        val costs = num(payload.opt("costs"))
-        val taxRatePct = num(payload.opt("taxRatePct")).coerceAtLeast(0.0)
-        val base = (couponInterest + discountGain - costs).coerceAtLeast(0.0)
-        return JSONObject()
-            .put("taxableBase", round2(base))
-            .put("taxDue", round2(base * (taxRatePct / 100.0)))
-    }
+    private fun taxBondInterest(payload: JSONObject): JSONObject =
+        // An absent taxRatePct used to yield zero tax instead of the statutory 19%.
+        taxResultToJson(TaxCalculations.taxBondInterest(payload.toTaxPayload()))
 
     private suspend fun forumPosts(): JSONArray {
         return jsonConfig(KEY_FORUM_POSTS, JSONArray()).optJSONArray("items") ?: JSONArray()
@@ -1759,24 +1715,11 @@ class OfflineRepository(private val context: Context) {
         return rows
     }
 
-    private fun optionExercisePrice(payload: JSONObject): JSONObject {
-        val underlying = num(payload.opt("spotPrice"))
-        val strike = num(payload.opt("strike"))
-        val premium = num(payload.opt("premium"))
-        val contracts = num(payload.opt("contracts")).coerceAtLeast(1.0)
-        val multiplier = num(payload.opt("multiplier")).coerceAtLeast(1.0)
-        val kind = payload.optString("optionType", "call").lowercase()
-        val intrinsic = if (kind == "put") (strike - underlying).coerceAtLeast(0.0) else (underlying - strike).coerceAtLeast(0.0)
-        val status = if (intrinsic > 0) "ITM" else "OTM"
-        val positionPl = (intrinsic - premium) * contracts * multiplier
-        val recommendation = if (positionPl > 0) "Rozważ realizację" else "Monitoruj"
-        return JSONObject()
-            .put("intrinsicValue", round2(intrinsic))
-            .put("breakEven", round2(if (kind == "put") strike - premium else strike + premium))
-            .put("status", status)
-            .put("positionPL", round2(positionPl))
-            .put("recommendation", recommendation)
-    }
+    private fun optionExercisePrice(payload: JSONObject): JSONObject =
+        // The contract multiplier defaulted to 1 here and to 100 on the backend, so position P/L
+        // came out a hundred times too small. ATM was also missing, and the recommendation was
+        // Polish prose where the rest of the app expects a machine-readable value.
+        taxResultToJson(TaxCalculations.optionExercisePrice(payload.toTaxPayload()))
 
     private suspend fun saveOptionPosition(payload: JSONObject): JSONObject {
         val storeItems = jsonConfig(KEY_OPTION_POSITIONS, JSONArray()).optJSONArray("items") ?: JSONArray()
@@ -2059,6 +2002,34 @@ class OfflineRepository(private val context: Context) {
         } catch (_: Exception) {
             JSONObject()
         }
+    }
+
+    /** Flattens a request body into the plain map the shared calculations take. */
+    private fun JSONObject.toTaxPayload(): Map<String, Any?> =
+        keys().asSequence().associateWith { key -> opt(key) }
+
+    /** Turns a shared calculation result back into the JSON body the offline API answers with. */
+    private fun taxResultToJson(result: Map<String, Any>): JSONObject {
+        val json = JSONObject()
+        for ((key, value) in result) {
+            if (value is List<*>) {
+                val array = JSONArray()
+                for (item in value) {
+                    if (item is TaxCalculations.HarvestAction) {
+                        array.put(
+                            JSONObject()
+                                .put("ticker", item.ticker)
+                                .put("unrealizedLoss", item.unrealizedLoss)
+                                .put("suggestedHarvestLoss", item.suggestedHarvestLoss)
+                        )
+                    }
+                }
+                json.put(key, array)
+            } else {
+                json.put(key, value)
+            }
+        }
+        return json
     }
 
     private fun num(value: Any?): Double {
