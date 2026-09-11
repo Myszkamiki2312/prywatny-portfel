@@ -4,6 +4,8 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 
+import * as chartsModule from "../frontend/charts.js";
+
 const APP_PATH = path.resolve(process.cwd(), "app.js");
 
 function createHarness() {
@@ -84,6 +86,9 @@ function createHarness() {
 
   const hooks = context.__MYFUND_TEST__;
   assert.ok(hooks, "Test hooks are not available.");
+  // Chart rendering and the axis/tooltip formatters live in frontend/charts.js; the vm context
+  // has no module loader, so wire it the same way loadUiModules does in the browser.
+  hooks.wireUiModules({ charts: chartsModule });
   return hooks;
 }
 

@@ -7,7 +7,7 @@
 // Never touches /api/* or Supabase — quotes, state and auth must not be served from a cache.
 // Bump CACHE_VERSION whenever the shell file list changes.
 
-const CACHE_VERSION = "v1";
+const CACHE_VERSION = "v2";
 const CACHE_NAME = `prywatny-portfel-shell-${CACHE_VERSION}`;
 
 const SHELL_ASSETS = [
@@ -24,6 +24,7 @@ const SHELL_ASSETS = [
   "./frontend/tools.js",
   "./frontend/reports.js",
   "./frontend/taxes.js",
+  "./frontend/charts.js",
   "./manifest.json",
   "./icons/icon-192.png"
 ];

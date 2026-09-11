@@ -9,6 +9,7 @@ import vm from "node:vm";
 
 import * as reportsModule from "../frontend/reports.js";
 import * as taxesModule from "../frontend/taxes.js";
+import * as chartsModule from "../frontend/charts.js";
 
 const APP_PATH = path.resolve(process.cwd(), "app.js");
 
@@ -95,7 +96,7 @@ function createHarness() {
   vm.runInContext(source, context, { filename: "app.js" });
   const hooks = context.__MYFUND_TEST__;
   assert.ok(hooks, "Test hooks are not available.");
-  hooks.setUiModules({ reports: reportsModule, taxes: taxesModule });
+  hooks.wireUiModules({ reports: reportsModule, taxes: taxesModule, charts: chartsModule });
   return hooks;
 }
 
