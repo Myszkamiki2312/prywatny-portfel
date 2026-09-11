@@ -4,6 +4,8 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 
+import { wireModules } from "./modules.js";
+
 const APP_PATH = path.resolve(process.cwd(), "app.js");
 
 function createHarness() {
@@ -84,6 +86,7 @@ function createHarness() {
 
   const hooks = context.__MYFUND_TEST__;
   assert.ok(hooks, "Test hooks are not available.");
+  wireModules(hooks);
   return hooks;
 }
 

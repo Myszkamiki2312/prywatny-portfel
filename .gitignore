@@ -8,3 +8,6 @@ dist/
 installer/windows/bin/
 installer/windows/obj/
 .vercel
+
+# Local rescue copies — git history is the backup
+*.backup

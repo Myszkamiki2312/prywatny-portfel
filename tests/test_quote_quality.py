@@ -26,6 +26,7 @@ class StubQuoteService(QuoteService):
         self.yahoo_responses = []
         self.stooq_responses = []
         self.history_response = []
+        self.stooq_hints = {}
 
     def _fetch_yahoo(self, tickers, currency_hints=None):  # noqa: ARG002
         self.yahoo_calls += 1
@@ -33,8 +34,9 @@ class StubQuoteService(QuoteService):
             return [dict(item) for item in self.yahoo_responses.pop(0)]
         return []
 
-    def _fetch_stooq(self, tickers):  # noqa: ARG002
+    def _fetch_stooq(self, tickers, currency_hints=None):  # noqa: ARG002
         self.stooq_calls += 1
+        self.stooq_hints = dict(currency_hints or {})
         if self.stooq_responses:
             return [dict(item) for item in self.stooq_responses.pop(0)]
         return []
@@ -66,6 +68,104 @@ class YahooCandidateQuoteService(QuoteService):
         if symbol == "CDR.WA":
             return {"regularMarketPrice": 224.1, "currency": "PLN"}
         return None
+
+
+class StooqCsvQuoteService(QuoteService):
+    """Serves one canned Stooq CSV row, so currency labelling is testable without the network."""
+
+    def __init__(self):
+        super().__init__(max_retry_attempts=0, retry_backoff_seconds=0)
+        self.requested = []
+
+    def _urlopen_bytes(self, request):
+        self.requested.append(request.full_url)
+        return (
+            b"Symbol,Date,Time,Open,High,Low,Close,Volume\n"
+            b"DNP,2026-09-11,17:00:00,100,101,99,100.5,1000\n"
+        )
+
+
+class StooqCurrencyTests(unittest.TestCase):
+    """Stooq is a Polish service: a suffix-less symbol resolves against GPW, but the symbol-based
+    guess defaults it to USD. The caller's hint has to win, or PLN holdings get priced in dollars."""
+
+    def test_refresh_passes_currency_hints_to_the_stooq_fallback(self):
+        service = StubQuoteService()
+        service.yahoo_responses = [[]]  # Yahoo resolves nothing, so Stooq is asked next
+
+        service.refresh(["DNP"], {"DNP": "PLN"})
+
+        self.assertEqual(service.stooq_calls, 1)
+        self.assertEqual(
+            service.stooq_hints.get("DNP"),
+            "PLN",
+            "The hint reached Yahoo but was dropped on the Stooq path.",
+        )
+
+    def test_stooq_quote_prefers_the_caller_hint_over_guessing(self):
+        service = StooqCsvQuoteService()
+
+        row = service._fetch_single_stooq("DNP", "PLN")
+
+        self.assertIsNotNone(row)
+        self.assertEqual(row["price"], 100.5)
+        self.assertEqual(row["currency"], "PLN")
+
+    def test_stooq_quote_without_a_hint_still_guesses_from_the_symbol(self):
+        service = StooqCsvQuoteService()
+
+        row = service._fetch_single_stooq("DNP")
+
+        self.assertEqual(row["currency"], "USD", "Unhinted behaviour must stay as it was.")
+
+    def test_suffixed_symbol_keeps_its_own_currency_without_a_hint(self):
+        service = StooqCsvQuoteService()
+
+        self.assertEqual(service._fetch_single_stooq("CDR.PL")["currency"], "PLN")
+
+
+class TickerResolutionSpecTests(unittest.TestCase):
+    """Pins the symbol -> provider-symbol spec. It lived only in the implementations, so each
+    reported symbol was fixed on one provider path and left broken on the other."""
+
+    SUFFIXES = (".WA", ".DE", ".L", ".PA", ".MI", ".MC", ".AS", ".SW", ".US")
+    SUFFIX_BY_CURRENCY = {"PLN": ".WA", "EUR": ".DE", "GBP": ".L", "GBX": ".L", "CHF": ".SW"}
+
+    def yahoo(self, symbol, hint=None):
+        return _yahoo_quote_candidates(symbol, hint, self.SUFFIXES, self.SUFFIX_BY_CURRENCY)
+
+    def test_alias_expands_on_both_provider_paths(self):
+        # One shared table, each provider spelling Warsaw its own way.
+        self.assertEqual(self.yahoo("ORLEN", "PLN")[:2], ["PKN.WA", "PKN"])
+        self.assertEqual(_stooq_candidates("ORLEN")[:3], ["orlen", "pkn.pl", "pkn"])
+
+    def test_currency_hint_orders_the_exchange_before_the_bare_symbol(self):
+        for symbol, hint, expected in (
+            ("DNP", "PLN", ["DNP.WA", "DNP"]),
+            ("SAP", "EUR", ["SAP.DE", "SAP"]),
+            ("SHEL", "GBP", ["SHEL.L", "SHEL"]),
+            ("NESN", "CHF", ["NESN.SW", "NESN"]),
+        ):
+            with self.subTest(symbol=symbol):
+                self.assertEqual(self.yahoo(symbol, hint)[:2], expected)
+
+    def test_unhinted_symbol_tries_itself_first(self):
+        self.assertEqual(self.yahoo("AAPL")[0], "AAPL")
+
+    def test_multi_dot_symbols_keep_their_class_marker(self):
+        # rsplit, not split: BRK.B on Warsaw is "brk.b", never "brk".
+        self.assertIn("brk.b", _stooq_candidates("BRK.B.PL"))
+        self.assertNotIn("brk", _stooq_candidates("BRK.B.PL"))
+        self.assertIn("brk.b", _stooq_history_candidates("BRK.B.PL"))
+        self.assertNotIn("brk", _stooq_history_candidates("BRK.B.PL"))
+
+    def test_currency_guess_covers_every_supported_exchange_suffix(self):
+        for suffix, expected in (
+            (".PL", "PLN"), (".WA", "PLN"), (".DE", "EUR"), (".PA", "EUR"), (".MI", "EUR"),
+            (".MC", "EUR"), (".AS", "EUR"), (".L", "GBP"), (".SW", "CHF"), (".US", "USD"),
+        ):
+            with self.subTest(suffix=suffix):
+                self.assertEqual(_guess_currency_from_ticker(f"XYZ{suffix}"), expected)
 
 
 class QuoteQualityTests(unittest.TestCase):

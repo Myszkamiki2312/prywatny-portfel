@@ -20,6 +20,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from backend.ratelimit import RateLimiter, client_key
 from backend.server import (
     Database,
     QuoteService,
@@ -113,6 +114,17 @@ def _is_blocked(full_path: str) -> bool:
     return False
 
 
+# Caps abuse of the unauthenticated hosted API — see backend/ratelimit.py for the policy and its
+# deliberate best-effort limits. One limiter per warm instance.
+_rate_limiter = RateLimiter()
+
+
+def _rate_limit_exceeded(request: Request, full_path: str):
+    """Return (retry_after, limit) when the caller is over budget, else None."""
+    caller = client_key(request.headers, request.client.host if request.client else None)
+    return _rate_limiter.check(caller, full_path)
+
+
 @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 async def api(path: str, request: Request):
     full_path = "/api/" + path
@@ -120,6 +132,14 @@ async def api(path: str, request: Request):
         return JSONResponse(
             status_code=403,
             content={"error": "This endpoint is disabled on the hosted backend."},
+        )
+    throttled = _rate_limit_exceeded(request, full_path)
+    if throttled is not None:
+        retry_after, limit = throttled
+        return JSONResponse(
+            status_code=429,
+            content={"error": f"Rate limit exceeded ({limit}/min). Retry in {retry_after}s."},
+            headers={"Retry-After": str(retry_after)},
         )
     handler = _Handler(_context(), request.headers)
     query: dict = {}

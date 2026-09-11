@@ -3,7 +3,7 @@
 
 Aplikacja mobilna jest w katalogu:
 
-- `/Users/bartlomiejprzybycien/Documents/New project/android-app`
+- `android-app/`
 
 Automatyczny build APK działa w GitHub Actions (`Android APK`):
 
@@ -179,14 +179,19 @@ node --test frontend_tests/*.test.js
 
 ## Struktura
 
-- `/Users/bartlomiejprzybycien/Documents/New project/backend/server.py` - HTTP API + serwowanie frontendu,
-- `/Users/bartlomiejprzybycien/Documents/New project/backend/database.py` - warstwa SQLite,
-- `/Users/bartlomiejprzybycien/Documents/New project/backend/quotes.py` - provider notowań,
-- `/Users/bartlomiejprzybycien/Documents/New project/backend/importers.py` - importery brokerów,
-- `/Users/bartlomiejprzybycien/Documents/New project/backend/expert_tools.py` - skaner/sygnały/kalendarium/rekomendacje/workflow alertów,
-- `/Users/bartlomiejprzybycien/Documents/New project/backend/realtime.py` - cron runner i webhook/manual workflow,
-- `/Users/bartlomiejprzybycien/Documents/New project/backend/notifications.py` - powiadomienia e-mail/Telegram,
-- `/Users/bartlomiejprzybycien/Documents/New project/app.js` - frontend i synchronizacja z API.
+Ścieżki są względne wobec katalogu repozytorium.
+
+- `backend/server.py` - HTTP API + serwowanie frontendu,
+- `backend/database.py` - warstwa SQLite,
+- `backend/quotes.py` - provider notowań,
+- `backend/importers.py` - importery brokerów,
+- `backend/expert_tools.py` - skaner/sygnały/kalendarium/rekomendacje/workflow alertów,
+- `backend/realtime.py` - cron runner i webhook/manual workflow,
+- `backend/notifications.py` - powiadomienia e-mail/Telegram,
+- `backend/ratelimit.py` - limity zapytań publicznego API,
+- `app.js` - frontend i synchronizacja z API,
+- `frontend/` - moduły UI (kokpit, operacje, narzędzia, raporty, podatki),
+- `api/index.py` - wejście serverless na Vercelu.
 
 ## Realtime setup
 

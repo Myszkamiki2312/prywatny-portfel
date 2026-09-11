@@ -9,7 +9,7 @@ import json
 import ssl
 import threading
 import time
-from typing import Any, Dict, Iterable, List, Optional, TypedDict
+from typing import Any, Dict, Iterable, List, Optional, Tuple, TypedDict
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -95,7 +95,7 @@ class QuoteService:
 
         unresolved_market = [ticker for ticker in missing_market if ticker not in fetched]
         if unresolved_market:
-            for row in self._fetch_stooq(unresolved_market):
+            for row in self._fetch_stooq(unresolved_market, currency_hints):
                 normalized = self._normalize_quote_row(row)
                 if normalized:
                     fetched[normalized["ticker"]] = normalized
@@ -254,10 +254,15 @@ class QuoteService:
             )
         return output
 
-    def _fetch_stooq(self, tickers: List[str]) -> List[QuoteRow]:
+    def _fetch_stooq(
+        self,
+        tickers: List[str],
+        currency_by_ticker: Optional[Dict[str, str]] = None,
+    ) -> List[QuoteRow]:
+        hints = currency_by_ticker or {}
         output: List[QuoteRow] = []
         for ticker in tickers:
-            row = self._fetch_single_stooq(ticker)
+            row = self._fetch_single_stooq(ticker, hints.get(str(ticker).upper().strip()))
             if row:
                 output.append(row)
         return output
@@ -278,7 +283,8 @@ class QuoteService:
                 return rows
         return []
 
-    def _fetch_single_stooq(self, ticker: str) -> QuoteRow | None:
+    def _fetch_single_stooq(self, ticker: str, currency_hint: Optional[str] = None) -> QuoteRow | None:
+        hinted_currency = normalize_currency(currency_hint, "") if currency_hint else ""
         candidates = _stooq_candidates(ticker)
         for candidate in candidates:
             url = (
@@ -305,9 +311,15 @@ class QuoteService:
             return {
                 "ticker": ticker,
                 "price": price,
-                "currency": _guess_currency_from_ticker(ticker)
-                if "." in str(ticker or "")
-                else _guess_currency_from_ticker(candidate),
+                # The caller's hint wins over guessing from the symbol. Stooq is a Polish service,
+                # so a suffix-less symbol resolves against GPW, while _guess_currency_from_ticker
+                # defaults such a symbol to USD — which mislabelled PLN-priced holdings.
+                "currency": hinted_currency
+                or (
+                    _guess_currency_from_ticker(ticker)
+                    if "." in str(ticker or "")
+                    else _guess_currency_from_ticker(candidate)
+                ),
                 "provider": "stooq",
                 "fetched_at": now_iso(),
             }
@@ -508,6 +520,24 @@ def _fx_provider_symbol(ticker: str) -> str:
     return f"{normalize_currency(base_currency)}{normalize_currency(quote_currency)}=X"
 
 
+# A user may name an instrument differently from the exchange. This is the one place that knows
+# it: the value is the exchange root, and each provider appends its own Warsaw suffix below.
+# It used to be two separate tables — the same ORLEN -> PKN knowledge written once upper-case for
+# Yahoo and once lower-case for Stooq — which is why fixing a symbol on one path kept leaving the
+# other one broken.
+_TICKER_ALIAS_ROOTS: Dict[str, Tuple[str, ...]] = {
+    "ORLEN": ("PKN",),
+}
+
+# Each provider spells the Warsaw listing differently.
+_YAHOO_WARSAW_SUFFIX = ".WA"
+_STOOQ_WARSAW_SUFFIX = ".pl"
+
+
+def _alias_roots(symbol: str) -> Tuple[str, ...]:
+    return _TICKER_ALIAS_ROOTS.get(str(symbol or "").upper().strip(), ())
+
+
 def _yahoo_quote_candidates(
     symbol: str,
     currency_hint: Optional[str],
@@ -535,11 +565,9 @@ def _yahoo_quote_candidates(
             add(root)
         return candidates
 
-    alias_map = {
-        "ORLEN": ["PKN.WA", "PKN"],
-    }
-    for alias in alias_map.get(normalized, []):
-        add(alias)
+    for root in _alias_roots(normalized):
+        add(f"{root}{_YAHOO_WARSAW_SUFFIX}")
+        add(root)
 
     preferred = suffix_by_currency.get(str(currency_hint or "").upper().strip())
     if preferred:
@@ -580,14 +608,13 @@ def _stooq_candidates(ticker: str) -> List[str]:
     if not base:
         return []
     candidates = [base]
-    alias_map = {
-        "orlen": ["pkn.pl", "pkn"],
-    }
-    for alias in alias_map.get(base, []):
-        if alias not in candidates:
-            candidates.append(alias)
+    for alias_root in _alias_roots(base):
+        for alias in (f"{alias_root.lower()}{_STOOQ_WARSAW_SUFFIX}", alias_root.lower()):
+            if alias not in candidates:
+                candidates.append(alias)
     if "." in base:
-        root, suffix = base.split(".", 1)
+        # rsplit, so a symbol that already carries a class marker (brk.b.us) keeps it on the root.
+        root, suffix = base.rsplit(".", 1)
         if suffix in {"pl", "wa"} and root and root not in candidates:
             candidates.append(root)
     else:
@@ -633,7 +660,7 @@ def _stooq_history_candidates(ticker: str) -> List[str]:
     if base not in candidates:
         candidates.append(base)
     if "." in base:
-        root = base.split(".", 1)[0]
+        root = base.rsplit(".", 1)[0]
         if root not in candidates:
             candidates.append(root)
     else:

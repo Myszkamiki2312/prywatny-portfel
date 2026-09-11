@@ -4,6 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Prywatny Portfel</title>
+    <meta name="description" content="Aplikacja do zarządzania portfelem inwestycyjnym: portfele, operacje, raporty i podatki." />
+    <meta name="theme-color" content="#0e7a64" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" href="icons/icon-192.png" type="image/png" />
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Portfel" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -15,6 +22,7 @@
     <link rel="stylesheet" href="styles-xtb.css" />
   </head>
   <body>
+    <a class="skip-link" href="#mainContent">Przejdź do treści</a>
     <div class="backdrop" aria-hidden="true"></div>
     <div id="toastHost" class="toast-host" aria-live="polite" aria-atomic="true"></div>
     <div id="cloudAuthOverlay" class="cloud-auth-overlay" hidden>
@@ -154,7 +162,7 @@
       </button>
     </nav>
 
-    <main class="container">
+    <main class="container" id="mainContent" tabindex="-1">
       <section id="dashboardView" class="view active">
         <div class="panel">
           <div class="panel-head">
@@ -259,7 +267,7 @@
           </div>
           <div id="dashboardChartRangeInfo" class="hint compact"></div>
           <div class="chart-wrap">
-            <canvas id="dashboardChart" width="1200" height="360"></canvas>
+            <canvas id="dashboardChart" width="1200" height="360" role="img" aria-label="Wykres wartości portfela w czasie. Te same dane w tabeli poniżej wykresu.">Wykres wartości portfela w czasie. Te same dane znajdziesz w tabeli poniżej.</canvas>
           </div>
           <div id="dashboardDetails" class="table-wrap"></div>
         </div>
@@ -728,7 +736,7 @@
           </div>
           <div id="reportChartRangeInfo" class="hint compact"></div>
           <div class="chart-wrap">
-            <canvas id="reportChart" width="1200" height="300"></canvas>
+            <canvas id="reportChart" width="1200" height="300" role="img" aria-label="Wykres wybranego raportu. Te same dane w tabeli poniżej wykresu.">Wykres wybranego raportu. Te same dane znajdziesz w tabeli poniżej.</canvas>
           </div>
           <div id="reportOutput" class="table-wrap"></div>
         </article>
@@ -1091,7 +1099,7 @@
             </div>
             <div id="candlesInfo" class="hint"></div>
             <div class="chart-wrap">
-              <canvas id="candlesChart" width="1200" height="300"></canvas>
+              <canvas id="candlesChart" width="1200" height="300" role="img" aria-label="Wykres świecowy notowań wybranego waloru.">Wykres świecowy notowań wybranego waloru.</canvas>
             </div>
             <div class="actions-inline">
               <label class="control inline">

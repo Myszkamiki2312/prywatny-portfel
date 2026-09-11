@@ -377,7 +377,11 @@ const quickOperationRuntime = {
 const uiModules = {
   dashboard: null,
   operations: null,
-  tools: null
+  tools: null,
+  reports: null,
+  taxes: null,
+  charts: null,
+  metrics: null
 };
 const clientErrorTracker = {
   bound: false,
@@ -398,9 +402,26 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 });
 
+async function registerServiceWorker() {
+  // The worker is network-first (see sw.js), so this only buys an offline shell and
+  // installability. Failure to register must never block the app from starting.
+  if (typeof navigator === "undefined" || !navigator.serviceWorker || typeof window === "undefined") {
+    return;
+  }
+  if (window.location.protocol !== "https:" && window.location.hostname !== "localhost") {
+    return;
+  }
+  try {
+    await navigator.serviceWorker.register("sw.js");
+  } catch (error) {
+    console.warn("Service worker registration failed:", error);
+  }
+}
+
 async function init() {
   await loadUiModules();
   setupGlobalErrorReporting();
+  void registerServiceWorker();
   cacheDom();
   installToastNotifications();
   applyAppearanceSettings();
@@ -414,14 +435,45 @@ async function init() {
 }
 
 async function loadUiModules() {
-  const [dashboardModule, operationsModule, toolsModule] = await Promise.all([
+  const [dashboardModule, operationsModule, toolsModule, reportsModule, taxesModule, chartsModule, metricsModule] = await Promise.all([
     import("./frontend/dashboard.js"),
     import("./frontend/operations.js"),
-    import("./frontend/tools.js")
+    import("./frontend/tools.js"),
+    import("./frontend/reports.js"),
+    import("./frontend/taxes.js"),
+    import("./frontend/charts.js"),
+    import("./frontend/metrics.js")
   ]);
-  uiModules.dashboard = dashboardModule;
-  uiModules.operations = operationsModule;
-  uiModules.tools = toolsModule;
+  wireUiModules({
+    dashboard: dashboardModule,
+    operations: operationsModule,
+    tools: toolsModule,
+    reports: reportsModule,
+    taxes: taxesModule,
+    charts: chartsModule,
+    metrics: metricsModule
+  });
+}
+
+// Single place that knows how a loaded module gets attached, so the test harness — which loads
+// app.js without a module loader — wires them exactly the way the browser does.
+function wireUiModules(modules) {
+  Object.assign(uiModules, modules || {});
+  if (uiModules.charts) {
+    // Pure formatters, injected once — see the note at the top of frontend/charts.js.
+    uiModules.charts.configureCharts({ formatFloat, formatInt, toNum, toChartNumOrNull });
+  }
+  if (uiModules.metrics) {
+    // state goes in as an accessor: app.js reassigns it, so the module must read it per call.
+    uiModules.metrics.configureMetrics({
+      findById,
+      lookupName,
+      sum,
+      toNum,
+      todayIso,
+      getState: () => state
+    });
+  }
 }
 
 function inferToastType(message) {
@@ -2445,6 +2497,43 @@ async function refreshMetricsFromBackend(portfolioId) {
   }
 }
 
+function reportsModuleDeps() {
+  return {
+    aggregateOpsByDate,
+    average,
+    buildSeries,
+    computeDrawdownSeries,
+    computeMetrics,
+    computePeriodReturns,
+    computeRollingReturnSeries,
+    emptyChart,
+    escapeHtml,
+    formatFloat,
+    formatMoney,
+    groupBy,
+    lookupAssetLabel,
+    lookupName,
+    state,
+    stddev,
+    stripMoney,
+    sum,
+    toNum
+  };
+}
+
+function taxesModuleDeps() {
+  return {
+    apiRequest,
+    backendSync,
+    dom,
+    escapeHtml,
+    formToObject,
+    formatFloat,
+    formatMoney,
+    toNum
+  };
+}
+
 function toolsModuleDeps() {
   return {
     dom,
@@ -3934,122 +4023,23 @@ async function refreshEspi(options = {}) {
 }
 
 async function onTaxOptimizeSubmit() {
-  if (!backendSync.available) {
-    window.alert("Backend offline. Optymalizacja podatku niedostępna.");
-    return;
-  }
-  try {
-    const payload = formToObject(dom.taxOptimizeForm);
-    const result = await apiRequest("/tools/tax/optimize", {
-      method: "POST",
-      body: payload,
-      timeoutMs: 10000
-    });
-    const rows = (result.actions || [])
-      .map(
-        (item) =>
-          `${escapeHtml(String(item.ticker || ""))}: harvest ${escapeHtml(formatMoney(toNum(item.suggestedHarvestLoss)))} (strata ${escapeHtml(formatMoney(toNum(item.unrealizedLoss)))})`
-      )
-      .join("<br/>");
-    dom.taxOptimizeOutput.innerHTML = [
-      `<p>Podstawa przed: <strong>${escapeHtml(formatMoney(toNum(result.taxableBaseBefore)))}</strong></p>`,
-      `<p>Podatek przed: <strong>${escapeHtml(formatMoney(toNum(result.taxBefore)))}</strong></p>`,
-      `<p>Podstawa po: <strong>${escapeHtml(formatMoney(toNum(result.taxableBaseAfter)))}</strong></p>`,
-      `<p>Podatek po: <strong>${escapeHtml(formatMoney(toNum(result.taxAfter)))}</strong></p>`,
-      `<p>Oszczędność: <strong>${escapeHtml(formatMoney(toNum(result.taxSaved)))}</strong></p>`,
-      rows ? `<p>Proponowane transakcje:<br/>${rows}</p>` : "<p>Brak rekomendowanych transakcji loss harvesting.</p>"
-    ].join("");
-  } catch (error) {
-    dom.taxOptimizeOutput.textContent = `Błąd optymalizacji: ${error.message}`;
-  }
+  return uiModules.taxes.onTaxOptimizeSubmit(taxesModuleDeps());
 }
 
 async function onForeignDividendTaxSubmit() {
-  if (!backendSync.available) {
-    window.alert("Backend offline.");
-    return;
-  }
-  try {
-    const payload = formToObject(dom.foreignDividendTaxForm);
-    const result = await apiRequest("/tools/tax/foreign-dividend", {
-      method: "POST",
-      body: payload,
-      timeoutMs: 10000
-    });
-    dom.foreignDividendTaxOutput.innerHTML = [
-      `<p>Podatek zagraniczny: <strong>${escapeHtml(formatMoney(toNum(result.foreignWithheld)))}</strong></p>`,
-      `<p>Podatek do dopłaty w PL: <strong>${escapeHtml(formatMoney(toNum(result.localTaxDue)))}</strong></p>`,
-      `<p>Potencjalny zwrot z zagranicy: <strong>${escapeHtml(formatMoney(toNum(result.foreignRefundPotential)))}</strong></p>`,
-      `<p>Dywidenda netto: <strong>${escapeHtml(formatMoney(toNum(result.netDividendAfterTax)))}</strong></p>`
-    ].join("");
-  } catch (error) {
-    dom.foreignDividendTaxOutput.textContent = `Błąd: ${error.message}`;
-  }
+  return uiModules.taxes.onForeignDividendTaxSubmit(taxesModuleDeps());
 }
 
 async function onCryptoTaxSubmit() {
-  if (!backendSync.available) {
-    window.alert("Backend offline.");
-    return;
-  }
-  try {
-    const payload = formToObject(dom.cryptoTaxForm);
-    const result = await apiRequest("/tools/tax/crypto", {
-      method: "POST",
-      body: payload,
-      timeoutMs: 10000
-    });
-    dom.cryptoTaxOutput.innerHTML = [
-      `<p>Dochód krypto: <strong>${escapeHtml(formatMoney(toNum(result.cryptoIncomeBeforeCarry)))}</strong></p>`,
-      `<p>Podstawa po kompensacji: <strong>${escapeHtml(formatMoney(toNum(result.taxableBase)))}</strong></p>`,
-      `<p>Podatek do zapłaty: <strong>${escapeHtml(formatMoney(toNum(result.taxDue)))}</strong></p>`
-    ].join("");
-  } catch (error) {
-    dom.cryptoTaxOutput.textContent = `Błąd: ${error.message}`;
-  }
+  return uiModules.taxes.onCryptoTaxSubmit(taxesModuleDeps());
 }
 
 async function onForeignInterestTaxSubmit() {
-  if (!backendSync.available) {
-    window.alert("Backend offline.");
-    return;
-  }
-  try {
-    const payload = formToObject(dom.foreignInterestTaxForm);
-    const result = await apiRequest("/tools/tax/foreign-interest", {
-      method: "POST",
-      body: payload,
-      timeoutMs: 10000
-    });
-    dom.foreignInterestTaxOutput.innerHTML = [
-      `<p>Podatek zagraniczny: <strong>${escapeHtml(formatMoney(toNum(result.foreignWithheld)))}</strong></p>`,
-      `<p>Podatek do dopłaty w PL: <strong>${escapeHtml(formatMoney(toNum(result.localTaxDue)))}</strong></p>`,
-      `<p>Odsetki netto: <strong>${escapeHtml(formatMoney(toNum(result.netInterestAfterTax)))}</strong></p>`
-    ].join("");
-  } catch (error) {
-    dom.foreignInterestTaxOutput.textContent = `Błąd: ${error.message}`;
-  }
+  return uiModules.taxes.onForeignInterestTaxSubmit(taxesModuleDeps());
 }
 
 async function onBondInterestTaxSubmit() {
-  if (!backendSync.available) {
-    window.alert("Backend offline.");
-    return;
-  }
-  try {
-    const payload = formToObject(dom.bondInterestTaxForm);
-    const result = await apiRequest("/tools/tax/bond-interest", {
-      method: "POST",
-      body: payload,
-      timeoutMs: 10000
-    });
-    dom.bondInterestTaxOutput.innerHTML = [
-      `<p>Podstawa: <strong>${escapeHtml(formatMoney(toNum(result.taxableBase)))}</strong></p>`,
-      `<p>Podatek: <strong>${escapeHtml(formatMoney(toNum(result.taxDue)))}</strong></p>`
-    ].join("");
-  } catch (error) {
-    dom.bondInterestTaxOutput.textContent = `Błąd: ${error.message}`;
-  }
+  return uiModules.taxes.onBondInterestTaxSubmit(taxesModuleDeps());
 }
 
 async function onForumPostSubmit() {
@@ -4105,27 +4095,7 @@ async function refreshForum(options = {}) {
 }
 
 async function onOptionCalcSubmit() {
-  if (!backendSync.available) {
-    window.alert("Backend offline.");
-    return;
-  }
-  try {
-    const payload = formToObject(dom.optionCalcForm);
-    const result = await apiRequest("/tools/options/exercise-price", {
-      method: "POST",
-      body: payload,
-      timeoutMs: 10000
-    });
-    dom.optionCalcOutput.innerHTML = [
-      `<p>Break-even: <strong>${escapeHtml(formatFloat(toNum(result.breakEven)))}</strong></p>`,
-      `<p>Status: <strong>${escapeHtml(result.status || "-")}</strong></p>`,
-      `<p>Wartość wewnętrzna: <strong>${escapeHtml(formatFloat(toNum(result.intrinsicValue)))}</strong></p>`,
-      `<p>P/L pozycji: <strong>${escapeHtml(formatMoney(toNum(result.positionPL)))}</strong></p>`,
-      `<p>Rekomendacja: <strong>${escapeHtml(result.recommendation || "-")}</strong></p>`
-    ].join("");
-  } catch (error) {
-    dom.optionCalcOutput.textContent = `Błąd: ${error.message}`;
-  }
+  return uiModules.taxes.onOptionCalcSubmit(taxesModuleDeps());
 }
 
 async function onOptionPositionSubmit() {
@@ -6443,20 +6413,7 @@ function onLiabilitySubmit(event) {
 }
 
 function onTaxSubmit(event) {
-  event.preventDefault();
-  const data = formToObject(event.currentTarget);
-  const realized = toNum(data.realized);
-  const dividends = toNum(data.dividends);
-  const costs = toNum(data.costs);
-  const rate = toNum(data.rate) / 100;
-  const taxableBase = Math.max(0, realized + dividends - costs);
-  const tax = taxableBase * rate;
-  const optimizationHint = Math.max(0, tax - Math.max(0, realized - costs) * rate);
-  dom.taxOutput.innerHTML = [
-    `<p>Podstawa opodatkowania: <strong>${escapeHtml(formatMoney(taxableBase))}</strong></p>`,
-    `<p>Szacowany podatek: <strong>${escapeHtml(formatMoney(tax))}</strong></p>`,
-    `<p>Potencjalna ulga po kompensacji dywidend i kosztów: <strong>${escapeHtml(formatMoney(optimizationHint))}</strong></p>`
-  ].join("");
+  uiModules.taxes.onTaxSubmit(taxesModuleDeps(), event);
 }
 
 function onBackupExport() {
@@ -8102,1983 +8059,83 @@ function planCell(minPlan, plan) {
 }
 
 function buildReport(reportName, portfolioId) {
-  const metrics = computeMetrics(portfolioId);
-  const series = buildSeries(portfolioId);
-  const lower = reportName.toLowerCase();
-  const baseInfo = `${reportName} | Portfel: ${
-    portfolioId ? lookupName(state.portfolios, portfolioId) : "wszystkie"
-  }`;
-
-  if (lower.includes("historia operacji")) {
-    const rows = state.operations
-      .filter((op) => !portfolioId || op.portfolioId === portfolioId)
-      .slice()
-      .sort((a, b) => String(b.date).localeCompare(String(a.date)))
-      .map((op) => [
-        escapeHtml(op.date),
-        escapeHtml(op.type),
-        escapeHtml(lookupAssetLabel(op.assetId)),
-        formatFloat(op.quantity),
-        formatFloat(op.price),
-        formatMoney(op.amount, op.currency || state.meta.baseCurrency),
-        formatMoney(op.fee, op.currency || state.meta.baseCurrency)
-      ]);
-    return {
-      info: baseInfo,
-      headers: ["Data", "Typ", "Walor", "Ilość", "Cena", "Kwota", "Prowizja"],
-      rows,
-      chart: emptyChart()
-    };
-  }
-
-  if (lower.includes("podsumowanie portfeli")) {
-    const rows = state.portfolios.map((portfolio) => {
-      const data = computeMetrics(portfolio.id);
-      return [
-        escapeHtml(portfolio.name),
-        formatMoney(data.marketValue),
-        formatMoney(data.cashTotal),
-        formatMoney(data.netWorth),
-        formatMoney(data.totalPL),
-        `${formatFloat(data.returnPct)}%`
-      ];
-    });
-    return {
-      info: baseInfo,
-      headers: ["Portfel", "Wartość rynkowa", "Gotówka", "Majątek netto", "P/L", "Stopa zwrotu"],
-      rows,
-      chart: emptyChart()
-    };
-  }
-
-  if (lower.includes("zamknięte inwestycje")) {
-    const sells = state.operations
-      .filter((op) => (!portfolioId || op.portfolioId === portfolioId) && op.type.toLowerCase().includes("sprzeda"))
-      .map((op) => [
-        escapeHtml(op.date),
-        escapeHtml(lookupAssetLabel(op.assetId)),
-        formatFloat(op.quantity),
-        formatMoney(op.price, op.currency || state.meta.baseCurrency),
-        formatMoney(op.amount, op.currency || state.meta.baseCurrency),
-        formatMoney(op.fee, op.currency || state.meta.baseCurrency)
-      ]);
-    return {
-      info: `${baseInfo} | Liczba zamknięć: ${sells.length}`,
-      headers: ["Data", "Walor", "Ilość", "Cena", "Kwota", "Prowizja"],
-      rows: sells,
-      chart: emptyChart()
-    };
-  }
-
-  if (lower.includes("skład i struktura") || lower.includes("struktura majątku")) {
-    const rows = metrics.holdings.map((holding) => [
-      escapeHtml(holding.ticker),
-      escapeHtml(holding.type),
-      formatFloat(holding.qty),
-      formatMoney(holding.value),
-      `${formatFloat(holding.share)}%`,
-      formatMoney(holding.unrealized)
-    ]);
-    rows.push(["<strong>Gotówka</strong>", "-", "-", formatMoney(metrics.cashTotal), "-", "-"]);
-    rows.push(["<strong>Zobowiązania</strong>", "-", "-", formatMoney(-metrics.liabilitiesTotal), "-", "-"]);
-    return {
-      info: baseInfo,
-      headers: ["Walor", "Typ", "Ilość", "Wartość", "Udział", "P/L"],
-      rows,
-      chart: emptyChart()
-    };
-  }
-
-  if (lower.includes("statystyki portfela")) {
-    const rows = [
-      ["Wartość rynkowa", formatMoney(metrics.marketValue)],
-      ["Gotówka", formatMoney(metrics.cashTotal)],
-      ["Wartość majątku netto", formatMoney(metrics.netWorth)],
-      ["Niezrealizowany zysk", formatMoney(metrics.unrealized)],
-      ["Zrealizowany zysk", formatMoney(metrics.realized)],
-      ["Dywidendy", formatMoney(metrics.dividends)],
-      ["Prowizje", formatMoney(metrics.fees)],
-      ["Całkowity P/L", formatMoney(metrics.totalPL)],
-      ["Stopa zwrotu", `${formatFloat(metrics.returnPct)}%`]
-    ];
-    return {
-      info: baseInfo,
-      headers: ["Miara", "Wartość"],
-      rows,
-      chart: emptyChart()
-    };
-  }
-
-  if (
-    lower.includes("zysk per typ inwestycji") ||
-    lower.includes("analiza sektorowa") ||
-    lower.includes("analiza indeksowa")
-  ) {
-    const buckets = lower.includes("sektor")
-      ? groupBy(metrics.holdings, (item) => item.sector || "Brak sektora")
-      : lower.includes("indeks")
-      ? groupBy(metrics.holdings, (item) => item.benchmark || "Brak benchmarku")
-      : groupBy(metrics.holdings, (item) => item.type || "Inny");
-    const rows = Object.entries(buckets)
-      .map(([key, list]) => {
-        const value = sum(list.map((item) => item.value));
-        const pl = sum(list.map((item) => item.unrealized));
-        return [escapeHtml(key), formatMoney(value), formatMoney(pl), `${formatFloat((pl / Math.max(1, value - pl)) * 100)}%`];
-      })
-      .sort((a, b) => toNum(stripMoney(b[1])) - toNum(stripMoney(a[1])));
-    return {
-      info: baseInfo,
-      headers: ["Grupa", "Wartość", "P/L", "Rentowność"],
-      rows,
-      chart: emptyChart()
-    };
-  }
-
-  if (lower.includes("zysk per konto inwestycyjne") || lower.includes("udział kont inwestycyjnych")) {
-    const rows = metrics.byAccount.map((account) => [
-      escapeHtml(account.name),
-      formatMoney(account.cash),
-      formatMoney(account.buyGross),
-      formatMoney(account.sellGross),
-      formatMoney(account.fees),
-      formatMoney(account.realized),
-      formatMoney(account.balance)
-    ]);
-    return {
-      info: baseInfo,
-      headers: ["Konto", "Gotówka", "Kupno", "Sprzedaż", "Prowizje", "Realized P/L", "Bilans"],
-      rows,
-      chart: emptyChart()
-    };
-  }
-
-  if (lower.includes("ekspozycja walutowa")) {
-    const rows = metrics.byCurrency.map((item) => [
-      escapeHtml(item.currency),
-      formatMoney(item.value, item.currency),
-      `${formatFloat(item.share)}%`
-    ]);
-    return {
-      info: baseInfo,
-      headers: ["Waluta", "Wartość", "Udział"],
-      rows,
-      chart: lower.includes("w czasie")
-        ? {
-            labels: series.map((item) => item.date),
-            values: series.map((item) => item.value),
-            color: "#0f7c66"
-          }
-        : emptyChart()
-    };
-  }
-
-  if (lower.includes("struktura per tag") || lower.includes("udział tagów")) {
-    const rows = metrics.byTag.map((item) => [
-      escapeHtml(item.tag),
-      formatMoney(item.value),
-      `${formatFloat(item.share)}%`
-    ]);
-    return {
-      info: baseInfo,
-      headers: ["Tag", "Wartość", "Udział"],
-      rows,
-      chart: emptyChart()
-    };
-  }
-
-  if (lower.includes("ranking walorów") || lower.includes("porównanie walorów")) {
-    const rows = metrics.holdings
-      .slice()
-      .sort((a, b) => b.unrealizedPct - a.unrealizedPct)
-      .map((holding) => [
-        escapeHtml(holding.ticker),
-        escapeHtml(holding.name),
-        escapeHtml(holding.type),
-        formatMoney(holding.value),
-        formatMoney(holding.unrealized),
-        `${formatFloat(holding.unrealizedPct)}%`,
-        `${formatFloat(holding.share)}%`
-      ]);
-    return {
-      info: baseInfo,
-      headers: ["Ticker", "Nazwa", "Typ", "Wartość", "P/L", "P/L %", "Udział %"],
-      rows,
-      chart: emptyChart()
-    };
-  }
-
-  if (lower.includes("analiza dywidend")) {
-    const divSeries = aggregateOpsByDate(
-      state.operations.filter(
-        (op) => (!portfolioId || op.portfolioId === portfolioId) && op.type.toLowerCase().includes("dywid")
-      ),
-      (op) => toNum(op.amount)
-    );
-    return {
-      info: baseInfo,
-      headers: ["Data", "Dywidendy"],
-      rows: divSeries.map((item) => [escapeHtml(item.date), formatMoney(item.value)]),
-      chart: {
-        labels: divSeries.map((item) => item.date),
-        values: divSeries.map((item) => item.value),
-        color: "#ff7f32"
-      }
-    };
-  }
-
-  if (lower.includes("prowizje")) {
-    const feeSeries = aggregateOpsByDate(
-      state.operations.filter((op) => !portfolioId || op.portfolioId === portfolioId),
-      (op) => toNum(op.fee) + (op.type.toLowerCase().includes("prowiz") ? Math.max(0, toNum(op.amount)) : 0)
-    );
-    return {
-      info: baseInfo,
-      headers: ["Data", "Prowizje"],
-      rows: feeSeries.map((item) => [escapeHtml(item.date), formatMoney(item.value)]),
-      chart: {
-        labels: feeSeries.map((item) => item.date),
-        values: feeSeries.map((item) => item.value),
-        color: "#995728"
-      }
-    };
-  }
-
-  if (lower.includes("analiza fundamentalna") || lower.includes("analiza ryzyka") || lower.includes("zarządzanie ryzykiem")) {
-    const rows = metrics.holdings.map((holding) => [
-      escapeHtml(holding.ticker),
-      escapeHtml(holding.name),
-      escapeHtml(holding.sector || "-"),
-      escapeHtml(holding.industry || "-"),
-      formatFloat(holding.risk),
-      `${formatFloat(holding.share)}%`,
-      formatMoney(holding.value)
-    ]);
-    return {
-      info: `${baseInfo} | Dane zdefiniowane lokalnie dla walorów.`,
-      headers: ["Ticker", "Nazwa", "Sektor", "Branża", "Ryzyko", "Udział", "Wartość"],
-      rows,
-      chart: emptyChart()
-    };
-  }
-
-  if (lower.includes("limity ike")) {
-    const ike = sum(
-      state.operations
-        .filter(
-          (op) =>
-            (!portfolioId || op.portfolioId === portfolioId) &&
-            lookupName(state.accounts, op.accountId).toLowerCase().includes("ike") &&
-            (op.type.toLowerCase().includes("operacja gotówk") || op.type.toLowerCase().includes("przelew"))
-        )
-        .map((op) => toNum(op.amount))
-    );
-    const ikze = sum(
-      state.operations
-        .filter(
-          (op) =>
-            (!portfolioId || op.portfolioId === portfolioId) &&
-            lookupName(state.accounts, op.accountId).toLowerCase().includes("ikze") &&
-            (op.type.toLowerCase().includes("operacja gotówk") || op.type.toLowerCase().includes("przelew"))
-        )
-        .map((op) => toNum(op.amount))
-    );
-    const ppk = sum(
-      state.operations
-        .filter(
-          (op) =>
-            (!portfolioId || op.portfolioId === portfolioId) &&
-            lookupName(state.accounts, op.accountId).toLowerCase().includes("ppk") &&
-            (op.type.toLowerCase().includes("operacja gotówk") || op.type.toLowerCase().includes("przelew"))
-        )
-        .map((op) => toNum(op.amount))
-    );
-    return {
-      info: `${baseInfo} | Kwoty limitów ustawiasz samodzielnie wg aktualnych przepisów.`,
-      headers: ["Konto", "Wpłaty w roku (z operacji gotówkowych)"],
-      rows: [
-        ["IKE", formatMoney(ike)],
-        ["IKZE", formatMoney(ikze)],
-        ["PPK", formatMoney(ppk)]
-      ],
-      chart: emptyChart()
-    };
-  }
-
-  if (lower.includes("podsumowania na e-mail")) {
-    const rows = [
-      ["Tryb", "Lokalny (manualny eksport JSON)"],
-      ["Dane w raporcie", "Wartość, P/L, operacje, alerty"],
-      ["Status", "Gotowe do podpięcia wysyłki SMTP/API"]
-    ];
-    return {
-      info: `${baseInfo} | Wersja Solo bez automatycznej wysyłki.`,
-      headers: ["Parametr", "Wartość"],
-      rows,
-      chart: emptyChart()
-    };
-  }
-
-  if (lower.includes("drawdown")) {
-    const drawdown = computeDrawdownSeries(series);
-    return {
-      info: baseInfo,
-      headers: ["Data", "Drawdown %"],
-      rows: drawdown.map((item) => [escapeHtml(item.date), `${formatFloat(item.value)}%`]),
-      chart: {
-        labels: drawdown.map((item) => item.date),
-        values: drawdown.map((item) => item.value),
-        color: "#aa2a2a"
-      }
-    };
-  }
-
-  if (lower.includes("rolling return")) {
-    const rolling = computeRollingReturnSeries(series, 5);
-    return {
-      info: `${baseInfo} | Okno 5 punktów czasowych.`,
-      headers: ["Data", "Rolling return %"],
-      rows: rolling.map((item) => [escapeHtml(item.date), `${formatFloat(item.value)}%`]),
-      chart: {
-        labels: rolling.map((item) => item.date),
-        values: rolling.map((item) => item.value),
-        color: "#14705c"
-      }
-    };
-  }
-
-  if (lower.includes("zmienność stopy zwrotu")) {
-    const returns = computePeriodReturns(series).map((item) => item.value);
-    const volatility = stddev(returns);
-    return {
-      info: baseInfo,
-      headers: ["Miara", "Wartość"],
-      rows: [
-        ["Liczba okresów", String(returns.length)],
-        ["Średnia stopa zwrotu", `${formatFloat(average(returns))}%`],
-        ["Zmienność (odchylenie std.)", `${formatFloat(volatility)}%`]
-      ],
-      chart: emptyChart()
-    };
-  }
-
-  if (lower.includes("stopa zwrotu")) {
-    const periodReturns = computePeriodReturns(series);
-    return {
-      info: `${baseInfo} | Benchmark możesz ustawić w portfelu i walorach.`,
-      headers: ["Data", "Stopa zwrotu %"],
-      rows: periodReturns.map((item) => [escapeHtml(item.date), `${formatFloat(item.value)}%`]),
-      chart: {
-        labels: periodReturns.map((item) => item.date),
-        values: periodReturns.map((item) => item.value),
-        color: "#0d6f5d"
-      }
-    };
-  }
-
-  if (lower.includes("w czasie")) {
-    const values = series.map((point) => {
-      if (lower.includes("zysk")) {
-        return point.pl;
-      }
-      if (lower.includes("zmiana okresowa")) {
-        return 0;
-      }
-      if (lower.includes("wartość zobowiązań")) {
-        return metrics.liabilitiesTotal;
-      }
-      if (lower.includes("wartość majątku")) {
-        return point.value;
-      }
-      if (lower.includes("wartość jednostki")) {
-        return point.value / Math.max(1, metrics.units);
-      }
-      return point.value;
-    });
-    if (lower.includes("zmiana okresowa")) {
-      const per = computePeriodReturns(series);
-      return {
-        info: baseInfo,
-        headers: ["Data", "Zmiana okresowa %"],
-        rows: per.map((item) => [escapeHtml(item.date), `${formatFloat(item.value)}%`]),
-        chart: {
-          labels: per.map((item) => item.date),
-          values: per.map((item) => item.value),
-          color: "#ff7f32"
-        }
-      };
-    }
-    return {
-      info: baseInfo,
-      headers: ["Data", "Wartość"],
-      rows: series.map((item, idx) => [escapeHtml(item.date), formatMoney(values[idx])]),
-      chart: {
-        labels: series.map((item) => item.date),
-        values,
-        color: "#0e7a64"
-      }
-    };
-  }
-
-  if (lower.includes("wkład i wartość") || lower.includes("wkład i zysk")) {
-    const rows = [
-      ["Suma wpłat netto", formatMoney(metrics.netContribution)],
-      ["Wartość netto", formatMoney(metrics.netWorth)],
-      ["Całkowity zysk/strata", formatMoney(metrics.totalPL)]
-    ];
-    const values = [metrics.netContribution, metrics.netWorth, metrics.totalPL];
-    return {
-      info: baseInfo,
-      headers: ["Miara", "Wartość"],
-      rows,
-      chart: {
-        labels: ["Wpłaty", "Wartość", "P/L"],
-        values,
-        color: "#ff7f32"
-      }
-    };
-  }
-
-  const fallbackRows = metrics.holdings.map((holding) => [
-    escapeHtml(holding.ticker),
-    formatMoney(holding.value),
-    `${formatFloat(holding.share)}%`
-  ]);
-  return {
-    info: `${baseInfo} | Raport automatycznie przypisany do modułu składu portfela.`,
-    headers: ["Walor", "Wartość", "Udział"],
-    rows: fallbackRows,
-    chart: {
-      labels: series.map((point) => point.date),
-      values: series.map((point) => point.value),
-      color: "#0e7a64"
-    }
-  };
+  return uiModules.reports.buildReport(reportsModuleDeps(), reportName, portfolioId);
 }
 
 function normalizeCurrency(value, fallback = "PLN") {
-  const text = String(value || "").toUpperCase().trim();
-  return /^[A-Z]{3}$/.test(text) ? text : fallback;
+  return uiModules.metrics.normalizeCurrency(value, fallback);
 }
 
 function normalizeFxPairKey(value, quoteCurrency) {
-  if (quoteCurrency !== undefined) {
-    const base = normalizeCurrency(value, "");
-    const quote = normalizeCurrency(quoteCurrency, "");
-    return base && quote && base !== quote ? `${base}/${quote}` : "";
-  }
-  const text = String(value || "").toUpperCase().trim().replace(/^FX:/, "");
-  if (!text) {
-    return "";
-  }
-  let match = /^([A-Z]{3})\/([A-Z]{3})$/.exec(text);
-  if (match && match[1] !== match[2]) {
-    return `${match[1]}/${match[2]}`;
-  }
-  match = /^([A-Z]{3})([A-Z]{3})(?:=X)?$/.exec(text);
-  if (match && match[1] !== match[2]) {
-    return `${match[1]}/${match[2]}`;
-  }
-  return "";
+  return uiModules.metrics.normalizeFxPairKey(value, quoteCurrency);
 }
 
 function normalizeFxRates(raw) {
-  let payload = raw;
-  if (typeof raw === "string") {
-    try {
-      payload = JSON.parse(raw);
-    } catch (error) {
-      payload = {};
-    }
-  }
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    return {};
-  }
-  const output = {};
-  Object.entries(payload).forEach(([key, value]) => {
-    const pairKey = normalizeFxPairKey(key);
-    const rate = toNum(value);
-    if (pairKey && rate > 0) {
-      output[pairKey] = rate;
-    }
-  });
-  return output;
+  return uiModules.metrics.normalizeFxRates(raw);
 }
 
 function findCurrencyConversionRate(fromCurrency, toCurrency, fxRates) {
-  const base = normalizeCurrency(fromCurrency, "");
-  const quote = normalizeCurrency(toCurrency, "");
-  if (!base || !quote) {
-    return 0;
-  }
-  if (base === quote) {
-    return 1;
-  }
-  const rates = normalizeFxRates(fxRates);
-  const queue = [{ currency: base, rate: 1 }];
-  const visited = new Set([base]);
-  while (queue.length) {
-    const current = queue.shift();
-    if (!current) {
-      continue;
-    }
-    if (current.currency === quote) {
-      return current.rate;
-    }
-    Object.entries(rates).forEach(([pairKey, pairRate]) => {
-      const [src, dst] = pairKey.split("/");
-      if (src === current.currency && !visited.has(dst)) {
-        visited.add(dst);
-        queue.push({ currency: dst, rate: current.rate * pairRate });
-      } else if (dst === current.currency && !visited.has(src)) {
-        visited.add(src);
-        queue.push({ currency: src, rate: current.rate / pairRate });
-      }
-    });
-  }
-  return 0;
-}
-
-function convertCurrencyValue(amount, fromCurrency, toCurrency, fxRates) {
-  const numeric = toNum(amount);
-  const base = normalizeCurrency(fromCurrency, "");
-  const quote = normalizeCurrency(toCurrency, "");
-  if (!base || !quote || base === quote) {
-    return numeric;
-  }
-  const rate = findCurrencyConversionRate(base, quote, fxRates);
-  return rate > 0 ? numeric * rate : numeric;
-}
-
-function buildFxQuoteTicker(fromCurrency, toCurrency) {
-  const pairKey = normalizeFxPairKey(fromCurrency, toCurrency);
-  return pairKey ? `FX:${pairKey}` : "";
+  return uiModules.metrics.findCurrencyConversionRate(fromCurrency, toCurrency, fxRates);
 }
 
 function extractFxRatesFromQuotes(quotes) {
-  const output = {};
-  if (!Array.isArray(quotes)) {
-    return output;
-  }
-  quotes.forEach((row) => {
-    const pairKey = normalizeFxPairKey(row && row.ticker);
-    const price = toNum(row && row.price);
-    if (pairKey && price > 0) {
-      output[pairKey] = price;
-    }
-  });
-  return output;
-}
-
-function relevantCurrenciesForState() {
-  const currencies = new Set([normalizeCurrency(state.meta.baseCurrency, "PLN")]);
-  state.assets.forEach((asset) => {
-    currencies.add(normalizeCurrency(asset.currency, state.meta.baseCurrency));
-  });
-  state.accounts.forEach((account) => {
-    currencies.add(normalizeCurrency(account.currency, state.meta.baseCurrency));
-  });
-  state.operations.forEach((operation) => {
-    currencies.add(normalizeCurrency(operation.currency, state.meta.baseCurrency));
-  });
-  state.liabilities.forEach((item) => {
-    currencies.add(normalizeCurrency(item.currency, state.meta.baseCurrency));
-  });
-  return Array.from(currencies).filter(Boolean);
+  return uiModules.metrics.extractFxRatesFromQuotes(quotes);
 }
 
 function requiredFxQuoteTickers() {
-  const baseCurrency = normalizeCurrency(state.meta.baseCurrency, "PLN");
-  return relevantCurrenciesForState()
-    .filter((currency) => currency !== baseCurrency)
-    .map((currency) => buildFxQuoteTicker(currency, baseCurrency))
-    .filter(Boolean);
+  return uiModules.metrics.requiredFxQuoteTickers();
 }
 
 function computeMetrics(portfolioId, options = {}) {
-  const untilDate = options.untilDate || "";
-  const useCurrentPrices = options.useCurrentPrices !== false;
-  const baseCurrency = normalizeCurrency(state.meta.baseCurrency, "PLN");
-  const fxRates = normalizeFxRates(state.meta.fxRates);
-  const operations = state.operations
-    .filter((operation) => {
-      if (portfolioId && operation.portfolioId !== portfolioId) {
-        return false;
-      }
-      if (untilDate && operation.date > untilDate) {
-        return false;
-      }
-      return true;
-    })
-    .slice()
-    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
-
-  const holdings = new Map();
-  const cashBuckets = new Map();
-  const accountStats = new Map();
-  const lastPriceByAsset = new Map();
-
-  let realized = 0;
-  let dividends = 0;
-  let fees = 0;
-  let netContribution = 0;
-
-  const toBase = (amount, currency) => convertCurrencyValue(amount, currency, baseCurrency, fxRates);
-
-  const resolveOperationCurrency = (operation) => {
-    const asset = findById(state.assets, operation.assetId || "");
-    const account = findById(state.accounts, operation.accountId || "");
-    return normalizeCurrency(
-      (asset && asset.currency) || (account && account.currency) || operation.currency || baseCurrency,
-      baseCurrency
-    );
-  };
-
-  const ensureAccountStat = (accountId) => {
-    const key = accountId || "__global";
-    const existing = accountStats.get(key);
-    if (existing) {
-      return existing;
-    }
-    const next = {
-      accountId: key,
-      name: key === "__global" ? "N/D" : lookupName(state.accounts, key),
-      cash: 0,
-      buyGross: 0,
-      sellGross: 0,
-      fees: 0,
-      realized: 0,
-      balance: 0
-    };
-    accountStats.set(key, next);
-    return next;
-  };
-
-  const addCash = (accountId, amount, currency) => {
-    const key = accountId || "__global";
-    const normalizedCurrency = normalizeCurrency(currency, baseCurrency);
-    const bucketKey = `${key}::${normalizedCurrency}`;
-    cashBuckets.set(bucketKey, {
-      accountId: key,
-      currency: normalizedCurrency,
-      amount: (cashBuckets.get(bucketKey)?.amount || 0) + amount
-    });
-    const stat = ensureAccountStat(key);
-    const baseAmount = toBase(amount, normalizedCurrency);
-    stat.cash += baseAmount;
-    stat.balance += baseAmount;
-  };
-
-  const addAccountStat = (accountId, field, amount, currency) => {
-    const stat = ensureAccountStat(accountId);
-    stat[field] = (stat[field] || 0) + toBase(amount, currency);
-  };
-
-  const ensureHolding = (assetId) => {
-    if (!holdings.has(assetId)) {
-      holdings.set(assetId, { assetId, qty: 0, cost: 0 });
-    }
-    return holdings.get(assetId);
-  };
-
-  const addHolding = (assetId, qtyDelta, costDelta) => {
-    if (!assetId) {
-      return;
-    }
-    const row = ensureHolding(assetId);
-    row.qty += qtyDelta;
-    row.cost += costDelta;
-    if (Math.abs(row.qty) < 1e-12) {
-      row.qty = 0;
-    }
-    if (Math.abs(row.cost) < 1e-8) {
-      row.cost = 0;
-    }
-  };
-
-  operations.forEach((operation) => {
-    const type = (operation.type || "").toLowerCase();
-    const accountId = operation.accountId || "";
-    const currency = resolveOperationCurrency(operation);
-    const qty = toNum(operation.quantity);
-    const targetQty = toNum(operation.targetQuantity);
-    const price = toNum(operation.price);
-    const amount = toNum(operation.amount);
-    const fee = toNum(operation.fee);
-
-    if (operation.assetId && price > 0) {
-      lastPriceByAsset.set(operation.assetId, price);
-    }
-
-    if (type.includes("kupno")) {
-      const gross = qty * price || Math.abs(amount);
-      const total = gross + fee;
-      addHolding(operation.assetId, qty, toBase(total, currency));
-      addCash(accountId, -total, currency);
-      addAccountStat(accountId, "buyGross", gross, currency);
-      addAccountStat(accountId, "fees", fee, currency);
-      fees += toBase(fee, currency);
-      return;
-    }
-
-    if (type.includes("sprzeda")) {
-      const holding = ensureHolding(operation.assetId);
-      const avg = holding.qty > 0 ? holding.cost / holding.qty : 0;
-      const soldQty = qty;
-      const costOut = avg * soldQty;
-      const gross = soldQty * price || Math.abs(amount);
-      const netProceeds = (amount !== 0 ? amount : gross) - fee;
-      addHolding(operation.assetId, -soldQty, -costOut);
-      addCash(accountId, netProceeds, currency);
-      addAccountStat(accountId, "sellGross", gross, currency);
-      addAccountStat(accountId, "fees", fee, currency);
-      const realizedDelta = toBase(netProceeds, currency) - costOut;
-      addAccountStat(accountId, "realized", realizedDelta, baseCurrency);
-      realized += realizedDelta;
-      fees += toBase(fee, currency);
-      return;
-    }
-
-    if (type.includes("konwers")) {
-      const source = ensureHolding(operation.assetId);
-      const avg = source.qty > 0 ? source.cost / source.qty : price;
-      const sourceQty = qty;
-      const costOut = avg * sourceQty;
-      addHolding(operation.assetId, -sourceQty, -costOut);
-      const receivedQty = targetQty || sourceQty;
-      addHolding(operation.targetAssetId, receivedQty, costOut + toBase(fee, currency));
-      if (fee > 0) {
-        addCash(accountId, -fee, currency);
-        addAccountStat(accountId, "fees", fee, currency);
-        fees += toBase(fee, currency);
-      }
-      return;
-    }
-
-    if (type.includes("dywid")) {
-      addCash(accountId, amount, currency);
-      dividends += toBase(amount, currency);
-      return;
-    }
-
-    if (type.includes("prowiz")) {
-      const feeAmount = Math.max(Math.abs(amount), fee);
-      addCash(accountId, -feeAmount, currency);
-      addAccountStat(accountId, "fees", feeAmount, currency);
-      fees += toBase(feeAmount, currency);
-      return;
-    }
-
-    if (
-      type.includes("operacja gotówk") ||
-      type.includes("przelew") ||
-      type.includes("lokat") ||
-      type.includes("pożyczk") ||
-      type.includes("zobowiąz")
-    ) {
-      addCash(accountId, amount, currency);
-      netContribution += toBase(amount, currency);
-      if (fee > 0) {
-        addCash(accountId, -fee, currency);
-        addAccountStat(accountId, "fees", fee, currency);
-        fees += toBase(fee, currency);
-      }
-      return;
-    }
-
-    if (amount !== 0) {
-      addCash(accountId, amount, currency);
-      netContribution += toBase(amount, currency);
-    }
-    if (fee > 0) {
-      addCash(accountId, -fee, currency);
-      addAccountStat(accountId, "fees", fee, currency);
-      fees += toBase(fee, currency);
-    }
-  });
-
-  const holdingsList = [];
-  let marketValue = 0;
-  let bookValue = 0;
-
-  holdings.forEach((holding) => {
-    if (!holding.assetId || (holding.qty === 0 && holding.cost === 0)) {
-      return;
-    }
-    const asset = findById(state.assets, holding.assetId);
-    const fallbackPrice = lastPriceByAsset.get(holding.assetId) || 0;
-    const currentPrice = useCurrentPrices ? toNum(asset ? asset.currentPrice : fallbackPrice) : fallbackPrice;
-    const price = currentPrice || fallbackPrice || 0;
-    const assetCurrency = normalizeCurrency(asset ? asset.currency : baseCurrency, baseCurrency);
-    const nativeValue = holding.qty * price;
-    const value = toBase(nativeValue, assetCurrency);
-    const unrealized = value - holding.cost;
-    bookValue += holding.cost;
-    marketValue += value;
-    holdingsList.push({
-      assetId: holding.assetId,
-      ticker: asset ? asset.ticker : "N/A",
-      name: asset ? asset.name : "Usunięty walor",
-      type: asset ? asset.type : "Inny",
-      currency: assetCurrency,
-      risk: asset ? asset.risk : 5,
-      sector: asset ? asset.sector : "",
-      industry: asset ? asset.industry : "",
-      benchmark: asset ? asset.benchmark : "",
-      tags: asset ? asset.tags : [],
-      qty: holding.qty,
-      price,
-      value,
-      nativeValue,
-      cost: holding.cost,
-      unrealized,
-      unrealizedPct: holding.cost !== 0 ? (unrealized / holding.cost) * 100 : 0,
-      share: 0
-    });
-  });
-
-  const cashTotal = sum(Array.from(cashBuckets.values()).map((bucket) => toBase(bucket.amount, bucket.currency)));
-  const liabilitiesTotal = sum(
-    state.liabilities.map((item) => toBase(toNum(item.amount), normalizeCurrency(item.currency, baseCurrency)))
-  );
-  const unrealized = marketValue - bookValue;
-  const totalPL = unrealized + realized + dividends - fees;
-  const netWorth = marketValue + cashTotal - liabilitiesTotal;
-
-  holdingsList.forEach((holding) => {
-    holding.share = marketValue > 0 ? (holding.value / marketValue) * 100 : 0;
-  });
-
-  const byCurrencyMap = {};
-  holdingsList.forEach((holding) => {
-    byCurrencyMap[holding.currency] = byCurrencyMap[holding.currency] || { value: 0, baseValue: 0 };
-    byCurrencyMap[holding.currency].value += holding.nativeValue;
-    byCurrencyMap[holding.currency].baseValue += holding.value;
-  });
-  Array.from(cashBuckets.values()).forEach((bucket) => {
-    byCurrencyMap[bucket.currency] = byCurrencyMap[bucket.currency] || { value: 0, baseValue: 0 };
-    byCurrencyMap[bucket.currency].value += bucket.amount;
-    byCurrencyMap[bucket.currency].baseValue += toBase(bucket.amount, bucket.currency);
-  });
-  const byCurrency = Object.entries(byCurrencyMap).map(([currency, item]) => ({
-    currency,
-    value: item.value,
-    baseValue: item.baseValue,
-    share: netWorth !== 0 ? (item.baseValue / netWorth) * 100 : 0
-  })).sort((left, right) => right.baseValue - left.baseValue);
-
-  const byTagMap = {};
-  holdingsList.forEach((holding) => {
-    const tags = holding.tags.length ? holding.tags : ["brak-tagu"];
-    tags.forEach((tag) => {
-      byTagMap[tag] = (byTagMap[tag] || 0) + holding.value;
-    });
-  });
-  const byTag = Object.entries(byTagMap).map(([tag, value]) => ({
-    tag,
-    value,
-    share: marketValue !== 0 ? (value / marketValue) * 100 : 0
-  }));
-
-  const byAccount = Array.from(accountStats.values());
-  byAccount.forEach((account) => {
-    account.name = account.accountId === "__global" ? "N/D" : lookupName(state.accounts, account.accountId);
-  });
-
-  const units = Math.max(1, Math.round(Math.max(1, Math.abs(netContribution) / 100)));
-  const returnPct = netContribution !== 0 ? (totalPL / Math.abs(netContribution)) * 100 : 0;
-
-  return {
-    holdings: holdingsList,
-    cashTotal,
-    liabilitiesTotal,
-    marketValue,
-    bookValue,
-    unrealized,
-    realized,
-    dividends,
-    fees,
-    totalPL,
-    netWorth,
-    netContribution,
-    returnPct,
-    byCurrency,
-    byTag,
-    byAccount,
-    units
-  };
+  return uiModules.metrics.computeMetrics(portfolioId, options);
 }
 
 function buildSeries(portfolioId) {
-  const operations = state.operations
-    .filter((operation) => !portfolioId || operation.portfolioId === portfolioId)
-    .slice()
-    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
-  const dates = Array.from(new Set(operations.map((operation) => operation.date))).filter(Boolean);
-  const series = dates.map((date) => {
-    const metrics = computeMetrics(portfolioId, { untilDate: date, useCurrentPrices: false });
-    return {
-      date,
-      value: metrics.netWorth,
-      marketValue: metrics.marketValue,
-      netWorth: metrics.netWorth,
-      pl: metrics.totalPL
-    };
-  });
-  const today = todayIso();
-  const current = computeMetrics(portfolioId, { useCurrentPrices: true });
-  if (!series.length || series[series.length - 1].date !== today) {
-    series.push({
-      date: today,
-      value: current.netWorth,
-      marketValue: current.marketValue,
-      netWorth: current.netWorth,
-      pl: current.totalPL
-    });
-  }
-  return densifySeriesByDay(series);
+  return uiModules.metrics.buildSeries(portfolioId);
 }
 
 function computeDrawdownSeries(series) {
-  let peak = Number.NEGATIVE_INFINITY;
-  return series.map((point) => {
-    peak = Math.max(peak, point.value);
-    const value = peak !== 0 ? ((point.value - peak) / peak) * 100 : 0;
-    return { date: point.date, value };
-  });
+  return uiModules.metrics.computeDrawdownSeries(series);
 }
 
 function computeRollingReturnSeries(series, window) {
-  const output = [];
-  for (let i = 0; i < series.length; i += 1) {
-    if (i < window) {
-      output.push({ date: series[i].date, value: 0 });
-      continue;
-    }
-    const base = series[i - window].value;
-    const current = series[i].value;
-    const value = base !== 0 ? ((current - base) / base) * 100 : 0;
-    output.push({ date: series[i].date, value });
-  }
-  return output;
+  return uiModules.metrics.computeRollingReturnSeries(series, window);
 }
 
 function computePeriodReturns(series) {
-  const output = [];
-  for (let i = 1; i < series.length; i += 1) {
-    const prev = series[i - 1].value;
-    const curr = series[i].value;
-    const value = prev !== 0 ? ((curr - prev) / prev) * 100 : 0;
-    output.push({ date: series[i].date, value });
-  }
-  return output;
+  return uiModules.metrics.computePeriodReturns(series);
 }
 
 function parseSeriesIsoDate(value) {
-  const text = String(value || "").trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) {
-    return null;
-  }
-  const parsed = new Date(`${text}T00:00:00Z`);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
+  return uiModules.metrics.parseSeriesIsoDate(value);
 }
 
 function densifySeriesByDay(series) {
-  if (!Array.isArray(series) || series.length < 2) {
-    return Array.isArray(series) ? series.slice() : [];
-  }
-  const normalized = series
-    .map((point) => ({
-      ...point,
-      date: String(point.date || "").slice(0, 10)
-    }))
-    .filter((point) => parseSeriesIsoDate(point.date));
-  if (normalized.length < 2) {
-    return normalized;
-  }
-
-  const firstDate = parseSeriesIsoDate(normalized[0].date);
-  const lastDate = parseSeriesIsoDate(normalized[normalized.length - 1].date);
-  const spanDays = firstDate && lastDate ? Math.round((lastDate.getTime() - firstDate.getTime()) / 86400000) : 0;
-  if (spanDays > 4000) {
-    return normalized;
-  }
-
-  const output = [{ ...normalized[0] }];
-  let previousPoint = normalized[0];
-  let previousDate = parseSeriesIsoDate(previousPoint.date);
-  for (let index = 1; index < normalized.length; index += 1) {
-    const currentPoint = normalized[index];
-    const currentDate = parseSeriesIsoDate(currentPoint.date);
-    if (!previousDate || !currentDate) {
-      output.push({ ...currentPoint });
-      previousPoint = currentPoint;
-      previousDate = currentDate;
-      continue;
-    }
-
-    let cursor = new Date(previousDate.getTime());
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
-    while (cursor < currentDate) {
-      output.push({
-        ...previousPoint,
-        date: cursor.toISOString().slice(0, 10)
-      });
-      cursor.setUTCDate(cursor.getUTCDate() + 1);
-    }
-
-    output.push({ ...currentPoint });
-    previousPoint = currentPoint;
-    previousDate = currentDate;
-  }
-  return output;
+  return uiModules.metrics.densifySeriesByDay(series);
 }
 
 function aggregateOpsByDate(operations, valueFn) {
-  const map = {};
-  operations.forEach((operation) => {
-    const date = operation.date || todayIso();
-    map[date] = (map[date] || 0) + valueFn(operation);
-  });
-  return Object.entries(map)
-    .map(([date, value]) => ({ date, value }))
-    .sort((a, b) => a.date.localeCompare(b.date));
-}
-
-function prepareCanvasFrame(canvas) {
-  if (!canvas || !canvas.getContext) {
-    return null;
-  }
-  const baseWidth = Math.max(1, Number(canvas.getAttribute("width")) || 1200);
-  const baseHeight = Math.max(180, Number(canvas.getAttribute("height")) || 280);
-  const measuredWidth = Math.round(
-    canvas.clientWidth ||
-      (canvas.parentElement ? canvas.parentElement.clientWidth : 0) ||
-      baseWidth
-  );
-  const cssWidth = Math.max(280, measuredWidth);
-  const cssHeight = Math.max(220, Math.min(baseHeight, Math.round(cssWidth * 0.62)));
-  const pixelRatio = Math.max(1, window.devicePixelRatio || 1);
-  const pixelWidth = Math.max(1, Math.round(cssWidth * pixelRatio));
-  const pixelHeight = Math.max(1, Math.round(cssHeight * pixelRatio));
-  if (canvas.width !== pixelWidth) {
-    canvas.width = pixelWidth;
-  }
-  if (canvas.height !== pixelHeight) {
-    canvas.height = pixelHeight;
-  }
-  if (canvas.style.height !== `${cssHeight}px`) {
-    canvas.style.height = `${cssHeight}px`;
-  }
-  const ctx = canvas.getContext("2d");
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-  return {
-    ctx,
-    width: cssWidth,
-    height: cssHeight,
-    compact: cssWidth < 520
-  };
-}
-
-function defaultLineChartValueFormatter(value) {
-  return formatFloat(toNum(value));
+  return uiModules.metrics.aggregateOpsByDate(operations, valueFn);
 }
 
 function formatLineChartAxisLabel(label) {
-  const text = String(label || "").trim();
-  if (!text) {
-    return "";
-  }
-  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
-    const parsed = new Date(`${text}T00:00:00`);
-    if (!Number.isNaN(parsed.getTime())) {
-      return parsed.toLocaleDateString("pl-PL", {
-        day: "2-digit",
-        month: "short"
-      });
-    }
-  }
-  return text;
-}
-
-function formatLineChartTooltipLabel(label) {
-  const text = String(label || "").trim();
-  if (!text) {
-    return "";
-  }
-  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
-    const parsed = new Date(`${text}T00:00:00`);
-    if (!Number.isNaN(parsed.getTime())) {
-      return parsed.toLocaleDateString("pl-PL", {
-        day: "2-digit",
-        month: "long",
-        year: "numeric"
-      });
-    }
-  }
-  return text;
-}
-
-function ensureChartTooltipElements(canvas, includeMeta = false) {
-  if (!canvas) {
-    return {
-      wrap: null,
-      tooltip: null,
-      tooltipLabel: null,
-      tooltipValue: null,
-      tooltipMeta: null
-    };
-  }
-  const wrap = canvas.parentElement;
-  let tooltip = wrap ? wrap.querySelector(".chart-tooltip") : null;
-  if (!tooltip && wrap) {
-    tooltip = document.createElement("div");
-    tooltip.className = "chart-tooltip";
-    const label = document.createElement("div");
-    label.className = "chart-tooltip-label";
-    const value = document.createElement("div");
-    value.className = "chart-tooltip-value";
-    tooltip.append(label, value);
-    wrap.appendChild(tooltip);
-  }
-  if (tooltip && includeMeta && !tooltip.querySelector(".chart-tooltip-meta")) {
-    const meta = document.createElement("div");
-    meta.className = "chart-tooltip-meta";
-    tooltip.appendChild(meta);
-  }
-  return {
-    wrap,
-    tooltip,
-    tooltipLabel: tooltip ? tooltip.querySelector(".chart-tooltip-label") : null,
-    tooltipValue: tooltip ? tooltip.querySelector(".chart-tooltip-value") : null,
-    tooltipMeta: tooltip ? tooltip.querySelector(".chart-tooltip-meta") : null
-  };
-}
-
-function hideChartTooltip(state) {
-  if (state && state.tooltip) {
-    state.tooltip.classList.remove("visible");
-  }
-}
-
-function positionChartTooltip(state, point, canvasRect) {
-  if (!state || !state.tooltip) {
-    return;
-  }
-  const wrapRect = state.wrap ? state.wrap.getBoundingClientRect() : canvasRect;
-  const tooltipWidth = state.tooltip.offsetWidth || 148;
-  const tooltipHeight = state.tooltip.offsetHeight || 54;
-  let left = point.x + 14;
-  let top = point.y - tooltipHeight - 14;
-  if (left + tooltipWidth > wrapRect.width - 10) {
-    left = point.x - tooltipWidth - 14;
-  }
-  if (top < 10) {
-    top = point.y + 14;
-  }
-  left = Math.max(10, Math.min(left, wrapRect.width - tooltipWidth - 10));
-  top = Math.max(10, Math.min(top, wrapRect.height - tooltipHeight - 10));
-  state.tooltip.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
-}
-
-function ensureLineChartState(canvas) {
-  if (!canvas) {
-    return null;
-  }
-  if (canvas.__lineChartState) {
-    return canvas.__lineChartState;
-  }
-  const tooltipState = ensureChartTooltipElements(canvas, true);
-
-  const state = {
-    activeIndex: -1,
-    points: [],
-    seriesPoints: [],
-    bounds: null,
-    ...tooltipState,
-    valueFormatter: defaultLineChartValueFormatter,
-    tooltipLabelFormatter: formatLineChartTooltipLabel,
-    draw: () => {},
-    axisLabelFormatter: formatLineChartAxisLabel,
-    tooltipContentBuilder: null,
-    interaction: null,
-    drag: null
-  };
-
-  const clearHover = () => {
-    if (state.activeIndex === -1 || state.drag) {
-      return;
-    }
-    state.activeIndex = -1;
-    hideChartTooltip(state);
-    state.draw();
-  };
-
-  const updateHover = (event) => {
-    if (state.drag || !state.points.length || !state.bounds) {
-      clearHover();
-      return;
-    }
-    const rect = canvas.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    if (
-      x < state.bounds.left ||
-      x > state.bounds.right ||
-      y < state.bounds.top - 18 ||
-      y > state.bounds.bottom + 18
-    ) {
-      clearHover();
-      return;
-    }
-
-    let nearestIndex = 0;
-    let nearestDistance = Number.POSITIVE_INFINITY;
-    state.points.forEach((point, index) => {
-      const distance = Math.abs(point.x - x);
-      if (distance < nearestDistance) {
-        nearestDistance = distance;
-        nearestIndex = index;
-      }
-    });
-
-    if (state.activeIndex !== nearestIndex) {
-      state.activeIndex = nearestIndex;
-      state.draw();
-    }
-
-    const point = state.points[state.activeIndex];
-    const tooltipContent =
-      typeof state.tooltipContentBuilder === "function" ? state.tooltipContentBuilder(state.activeIndex) : null;
-    if (!point || !tooltipContent || !state.tooltip || !state.tooltipLabel || !state.tooltipValue) {
-      hideChartTooltip(state);
-      return;
-    }
-    state.tooltipLabel.textContent = tooltipContent.label || state.tooltipLabelFormatter(point.label);
-    state.tooltipValue.textContent = tooltipContent.value || "";
-    if (state.tooltipMeta) {
-      state.tooltipMeta.textContent = tooltipContent.meta || "";
-    }
-    state.tooltip.classList.add("visible");
-    positionChartTooltip(state, tooltipContent.point || point, rect);
-  };
-
-  const startDrag = (event) => {
-    if (!state.interaction || !state.bounds || !state.points.length || event.button !== 0) {
-      return;
-    }
-    const rect = canvas.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    if (x < state.bounds.left || x > state.bounds.right || y < state.bounds.top || y > state.bounds.bottom) {
-      return;
-    }
-    event.preventDefault();
-    hideChartTooltip(state);
-    state.activeIndex = -1;
-    const zoomed = typeof state.interaction.isZoomed === "function" && state.interaction.isZoomed();
-    state.drag = zoomed
-      ? {
-          mode: "pan",
-          startX: x,
-          currentX: x,
-          originViewport:
-            typeof state.interaction.getViewport === "function" ? state.interaction.getViewport() : null,
-          lastPanDelta: 0
-        }
-      : {
-          mode: "select",
-          startX: x,
-          currentX: x
-        };
-    canvas.style.cursor = zoomed ? "grabbing" : "crosshair";
-    state.draw();
-  };
-
-  const moveDrag = (event) => {
-    if (!state.drag || !state.bounds || !state.points.length) {
-      return;
-    }
-    const rect = canvas.getBoundingClientRect();
-    const x = Math.max(state.bounds.left, Math.min(state.bounds.right, event.clientX - rect.left));
-    state.drag.currentX = x;
-    if (state.drag.mode === "pan") {
-      const width = Math.max(1, state.bounds.right - state.bounds.left);
-      const pointSpan = Math.max(1, state.points.length - 1);
-      const deltaPoints = Math.round(((state.drag.startX - x) / width) * pointSpan);
-      if (deltaPoints !== state.drag.lastPanDelta && typeof state.interaction.panViewport === "function") {
-        state.drag.lastPanDelta = deltaPoints;
-        state.interaction.panViewport(deltaPoints, state.drag.originViewport);
-      }
-      return;
-    }
-    state.draw();
-  };
-
-  const endDrag = () => {
-    if (!state.drag) {
-      return;
-    }
-    const drag = state.drag;
-    state.drag = null;
-    canvas.style.cursor = "crosshair";
-    if (
-      drag.mode === "select" &&
-      typeof state.interaction?.zoomRange === "function" &&
-      Math.abs(drag.currentX - drag.startX) > 6
-    ) {
-      let startIndex = 0;
-      let endIndex = 0;
-      let startDistance = Number.POSITIVE_INFINITY;
-      let endDistance = Number.POSITIVE_INFINITY;
-      state.points.forEach((point, index) => {
-        const distanceStart = Math.abs(point.x - drag.startX);
-        if (distanceStart < startDistance) {
-          startDistance = distanceStart;
-          startIndex = index;
-        }
-        const distanceEnd = Math.abs(point.x - drag.currentX);
-        if (distanceEnd < endDistance) {
-          endDistance = distanceEnd;
-          endIndex = index;
-        }
-      });
-      state.interaction.zoomRange(startIndex, endIndex);
-      return;
-    }
-    state.draw();
-  };
-
-  canvas.addEventListener("mousemove", updateHover);
-  canvas.addEventListener("mouseleave", clearHover);
-  canvas.addEventListener("blur", clearHover);
-  canvas.addEventListener("mousedown", startDrag);
-  canvas.addEventListener("dblclick", () => {
-    if (state.interaction && typeof state.interaction.resetZoom === "function") {
-      state.interaction.resetZoom();
-    }
-  });
-  if (typeof window !== "undefined" && window.addEventListener) {
-    window.addEventListener("mousemove", moveDrag);
-    window.addEventListener("mouseup", endDrag);
-  }
-  canvas.style.cursor = "crosshair";
-  canvas.__lineChartState = state;
-  return state;
+  return uiModules.charts.formatLineChartAxisLabel(label);
 }
 
 function readCssVarValue(name, fallback) {
-  if (typeof window === "undefined" || typeof getComputedStyle !== "function" || typeof document === "undefined") {
-    return fallback;
-  }
-  const root = document.body || document.documentElement;
-  if (!root) {
-    return fallback;
-  }
-  const value = getComputedStyle(root).getPropertyValue(name).trim();
-  return value || fallback;
-}
-
-function getChartPalette() {
-  return {
-    primary: readCssVarValue("--chart-primary", "#0e7a64"),
-    secondary: readCssVarValue("--chart-secondary", "#ff7f32"),
-    up: readCssVarValue("--chart-up", "#0e7a64"),
-    down: readCssVarValue("--chart-down", "#b04444"),
-    grid: readCssVarValue("--chart-grid", "rgba(168, 185, 163, 0.46)"),
-    axis: readCssVarValue("--chart-axis", "rgba(75, 96, 86, 0.9)"),
-    axisStrong: readCssVarValue("--chart-axis-strong", "#30473e"),
-    empty: readCssVarValue("--chart-empty", "#4b6056"),
-    guide: readCssVarValue("--chart-guide", "rgba(0, 87, 71, 0.34)"),
-    selectionFill: readCssVarValue("--chart-selection-fill", "rgba(14, 122, 100, 0.12)"),
-    selectionStroke: readCssVarValue("--chart-selection-stroke", "rgba(14, 122, 100, 0.34)"),
-    candleGuide: readCssVarValue("--chart-candle-guide", "rgba(82, 70, 36, 0.36)"),
-    backgroundTop: readCssVarValue("--chart-bg-top", "rgba(14, 122, 100, 0.06)"),
-    backgroundBottom: readCssVarValue("--chart-bg-bottom", "rgba(14, 122, 100, 0.01)"),
-    candleBackgroundTop: readCssVarValue("--chart-candle-bg-top", "rgba(255, 127, 50, 0.05)"),
-    candleBackgroundBottom: readCssVarValue("--chart-candle-bg-bottom", "rgba(255, 127, 50, 0.01)")
-  };
-}
-
-function restoreCanvasChartFallback(canvas) {
-  if (!canvas) {
-    return;
-  }
-  canvas.style.display = "block";
-  canvas.style.visibility = "";
-  canvas.style.height = "";
-  if (canvas.parentElement) {
-    canvas.parentElement.querySelectorAll(".pro-chart-container").forEach((node) => node.remove());
-  }
+  return uiModules.charts.readCssVarValue(name, fallback);
 }
 
 function drawLineChart(canvas, labels, values, options = {}) {
-  if (window.drawProLineChart && !options.preferCanvas) {
-    try {
-      if (window.drawProLineChart(canvas, labels, values, options) === true) {
-        return;
-      }
-    } catch (error) {
-      if (!String(error && error.message ? error.message : error).includes("LightweightCharts")) {
-        throw error;
-      }
-    }
-  }
-  restoreCanvasChartFallback(canvas);
-  const frame = prepareCanvasFrame(canvas);
-  if (!frame) {
-    return;
-  }
-  const { ctx, width, height, compact } = frame;
-  const chartState = ensureLineChartState(canvas);
-  const valueFormatter =
-    typeof options.valueFormatter === "function" ? options.valueFormatter : defaultLineChartValueFormatter;
-  const axisLabelFormatter =
-    typeof options.axisLabelFormatter === "function" ? options.axisLabelFormatter : formatLineChartAxisLabel;
-  const tooltipLabelFormatter =
-    typeof options.tooltipLabelFormatter === "function" ? options.tooltipLabelFormatter : formatLineChartTooltipLabel;
-  const comparisonSeries = Array.isArray(options.series) ? options.series : [];
-  const chartPalette = getChartPalette();
-
-  if (!values || values.length === 0) {
-    if (chartState && chartState.tooltip) {
-      hideChartTooltip(chartState);
-      chartState.points = [];
-      chartState.seriesPoints = [];
-    }
-    ctx.fillStyle = chartPalette.empty;
-    ctx.font = compact ? "13px Space Grotesk" : "14px Space Grotesk";
-    ctx.fillText("Brak danych do wykresu.", 20, 26);
-    return;
-  }
-
-  const color = options.color || chartPalette.primary;
-  const seriesDefinitions = [
-    {
-      name: options.seriesName || "Seria główna",
-      color,
-      dash: [],
-      values: values.map((value) => toChartNumOrNull(value)),
-      fill: true,
-      highlight: true,
-      lineWidth: compact ? 2.4 : 2.8
-    }
-  ].concat(
-    comparisonSeries.map((series, index) => ({
-      name: series.name || `Porównanie ${index + 1}`,
-      color: series.color || chartPalette.secondary,
-      dash: Array.isArray(series.dash) ? series.dash : [7, 5],
-      values: (Array.isArray(series.values) ? series.values : []).map((value) => toChartNumOrNull(value)),
-      fill: false,
-      highlight: false,
-      lineWidth: compact ? 1.8 : 2.1
-    }))
-  );
-  const legendSpace = seriesDefinitions.length > 1 ? (compact ? 22 : 26) : 0;
-  const padding = compact
-    ? { left: 56, right: 14, top: 18 + legendSpace, bottom: 32 }
-    : { left: 74, right: 20, top: 20 + legendSpace, bottom: 36 };
-  const chartWidth = width - padding.left - padding.right;
-  const chartHeight = height - padding.top - padding.bottom;
-
-  const allValues = seriesDefinitions.flatMap((series) => series.values).filter((value) => value != null);
-  const minVal = allValues.length ? Math.min(...allValues) : 0;
-  const maxVal = allValues.length ? Math.max(...allValues) : 0;
-  const isFlat = Math.abs(maxVal - minVal) < 1e-9;
-  const flatPadding = isFlat ? Math.max(1, Math.abs(maxVal) * 0.05 || 1) : Math.max(1, Math.abs(maxVal - minVal) * 0.08);
-  const plotMin = minVal - flatPadding;
-  const plotMax = maxVal + flatPadding;
-  const plotRange = plotMax - plotMin || 1;
-  const gridLines = 4;
-
-  const chartBackground = ctx.createLinearGradient(0, padding.top, 0, height - padding.bottom);
-  chartBackground.addColorStop(0, chartPalette.backgroundTop);
-  chartBackground.addColorStop(1, chartPalette.backgroundBottom);
-  ctx.fillStyle = chartBackground;
-  ctx.fillRect(padding.left, padding.top, chartWidth, chartHeight);
-
-  ctx.strokeStyle = chartPalette.grid;
-  ctx.lineWidth = 1;
-  ctx.fillStyle = chartPalette.axis;
-  ctx.font = compact ? "10px IBM Plex Mono" : "11px IBM Plex Mono";
-  ctx.textAlign = "right";
-  ctx.textBaseline = "middle";
-  for (let i = 0; i <= gridLines; i += 1) {
-    const y = padding.top + (chartHeight / gridLines) * i;
-    ctx.beginPath();
-    ctx.moveTo(padding.left, y);
-    ctx.lineTo(width - padding.right, y);
-    ctx.stroke();
-    const tickValue = plotMax - (plotRange * i) / gridLines;
-    ctx.fillText(valueFormatter(tickValue), padding.left - 10, y);
-  }
-  ctx.textAlign = "left";
-  ctx.textBaseline = "alphabetic";
-
-  const xPositions = labels.map((_, idx) =>
-    labels.length === 1
-      ? padding.left + chartWidth / 2
-      : padding.left + (chartWidth * idx) / Math.max(1, labels.length - 1)
-  );
-  const primaryPoints = seriesDefinitions[0].values.map((value, idx) => ({
-    x: xPositions[idx],
-    y: value == null ? null : padding.top + chartHeight - ((value - plotMin) / plotRange) * chartHeight,
-    value,
-    label: labels[idx] || ""
-  }));
-  const seriesPoints = seriesDefinitions.map((series) =>
-    labels.map((label, idx) => {
-      const value = idx < series.values.length ? series.values[idx] : null;
-      return {
-        x: xPositions[idx],
-        y: value == null ? null : padding.top + chartHeight - ((value - plotMin) / plotRange) * chartHeight,
-        value,
-        label: label || ""
-      };
-    })
-  );
-  if (chartState) {
-    chartState.points = primaryPoints;
-    chartState.seriesPoints = seriesPoints;
-    chartState.bounds = {
-      left: padding.left,
-      right: width - padding.right,
-      top: padding.top,
-      bottom: height - padding.bottom
-    };
-    chartState.valueFormatter = valueFormatter;
-    chartState.tooltipLabelFormatter = tooltipLabelFormatter;
-    chartState.axisLabelFormatter = axisLabelFormatter;
-    chartState.tooltipContentBuilder = (index) => {
-      const label = tooltipLabelFormatter(labels[index] || "");
-      const primaryPoint = seriesPoints[0][index];
-      const fallbackPoint = seriesPoints.find((items) => items[index] && items[index].y != null);
-      const meta = seriesDefinitions
-        .slice(1)
-        .map((series, seriesIndex) => {
-          const point = seriesPoints[seriesIndex + 1][index];
-          return point && point.value != null ? `${series.name}: ${valueFormatter(point.value)}` : "";
-        })
-        .filter(Boolean)
-        .join(" | ");
-      return {
-        label,
-        value:
-          primaryPoint && primaryPoint.value != null
-            ? `${seriesDefinitions[0].name}: ${valueFormatter(primaryPoint.value)}`
-            : `${seriesDefinitions[0].name}: -`,
-        meta,
-        point: fallbackPoint ? { x: fallbackPoint[index].x, y: fallbackPoint[index].y || padding.top } : primaryPoint
-      };
-    };
-    chartState.interaction = options.interaction || null;
-    chartState.draw = () => drawLineChart(canvas, labels, values, options);
-    if (chartState.activeIndex >= primaryPoints.length) {
-      chartState.activeIndex = -1;
-    }
-  }
-
-  if (seriesDefinitions.length > 1) {
-    let legendX = padding.left;
-    const legendY = compact ? 15 : 18;
-    ctx.font = compact ? "10px Space Grotesk" : "11px Space Grotesk";
-    ctx.textBaseline = "middle";
-    seriesDefinitions.forEach((series) => {
-      ctx.save();
-      ctx.strokeStyle = series.color;
-      ctx.lineWidth = 2.2;
-      ctx.setLineDash(series.dash);
-      ctx.beginPath();
-      ctx.moveTo(legendX, legendY);
-      ctx.lineTo(legendX + 18, legendY);
-      ctx.stroke();
-      ctx.restore();
-      ctx.fillStyle = chartPalette.axisStrong;
-      ctx.fillText(series.name, legendX + 24, legendY);
-      legendX += 24 + ctx.measureText(series.name).width + 18;
-    });
-    ctx.textBaseline = "alphabetic";
-  }
-
-  const gradient = ctx.createLinearGradient(0, padding.top, 0, height - padding.bottom);
-  gradient.addColorStop(0, `${color}52`);
-  gradient.addColorStop(1, `${color}06`);
-  const filledPrimary = primaryPoints.filter((point) => point.y != null);
-  if (filledPrimary.length) {
-    ctx.beginPath();
-    filledPrimary.forEach((point, idx) => {
-      if (idx === 0) {
-        ctx.moveTo(point.x, point.y);
-      } else {
-        ctx.lineTo(point.x, point.y);
-      }
-    });
-    ctx.lineTo(filledPrimary[filledPrimary.length - 1].x, height - padding.bottom);
-    ctx.lineTo(filledPrimary[0].x, height - padding.bottom);
-    ctx.closePath();
-    ctx.fillStyle = gradient;
-    ctx.fill();
-  }
-
-  seriesDefinitions.forEach((series, seriesIndex) => {
-    const points = seriesPoints[seriesIndex];
-    let started = false;
-    ctx.beginPath();
-    points.forEach((point) => {
-      if (point.y == null) {
-        started = false;
-        return;
-      }
-      if (!started) {
-        ctx.moveTo(point.x, point.y);
-        started = true;
-      } else {
-        ctx.lineTo(point.x, point.y);
-      }
-    });
-    if (!started) {
-      return;
-    }
-    ctx.save();
-    ctx.lineJoin = "round";
-    ctx.lineCap = "round";
-    ctx.setLineDash(series.dash);
-    if (seriesIndex === 0) {
-      ctx.shadowColor = `${series.color}30`;
-      ctx.shadowBlur = 16;
-    }
-    ctx.lineWidth = series.lineWidth;
-    ctx.strokeStyle = series.color;
-    ctx.stroke();
-    ctx.restore();
-  });
-
-  const lastPrimary = [...primaryPoints].reverse().find((point) => point.y != null);
-  if (lastPrimary) {
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.arc(lastPrimary.x, lastPrimary.y, compact ? 4 : 4.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.fillStyle = "#ffffff";
-    ctx.arc(lastPrimary.x, lastPrimary.y, compact ? 1.7 : 2, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  const activePoint = chartState && chartState.activeIndex >= 0 ? primaryPoints[chartState.activeIndex] : null;
-  if (activePoint && chartState && !chartState.drag) {
-    ctx.save();
-    ctx.setLineDash([5, 5]);
-    ctx.strokeStyle = chartPalette.guide;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(activePoint.x, padding.top);
-    ctx.lineTo(activePoint.x, height - padding.bottom);
-    ctx.stroke();
-    ctx.restore();
-
-    seriesDefinitions.forEach((series, seriesIndex) => {
-      const point = seriesPoints[seriesIndex][chartState.activeIndex];
-      if (!point || point.y == null) {
-        return;
-      }
-      ctx.fillStyle = "#ffffff";
-      ctx.strokeStyle = series.color;
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.arc(point.x, point.y, compact ? 4.6 : 5.4, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-    });
-  } else if (chartState && chartState.tooltip) {
-    hideChartTooltip(chartState);
-  }
-
-  if (chartState && chartState.drag && chartState.drag.mode === "select") {
-    const left = Math.min(chartState.drag.startX, chartState.drag.currentX);
-    const selectionWidth = Math.abs(chartState.drag.currentX - chartState.drag.startX);
-    if (selectionWidth > 0) {
-      ctx.save();
-      ctx.fillStyle = chartPalette.selectionFill;
-      ctx.strokeStyle = chartPalette.selectionStroke;
-      ctx.setLineDash([6, 5]);
-      ctx.fillRect(left, padding.top, selectionWidth, chartHeight);
-      ctx.strokeRect(left, padding.top, selectionWidth, chartHeight);
-      ctx.restore();
-    }
-  }
-
-  const xLabelIndices = Array.from(
-    new Set(
-      compact
-        ? [0, Math.round((primaryPoints.length - 1) / 2), primaryPoints.length - 1]
-        : [
-            0,
-            Math.round((primaryPoints.length - 1) / 3),
-            Math.round(((primaryPoints.length - 1) * 2) / 3),
-            primaryPoints.length - 1
-          ]
-    )
-  ).filter((index) => index >= 0 && index < primaryPoints.length);
-  ctx.fillStyle = chartPalette.axisStrong;
-  ctx.font = compact ? "10px Space Grotesk" : "11px Space Grotesk";
-  ctx.textBaseline = "top";
-  xLabelIndices.forEach((index) => {
-    const point = primaryPoints[index];
-    const text = axisLabelFormatter(labels[index] || "");
-    const metrics = ctx.measureText(text);
-    let x = point.x - metrics.width / 2;
-    x = Math.max(padding.left, Math.min(x, width - padding.right - metrics.width));
-    ctx.fillText(text, x, height - padding.bottom + 10);
-  });
+  return uiModules.charts.drawLineChart(canvas, labels, values, options);
 }
 
 function buildCandlestickTooltipContent(candle) {
-  return {
-    label: formatLineChartTooltipLabel(candle.date || ""),
-    value: `C ${formatFloat(toNum(candle.close))}`,
-    meta:
-      `O ${formatFloat(toNum(candle.open))}  ` +
-      `H ${formatFloat(toNum(candle.high))}  ` +
-      `L ${formatFloat(toNum(candle.low))}  ` +
-      `V ${formatInt(toNum(candle.volume))}`
-  };
-}
-
-function ensureCandlestickChartState(canvas) {
-  if (!canvas) {
-    return null;
-  }
-  if (canvas.__candlestickChartState) {
-    return canvas.__candlestickChartState;
-  }
-  const tooltipState = ensureChartTooltipElements(canvas, true);
-  const state = {
-    activeIndex: -1,
-    candles: [],
-    bounds: null,
-    ...tooltipState,
-    draw: () => {}
-  };
-
-  const clearHover = () => {
-    if (state.activeIndex === -1) {
-      return;
-    }
-    state.activeIndex = -1;
-    hideChartTooltip(state);
-    state.draw();
-  };
-
-  const updateHover = (event) => {
-    if (!state.candles.length || !state.bounds) {
-      clearHover();
-      return;
-    }
-    const rect = canvas.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    if (
-      x < state.bounds.left ||
-      x > state.bounds.right ||
-      y < state.bounds.top - 18 ||
-      y > state.bounds.bottom + 18
-    ) {
-      clearHover();
-      return;
-    }
-
-    let nearestIndex = 0;
-    let nearestDistance = Number.POSITIVE_INFINITY;
-    state.candles.forEach((point, index) => {
-      const distance = Math.abs(point.x - x);
-      if (distance < nearestDistance) {
-        nearestDistance = distance;
-        nearestIndex = index;
-      }
-    });
-
-    if (state.activeIndex !== nearestIndex) {
-      state.activeIndex = nearestIndex;
-      state.draw();
-    }
-
-    const candle = state.candles[state.activeIndex];
-    if (!candle || !state.tooltip || !state.tooltipLabel || !state.tooltipValue) {
-      return;
-    }
-    const tooltip = buildCandlestickTooltipContent(candle);
-    state.tooltipLabel.textContent = tooltip.label;
-    state.tooltipValue.textContent = tooltip.value;
-    if (state.tooltipMeta) {
-      state.tooltipMeta.textContent = tooltip.meta;
-    }
-    state.tooltip.classList.add("visible");
-    positionChartTooltip(state, { x: candle.x, y: candle.bodyTop }, rect);
-  };
-
-  canvas.addEventListener("mousemove", updateHover);
-  canvas.addEventListener("mouseleave", clearHover);
-  canvas.addEventListener("blur", clearHover);
-  canvas.style.cursor = "crosshair";
-  canvas.__candlestickChartState = state;
-  return state;
+  return uiModules.charts.buildCandlestickTooltipContent(candle);
 }
 
 function drawCandlestickChart(canvas, candles) {
-  if (window.drawProCandleChart) {
-    if (window.drawProCandleChart(canvas, candles) === true) {
-      return;
-    }
-  }
-  restoreCanvasChartFallback(canvas);
-  const frame = prepareCanvasFrame(canvas);
-  if (!frame) {
-    return;
-  }
-  const { ctx, width, height, compact } = frame;
-  const chartState = ensureCandlestickChartState(canvas);
-  const chartPalette = getChartPalette();
-
-  if (!candles || candles.length === 0) {
-    if (chartState) {
-      chartState.candles = [];
-      hideChartTooltip(chartState);
-    }
-    ctx.fillStyle = chartPalette.empty;
-    ctx.font = compact ? "13px Space Grotesk" : "14px Space Grotesk";
-    ctx.fillText("Brak danych świecowych.", 20, 26);
-    return;
-  }
-
-  const sample = candles.slice();
-  const highs = sample.map((item) => toNum(item.high));
-  const lows = sample.map((item) => toNum(item.low));
-  const minVal = Math.min(...lows);
-  const maxVal = Math.max(...highs);
-  const range = maxVal - minVal || 1;
-
-  const pad = compact
-    ? { left: 38, right: 10, top: 12, bottom: 22 }
-    : { left: 44, right: 12, top: 12, bottom: 24 };
-  const chartWidth = width - pad.left - pad.right;
-  const chartHeight = height - pad.top - pad.bottom;
-  const candleSpace = chartWidth / sample.length;
-  const candleWidth = Math.max(2, candleSpace * 0.55);
-  const yTickCount = 4;
-
-  const chartBackground = ctx.createLinearGradient(0, pad.top, 0, height - pad.bottom);
-  chartBackground.addColorStop(0, chartPalette.candleBackgroundTop);
-  chartBackground.addColorStop(1, chartPalette.candleBackgroundBottom);
-  ctx.fillStyle = chartBackground;
-  ctx.fillRect(pad.left, pad.top, chartWidth, chartHeight);
-
-  ctx.strokeStyle = chartPalette.grid;
-  ctx.lineWidth = 1;
-  ctx.fillStyle = chartPalette.axis;
-  ctx.font = compact ? "10px IBM Plex Mono" : "11px IBM Plex Mono";
-  ctx.textAlign = "right";
-  ctx.textBaseline = "middle";
-  for (let i = 0; i <= yTickCount; i += 1) {
-    const y = pad.top + (chartHeight / yTickCount) * i;
-    ctx.beginPath();
-    ctx.moveTo(pad.left, y);
-    ctx.lineTo(width - pad.right, y);
-    ctx.stroke();
-    const tickValue = maxVal - (range * i) / yTickCount;
-    ctx.fillText(formatFloat(tickValue), pad.left - 8, y);
-  }
-  ctx.textAlign = "left";
-  ctx.textBaseline = "alphabetic";
-
-  const candlePoints = sample.map((item, idx) => {
-    const open = toNum(item.open);
-    const close = toNum(item.close);
-    const high = toNum(item.high);
-    const low = toNum(item.low);
-    const x = pad.left + idx * candleSpace + candleSpace / 2;
-    const yHigh = pad.top + chartHeight - ((high - minVal) / range) * chartHeight;
-    const yLow = pad.top + chartHeight - ((low - minVal) / range) * chartHeight;
-    const yOpen = pad.top + chartHeight - ((open - minVal) / range) * chartHeight;
-    const yClose = pad.top + chartHeight - ((close - minVal) / range) * chartHeight;
-    const up = close >= open;
-    ctx.strokeStyle = up ? chartPalette.up : chartPalette.down;
-    ctx.fillStyle = up ? chartPalette.up : chartPalette.down;
-    ctx.beginPath();
-    ctx.moveTo(x, yHigh);
-    ctx.lineTo(x, yLow);
-    ctx.stroke();
-    const top = Math.min(yOpen, yClose);
-    const bodyHeight = Math.max(1.5, Math.abs(yClose - yOpen));
-    ctx.fillRect(x - candleWidth / 2, top, candleWidth, bodyHeight);
-    return {
-      date: item.date || "",
-      open,
-      close,
-      high,
-      low,
-      volume: toNum(item.volume),
-      x,
-      bodyTop: top,
-      bodyHeight,
-      up
-    };
-  });
-
-  if (chartState) {
-    chartState.candles = candlePoints;
-    chartState.bounds = {
-      left: pad.left,
-      right: width - pad.right,
-      top: pad.top,
-      bottom: height - pad.bottom
-    };
-    chartState.draw = () => drawCandlestickChart(canvas, candles);
-    if (chartState.activeIndex >= candlePoints.length) {
-      chartState.activeIndex = -1;
-    }
-  }
-
-  const activeCandle = chartState && chartState.activeIndex >= 0 ? candlePoints[chartState.activeIndex] : null;
-  if (activeCandle) {
-    ctx.save();
-    ctx.setLineDash([5, 5]);
-    ctx.strokeStyle = chartPalette.candleGuide;
-    ctx.beginPath();
-    ctx.moveTo(activeCandle.x, pad.top);
-    ctx.lineTo(activeCandle.x, height - pad.bottom);
-    ctx.stroke();
-    ctx.restore();
-
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = activeCandle.up ? chartPalette.up : chartPalette.down;
-    ctx.strokeRect(
-      activeCandle.x - candleWidth / 2 - 2,
-      activeCandle.bodyTop - 2,
-      candleWidth + 4,
-      activeCandle.bodyHeight + 4
-    );
-  } else if (chartState) {
-    hideChartTooltip(chartState);
-  }
-
-  const first = sample[0];
-  const last = sample[sample.length - 1];
-  ctx.font = compact ? "10px Space Grotesk" : "12px Space Grotesk";
-  ctx.fillStyle = chartPalette.axisStrong;
-  ctx.fillText(formatLineChartAxisLabel(first.date || ""), pad.left, height - 6);
-  const lastLabel = last.date || "";
-  const lastLabelText = formatLineChartAxisLabel(lastLabel);
-  const lastLabelWidth = ctx.measureText(lastLabelText).width;
-  ctx.fillText(lastLabelText, Math.max(pad.left, width - pad.right - lastLabelWidth), height - 6);
-  if (sample.length > 2) {
-    const mid = sample[Math.floor(sample.length / 2)];
-    const midText = formatLineChartAxisLabel(mid.date || "");
-    const midWidth = ctx.measureText(midText).width;
-    const midX = pad.left + chartWidth / 2 - midWidth / 2;
-    ctx.fillText(midText, Math.max(pad.left, Math.min(midX, width - pad.right - midWidth)), height - 6);
-  }
+  return uiModules.charts.drawCandlestickChart(canvas, candles);
 }
 
 function renderTable(container, headers, rows) {
@@ -11146,6 +9203,10 @@ if (typeof globalThis !== "undefined" && globalThis.__MYFUND_ENABLE_TEST_HOOKS__
     setDom(partialDom) {
       Object.assign(dom, partialDom || {});
     },
+    wireUiModules,
+    buildReport,
+    onTaxSubmit,
+    REPORT_FEATURES,
     getEditingState() {
       return { ...editingState };
     },
