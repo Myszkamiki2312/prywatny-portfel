@@ -5,6 +5,7 @@ import path from "node:path";
 import vm from "node:vm";
 
 import { filterOperations } from "../frontend/operations.js";
+import { wireModules } from "./modules.js";
 
 const APP_PATH = path.resolve(process.cwd(), "app.js");
 
@@ -168,6 +169,7 @@ function createAppHarness() {
 
   const hooks = context.__MYFUND_TEST__;
   assert.ok(hooks, "Test hooks are not available.");
+  wireModules(hooks);
   hooks.disableRendering();
 
   return {
