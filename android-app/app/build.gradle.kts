@@ -71,6 +71,8 @@ android {
 dependencies {
     // Tax and option calculations, pinned against the backend by tests/fixtures/tax-spec.json.
     implementation(project(":tax"))
+    // Broker CSV import, pinned against the backend by tests/fixtures/importer-spec.json.
+    implementation(project(":importers"))
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")

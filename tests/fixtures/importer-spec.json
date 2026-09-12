@@ -1,0 +1,547 @@
+{
+  "version": 1,
+  "description": "Broker CSV import contract shared by backend/importers.py and the Kotlin :importers module. Each case is a real export shape; 'expected' is asserted by tests/test_importer_spec.py and android-app/importers/src/test/.../ImporterSpecTest.kt. Operations are compared by resolved names and tickers, never by generated ids.",
+  "baseCurrency": "PLN",
+  "cases": [
+    {
+      "name": "generic-clean-buy",
+      "why": "Baseline: the layout the app itself exports.",
+      "broker": "generic",
+      "csv": "date;type;ticker;quantity;price;fee;currency\n2026-03-01;Kupno;CDR;10;100;1,50;PLN\n",
+      "portfolios": [
+        {
+          "id": "ptf_1",
+          "name": "Glowny"
+        }
+      ],
+      "accounts": [
+        {
+          "id": "acc_1",
+          "name": "Konto"
+        }
+      ],
+      "assets": [],
+      "options": {
+        "portfolioId": "ptf_1",
+        "accountId": "acc_1"
+      },
+      "expected": {
+        "rowCount": 1,
+        "importedCount": 1,
+        "created": {
+          "assets": 1,
+          "accounts": 0,
+          "portfolios": 0
+        },
+        "operations": [
+          {
+            "date": "2026-03-01",
+            "type": "Kupno waloru",
+            "portfolio": "Glowny",
+            "account": "Konto",
+            "assetTicker": "CDR",
+            "targetAssetTicker": "",
+            "quantity": 10.0,
+            "targetQuantity": 0.0,
+            "price": 100.0,
+            "amount": 1000.0,
+            "fee": 1.5,
+            "currency": "PLN",
+            "tags": [],
+            "note": ""
+          }
+        ]
+      }
+    },
+    {
+      "name": "generic-preamble-and-polish-headers",
+      "why": "A preamble pushes the header off line 0, and the type column is named in Polish. The phone read line 0 as the header and had no alias for Rodzaj, so this file imported nothing.",
+      "broker": "generic",
+      "csv": "Raport transakcji\nKlient: 12345\n\nData;Rodzaj;Instrument;Ilosc;Cena\n2026-03-01;Kupno;CDR;10;100\n",
+      "portfolios": [
+        {
+          "id": "ptf_1",
+          "name": "Glowny"
+        }
+      ],
+      "accounts": [
+        {
+          "id": "acc_1",
+          "name": "Konto"
+        }
+      ],
+      "assets": [],
+      "options": {
+        "portfolioId": "ptf_1",
+        "accountId": "acc_1"
+      },
+      "expected": {
+        "rowCount": 1,
+        "importedCount": 1,
+        "created": {
+          "assets": 1,
+          "accounts": 0,
+          "portfolios": 0
+        },
+        "operations": [
+          {
+            "date": "2026-03-01",
+            "type": "Kupno waloru",
+            "portfolio": "Glowny",
+            "account": "Konto",
+            "assetTicker": "CDR",
+            "targetAssetTicker": "",
+            "quantity": 10.0,
+            "targetQuantity": 0.0,
+            "price": 100.0,
+            "amount": 1000.0,
+            "fee": 0.0,
+            "currency": "PLN",
+            "tags": [],
+            "note": ""
+          }
+        ]
+      }
+    },
+    {
+      "name": "generic-per-row-portfolio",
+      "why": "A file may name a different portfolio and account on each row. The phone resolved both once for the whole file, so every operation landed in the same portfolio.",
+      "broker": "generic",
+      "csv": "date;type;ticker;quantity;price;portfolio;account\n2026-03-04;Kupno;PKN;4;60;Emerytura;IKE\n2026-03-04;Kupno;PKN;2;61;;\n",
+      "portfolios": [
+        {
+          "id": "ptf_1",
+          "name": "Glowny"
+        },
+        {
+          "id": "ptf_2",
+          "name": "Emerytura"
+        }
+      ],
+      "accounts": [
+        {
+          "id": "acc_1",
+          "name": "Konto"
+        },
+        {
+          "id": "acc_2",
+          "name": "IKE"
+        }
+      ],
+      "assets": [],
+      "options": {
+        "portfolioId": "ptf_1",
+        "accountId": "acc_1"
+      },
+      "expected": {
+        "rowCount": 2,
+        "importedCount": 2,
+        "created": {
+          "assets": 1,
+          "accounts": 0,
+          "portfolios": 0
+        },
+        "operations": [
+          {
+            "date": "2026-03-04",
+            "type": "Kupno waloru",
+            "portfolio": "Emerytura",
+            "account": "IKE",
+            "assetTicker": "PKN",
+            "targetAssetTicker": "",
+            "quantity": 4.0,
+            "targetQuantity": 0.0,
+            "price": 60.0,
+            "amount": 240.0,
+            "fee": 0.0,
+            "currency": "PLN",
+            "tags": [],
+            "note": ""
+          },
+          {
+            "date": "2026-03-04",
+            "type": "Kupno waloru",
+            "portfolio": "Glowny",
+            "account": "Konto",
+            "assetTicker": "PKN",
+            "targetAssetTicker": "",
+            "quantity": 2.0,
+            "targetQuantity": 0.0,
+            "price": 61.0,
+            "amount": 122.0,
+            "fee": 0.0,
+            "currency": "PLN",
+            "tags": [],
+            "note": ""
+          }
+        ]
+      }
+    },
+    {
+      "name": "generic-unknown-type",
+      "why": "An unrecognised operation name falls back to 'Import operacji'. The phone fell back to 'Operacja gotowkowa', which moves cash that never moved.",
+      "broker": "generic",
+      "csv": "date;type;ticker;quantity;price\n2026-03-05;Split akcji;PKN;0;0\n",
+      "portfolios": [
+        {
+          "id": "ptf_1",
+          "name": "Glowny"
+        }
+      ],
+      "accounts": [
+        {
+          "id": "acc_1",
+          "name": "Konto"
+        }
+      ],
+      "assets": [],
+      "options": {
+        "portfolioId": "ptf_1",
+        "accountId": "acc_1"
+      },
+      "expected": {
+        "rowCount": 1,
+        "importedCount": 1,
+        "created": {
+          "assets": 1,
+          "accounts": 0,
+          "portfolios": 0
+        },
+        "operations": [
+          {
+            "date": "2026-03-05",
+            "type": "Import operacji",
+            "portfolio": "Glowny",
+            "account": "Konto",
+            "assetTicker": "PKN",
+            "targetAssetTicker": "",
+            "quantity": 0.0,
+            "targetQuantity": 0.0,
+            "price": 0.0,
+            "amount": 0.0,
+            "fee": 0.0,
+            "currency": "PLN",
+            "tags": [],
+            "note": ""
+          }
+        ]
+      }
+    },
+    {
+      "name": "generic-european-numbers-and-summary-row",
+      "why": "European thousands and decimal separators, plus a trailing total line that is not a transaction.",
+      "broker": "generic",
+      "csv": "date;type;ticker;quantity;price;amount\n2026-03-06;Kupno;KGH;10;1.234,56;12345,60\nSuma;;;;;\n",
+      "portfolios": [
+        {
+          "id": "ptf_1",
+          "name": "Glowny"
+        }
+      ],
+      "accounts": [
+        {
+          "id": "acc_1",
+          "name": "Konto"
+        }
+      ],
+      "assets": [],
+      "options": {
+        "portfolioId": "ptf_1",
+        "accountId": "acc_1"
+      },
+      "expected": {
+        "rowCount": 1,
+        "importedCount": 1,
+        "created": {
+          "assets": 1,
+          "accounts": 0,
+          "portfolios": 0
+        },
+        "operations": [
+          {
+            "date": "2026-03-06",
+            "type": "Kupno waloru",
+            "portfolio": "Glowny",
+            "account": "Konto",
+            "assetTicker": "KGH",
+            "targetAssetTicker": "",
+            "quantity": 10.0,
+            "targetQuantity": 0.0,
+            "price": 1234.56,
+            "amount": 12345.6,
+            "fee": 0.0,
+            "currency": "PLN",
+            "tags": [],
+            "note": ""
+          }
+        ]
+      }
+    },
+    {
+      "name": "xtb-size-and-price-in-comment",
+      "why": "XTB omits the volume and price columns and encodes both in the comment.",
+      "broker": "xtb",
+      "csv": "Time;Symbol;Type;Comment;Commission;Profit;Currency\n2026-03-03 10:00:00;CDR.PL;Stocks sell;CLOSE SELL 3 @ 150,50;-0,80;120,00;PLN\n",
+      "portfolios": [
+        {
+          "id": "ptf_1",
+          "name": "Glowny"
+        }
+      ],
+      "accounts": [
+        {
+          "id": "acc_1",
+          "name": "Konto"
+        }
+      ],
+      "assets": [],
+      "options": {
+        "portfolioId": "ptf_1",
+        "accountId": "acc_1"
+      },
+      "expected": {
+        "rowCount": 1,
+        "importedCount": 1,
+        "created": {
+          "assets": 1,
+          "accounts": 0,
+          "portfolios": 0
+        },
+        "operations": [
+          {
+            "date": "2026-03-03",
+            "type": "Sprzedaż waloru",
+            "portfolio": "Glowny",
+            "account": "Konto",
+            "assetTicker": "CDR.PL",
+            "targetAssetTicker": "",
+            "quantity": 3.0,
+            "targetQuantity": 0.0,
+            "price": 150.5,
+            "amount": 451.5,
+            "fee": -0.8,
+            "currency": "PLN",
+            "tags": [
+              "xtb"
+            ],
+            "note": "CLOSE SELL 3 @ 150,50"
+          }
+        ]
+      }
+    },
+    {
+      "name": "mbank-polish-columns",
+      "why": "mBank names the kind column 'Rodzaj operacji' and ships no amount, so it is derived from quantity and price.",
+      "broker": "mbank",
+      "csv": "Data;Rodzaj operacji;Instrument;Ilosc;Cena;Prowizja;Waluta\n2026-03-07;Kupno;ALE;20;30,50;1,90;PLN\n",
+      "portfolios": [
+        {
+          "id": "ptf_1",
+          "name": "Glowny"
+        }
+      ],
+      "accounts": [
+        {
+          "id": "acc_1",
+          "name": "Konto"
+        }
+      ],
+      "assets": [],
+      "options": {
+        "portfolioId": "ptf_1",
+        "accountId": "acc_1"
+      },
+      "expected": {
+        "rowCount": 1,
+        "importedCount": 1,
+        "created": {
+          "assets": 1,
+          "accounts": 0,
+          "portfolios": 0
+        },
+        "operations": [
+          {
+            "date": "2026-03-07",
+            "type": "Kupno waloru",
+            "portfolio": "Glowny",
+            "account": "Konto",
+            "assetTicker": "ALE",
+            "targetAssetTicker": "",
+            "quantity": 20.0,
+            "targetQuantity": 0.0,
+            "price": 30.5,
+            "amount": 610.0,
+            "fee": 1.9,
+            "currency": "PLN",
+            "tags": [
+              "mbank"
+            ],
+            "note": ""
+          }
+        ]
+      }
+    },
+    {
+      "name": "degiro-preamble-product-name-and-sign",
+      "why": "A preamble, a dd/MM/yyyy date the phone could not parse, no verb column at all, and the ticker only inside the product name. The side comes from the sign of the quantity.",
+      "broker": "degiro",
+      "csv": "Report of transactions\nAccount: 987654\n\nDate,Product,ISIN,Quantity,Price,Local value,Currency,Costs\n01/03/2026,Apple Inc (AAPL),US0378331005,-5,180.50,-902.50,USD,-1.20\n",
+      "portfolios": [
+        {
+          "id": "ptf_1",
+          "name": "Glowny"
+        }
+      ],
+      "accounts": [
+        {
+          "id": "acc_1",
+          "name": "Konto"
+        }
+      ],
+      "assets": [],
+      "options": {
+        "portfolioId": "ptf_1",
+        "accountId": "acc_1"
+      },
+      "expected": {
+        "rowCount": 1,
+        "importedCount": 1,
+        "created": {
+          "assets": 1,
+          "accounts": 0,
+          "portfolios": 0
+        },
+        "operations": [
+          {
+            "date": "2026-03-01",
+            "type": "Sprzedaż waloru",
+            "portfolio": "Glowny",
+            "account": "Konto",
+            "assetTicker": "AAPL",
+            "targetAssetTicker": "",
+            "quantity": 5.0,
+            "targetQuantity": 0.0,
+            "price": 180.5,
+            "amount": 902.5,
+            "fee": 1.2,
+            "currency": "USD",
+            "tags": [
+              "degiro"
+            ],
+            "note": ""
+          }
+        ]
+      }
+    },
+    {
+      "name": "ibkr-punctuated-headers",
+      "why": "IBKR headers carry punctuation: 'Date/Time', 'T. Price', 'Comm/Fee'. The phone stripped only spaces, underscores and hyphens, so none of these columns were visible to it.",
+      "broker": "ibkr",
+      "csv": "Symbol,Date/Time,Quantity,T. Price,Proceeds,Comm/Fee,Currency\nMSFT,2026-03-02 15:30:00,10,410.25,-4102.50,-1.05,USD\n",
+      "portfolios": [
+        {
+          "id": "ptf_1",
+          "name": "Glowny"
+        }
+      ],
+      "accounts": [
+        {
+          "id": "acc_1",
+          "name": "Konto"
+        }
+      ],
+      "assets": [],
+      "options": {
+        "portfolioId": "ptf_1",
+        "accountId": "acc_1"
+      },
+      "expected": {
+        "rowCount": 1,
+        "importedCount": 1,
+        "created": {
+          "assets": 1,
+          "accounts": 0,
+          "portfolios": 0
+        },
+        "operations": [
+          {
+            "date": "2026-03-02",
+            "type": "Kupno waloru",
+            "portfolio": "Glowny",
+            "account": "Konto",
+            "assetTicker": "MSFT",
+            "targetAssetTicker": "",
+            "quantity": 10.0,
+            "targetQuantity": 0.0,
+            "price": 410.25,
+            "amount": 4102.5,
+            "fee": 1.05,
+            "currency": "USD",
+            "tags": [
+              "ibkr"
+            ],
+            "note": ""
+          }
+        ]
+      }
+    },
+    {
+      "name": "bossa-sale-into-existing-asset",
+      "why": "BOSSA names the instrument column 'Walor' and reports the sale value as negative. The asset already exists, so none is created.",
+      "broker": "bossa",
+      "csv": "Data;Rodzaj;Walor;Ilosc;Kurs;Wartosc;Prowizja;Waluta\n2026-03-08;Sprzedaz;PZU;15;45,20;-678,00;2,50;PLN\n",
+      "portfolios": [
+        {
+          "id": "ptf_1",
+          "name": "Glowny"
+        }
+      ],
+      "accounts": [
+        {
+          "id": "acc_1",
+          "name": "Konto"
+        }
+      ],
+      "assets": [
+        {
+          "id": "ast_1",
+          "ticker": "PZU",
+          "name": "PZU"
+        }
+      ],
+      "options": {
+        "portfolioId": "ptf_1",
+        "accountId": "acc_1"
+      },
+      "expected": {
+        "rowCount": 1,
+        "importedCount": 1,
+        "created": {
+          "assets": 0,
+          "accounts": 0,
+          "portfolios": 0
+        },
+        "operations": [
+          {
+            "date": "2026-03-08",
+            "type": "Sprzedaż waloru",
+            "portfolio": "Glowny",
+            "account": "Konto",
+            "assetTicker": "PZU",
+            "targetAssetTicker": "",
+            "quantity": 15.0,
+            "targetQuantity": 0.0,
+            "price": 45.2,
+            "amount": 678.0,
+            "fee": 2.5,
+            "currency": "PLN",
+            "tags": [
+              "bossa"
+            ],
+            "note": ""
+          }
+        ]
+      }
+    }
+  ]
+}

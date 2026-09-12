@@ -6,6 +6,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import pl.prywatnyportfel.importers.AccountRow
+import pl.prywatnyportfel.importers.AssetRow
+import pl.prywatnyportfel.importers.BrokerImport
+import pl.prywatnyportfel.importers.ImportWorkspace
+import pl.prywatnyportfel.importers.PortfolioRow
 import pl.prywatnyportfel.tax.FxConversion
 import pl.prywatnyportfel.tax.TaxCalculations
 import java.io.File
@@ -115,32 +120,34 @@ class OfflineRepository(private val context: Context) {
                     )
                 }
 
-                // Only what this module can actually parse faithfully is offered. Listing the
-                // broker-specific formats here let the user pick one offline and get operations
-                // that quietly disagreed with the server's import of the same file.
+                // Every broker the shared :importers module maps, which is every broker the server
+                // maps: both run the same column knowledge, pinned by tests/fixtures/importer-spec.json.
                 method == "GET" && path == "/import/brokers" -> ok(
                     JSONObject().put(
                         "brokers",
-                        JSONArray()
-                            .put(JSONObject().put("id", "generic").put("name", "Generic CSV"))
+                        JSONArray().apply {
+                            BrokerImport.listBrokers().forEach { spec ->
+                                put(
+                                    JSONObject()
+                                        .put("id", spec.id)
+                                        .put("name", spec.name)
+                                        .put("description", spec.description)
+                                        .put("requiredHeaders", JSONArray(spec.requiredHeaders))
+                                )
+                            }
+                        }
                     )
                 )
 
                 method == "POST" && path.startsWith("/import/broker/") -> {
                     val broker = path.removePrefix("/import/broker/")
-                    // Offline import understands the generic layout only. The five broker-specific
-                    // formats need the per-broker mappers in backend/importers.py — 449 lines of
-                    // column knowledge this module does not have. Parsing them here with generic
-                    // guesses produced operations that silently differed from the server's, which
-                    // is worse than refusing: a wrong import corrupts the portfolio quietly.
-                    if (broker.lowercase() != "generic") {
-                        badRequest(
-                            "Import formatu \"$broker\" wymaga połączenia z serwerem. " +
-                                "Offline dostępny jest import uniwersalny (Generic CSV)."
-                        )
-                    } else {
-                        val payload = safeJsonObject(bodyText)
+                    val payload = safeJsonObject(bodyText)
+                    try {
                         ok(JSONObject().put("import", importBrokerCsv(broker, payload)))
+                    } catch (error: IllegalArgumentException) {
+                        // An unknown broker, or a file missing the headers that broker requires.
+                        // The server answers 400 for both.
+                        badRequest(error.message ?: "Nieprawidłowy plik importu.")
                     }
                 }
 
@@ -1060,267 +1067,79 @@ class OfflineRepository(private val context: Context) {
         return out
     }
 
+    /**
+     * Adapts the stored JSON state to the shared :importers module and writes back what it made.
+     *
+     * All column knowledge lives there, beside the Python it has to match. This function only moves
+     * data across the JSON boundary — the previous version reimplemented the mapping here and
+     * disagreed with the server on dates, on punctuated headers, on which portfolio a row belongs
+     * to and on what an unrecognised operation is.
+     */
     private suspend fun importBrokerCsv(broker: String, payload: JSONObject): JSONObject {
-        val csv = payload.optString("csv", "")
-        val fileName = payload.optString("fileName", "")
-        val rows = parseCsvRows(csv)
         val state = loadStateObject()
         val options = payload.optJSONObject("options") ?: JSONObject()
-        val portfolios = state.optJSONArray("portfolios") ?: JSONArray()
-        val accounts = state.optJSONArray("accounts") ?: JSONArray()
-        val assets = state.optJSONArray("assets") ?: JSONArray()
-        val operations = state.optJSONArray("operations") ?: JSONArray()
+        val portfolios = state.optJSONArray("portfolios") ?: JSONArray().also { state.put("portfolios", it) }
+        val accounts = state.optJSONArray("accounts") ?: JSONArray().also { state.put("accounts", it) }
+        val assets = state.optJSONArray("assets") ?: JSONArray().also { state.put("assets", it) }
+        val operations = state.optJSONArray("operations") ?: JSONArray().also { state.put("operations", it) }
         val baseCurrency = state.optJSONObject("meta")?.optString("baseCurrency", "PLN") ?: "PLN"
-        val portfolioId = ensurePortfolioId(portfolios, options.optString("portfolioId", ""))
-        val accountId = ensureAccountId(accounts, options.optString("accountId", ""), baseCurrency)
-        var imported = 0
-        var skipped = 0
-        val errors = JSONArray()
 
-        rows.forEachIndexed { index, row ->
-            try {
-                val ticker = pickValue(row, "ticker", "symbol", "asset", "walor", "instrument").uppercase()
-                val typeText = pickValue(row, "type", "typ", "operation", "transaction", "action")
-                var opType = detectOperationType(typeText, ticker, pickNumber(row, "quantity", "qty", "ilosc", "quantitydocelowa"))
-                if (opType == "unknown") {
-                    opType = "Operacja gotówkowa"
-                }
-                val date = normalizeDateText(pickValue(row, "date", "data", "tradeDate", "executionDate"))
-                var quantity = kotlin.math.abs(pickNumber(row, "quantity", "qty", "ilosc"))
-                val price = pickNumber(row, "price", "cena", "unitprice")
-                val fee = pickNumber(row, "fee", "commission", "prowizja", "koszt")
-                var amount = pickNumber(row, "amount", "kwota", "value", "netamount")
-                if (amount == 0.0 && quantity > 0.0 && price > 0.0) {
-                    amount = quantity * price
-                }
-                if (opType == "Sprzedaż waloru" && quantity <= 0.0) {
-                    quantity = kotlin.math.abs(quantity)
-                }
-                val currency = pickValue(row, "currency", "waluta").ifBlank { baseCurrency }
-                val note = pickValue(row, "note", "notatka", "description", "opis")
-                val tags = toJsonTags(pickValue(row, "tags", "tagi"))
+        var sequence = 0
+        val workspace = ImportWorkspace(
+            baseCurrency = baseCurrency,
+            portfolios = portfolios.objects().map { PortfolioRow(it.optString("id"), it.optString("name")) },
+            accounts = accounts.objects().map { AccountRow(it.optString("id"), it.optString("name")) },
+            assets = assets.objects().map {
+                AssetRow(it.optString("id"), it.optString("ticker"), it.optString("name"))
+            },
+            idFactory = { prefix ->
+                sequence += 1
+                "$prefix-${System.currentTimeMillis()}-$sequence"
+            },
+            timestamp = ::nowIso,
+        )
 
-                var assetId = ""
-                if (opType == "Kupno waloru" || opType == "Sprzedaż waloru") {
-                    if (ticker.isBlank()) {
-                        skipped += 1
-                        errors.put(JSONObject().put("row", index + 2).put("message", "Brak tickera dla transakcji waloru."))
-                        return@forEachIndexed
-                    }
-                    assetId = ensureAssetId(assets, ticker, currency)
-                }
+        val result = BrokerImport.importCsv(
+            broker = broker,
+            csvText = payload.optString("csv", ""),
+            workspace = workspace,
+            preferredPortfolioId = options.optString("portfolioId", ""),
+            preferredPortfolioName = options.optString("portfolioName", ""),
+            preferredAccountId = options.optString("accountId", ""),
+            preferredAccountName = options.optString("accountName", ""),
+        )
 
-                operations.put(
-                    JSONObject()
-                        .put("id", "op-${System.currentTimeMillis()}-$index")
-                        .put("date", date)
-                        .put("type", opType)
-                        .put("portfolioId", portfolioId)
-                        .put("accountId", accountId)
-                        .put("assetId", assetId)
-                        .put("targetAssetId", "")
-                        .put("quantity", round6(quantity))
-                        .put("targetQuantity", 0.0)
-                        .put("price", round6(price))
-                        .put("amount", round2(amount))
-                        .put("fee", round2(fee))
-                        .put("currency", currency)
-                        .put("tags", tags)
-                        .put("note", note)
-                        .put("createdAt", nowIso())
-                )
-                imported += 1
-            } catch (error: Exception) {
-                skipped += 1
-                errors.put(JSONObject().put("row", index + 2).put("message", error.message ?: "Import error"))
+        workspace.createdPortfolios.forEach { portfolios.put(JSONObject(it)) }
+        workspace.createdAccounts.forEach { accounts.put(JSONObject(it)) }
+        workspace.createdAssets.forEach { assets.put(JSONObject(it)) }
+        if (workspace.renamedAssets.isNotEmpty()) {
+            // An existing asset whose name was only a placeholder ticker gets the real one.
+            assets.objects().forEach { row ->
+                workspace.renamedAssets[row.optString("id")]?.let { row.put("name", it) }
             }
         }
+        result.operations.forEach { operations.put(JSONObject(it.toStateMap())) }
         persistStateObject(state)
+
         return JSONObject()
-            .put("broker", broker)
-            .put("fileName", fileName)
-            .put("rowCount", rows.size)
-            .put("importedCount", imported)
-            .put("skippedCount", skipped)
-            .put("errors", errors)
+            .put("broker", result.broker)
+            .put("fileName", payload.optString("fileName", ""))
+            .put("rowCount", result.rowCount)
+            .put("importedCount", result.importedCount)
+            .put("skippedCount", result.rowCount - result.importedCount)
+            .put(
+                "created",
+                JSONObject()
+                    .put("assets", result.created["assets"] ?: 0)
+                    .put("accounts", result.created["accounts"] ?: 0)
+                    .put("portfolios", result.created["portfolios"] ?: 0)
+            )
+            .put("errors", JSONArray())
             .put("offline", true)
     }
 
-    private fun parseCsvRows(csv: String): List<Map<String, String>> {
-        val lines = csv
-            .replace("\r\n", "\n")
-            .replace('\r', '\n')
-            .split('\n')
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-        if (lines.isEmpty()) {
-            return emptyList()
-        }
-        val delimiter = if (lines.first().count { it == ';' } > lines.first().count { it == ',' }) ';' else ','
-        val header = parseCsvLine(lines.first(), delimiter).map { normalizeKey(it) }
-        if (header.isEmpty()) {
-            return emptyList()
-        }
-        val output = mutableListOf<Map<String, String>>()
-        for (i in 1 until lines.size) {
-            val fields = parseCsvLine(lines[i], delimiter)
-            val row = HashMap<String, String>()
-            for (idx in header.indices) {
-                val key = header[idx]
-                row[key] = fields.getOrNull(idx)?.trim().orEmpty()
-            }
-            output += row
-        }
-        return output
-    }
-
-    private fun parseCsvLine(line: String, delimiter: Char): List<String> {
-        val output = mutableListOf<String>()
-        val current = StringBuilder()
-        var inQuotes = false
-        var i = 0
-        while (i < line.length) {
-            val ch = line[i]
-            if (ch == '"') {
-                if (inQuotes && i + 1 < line.length && line[i + 1] == '"') {
-                    current.append('"')
-                    i += 1
-                } else {
-                    inQuotes = !inQuotes
-                }
-            } else if (ch == delimiter && !inQuotes) {
-                output += current.toString()
-                current.setLength(0)
-            } else {
-                current.append(ch)
-            }
-            i += 1
-        }
-        output += current.toString()
-        return output
-    }
-
-    private fun pickValue(row: Map<String, String>, vararg keys: String): String {
-        for (raw in keys) {
-            val key = normalizeKey(raw)
-            val value = row[key]?.trim().orEmpty()
-            if (value.isNotBlank()) {
-                return value
-            }
-        }
-        return ""
-    }
-
-    private fun pickNumber(row: Map<String, String>, vararg keys: String): Double {
-        return num(pickValue(row, *keys))
-    }
-
-    private fun ensurePortfolioId(portfolios: JSONArray, requestedId: String): String {
-        if (requestedId.isNotBlank()) {
-            for (i in 0 until portfolios.length()) {
-                val row = portfolios.optJSONObject(i) ?: continue
-                if (row.optString("id", "") == requestedId) {
-                    return requestedId
-                }
-            }
-        }
-        if (portfolios.length() > 0) {
-            return portfolios.optJSONObject(0)?.optString("id", "ptf-main") ?: "ptf-main"
-        }
-        val id = "ptf-${System.currentTimeMillis()}"
-        portfolios.put(
-            JSONObject()
-                .put("id", id)
-                .put("name", "Główny")
-                .put("currency", "PLN")
-                .put("benchmark", "WIG20")
-                .put("goal", "Import")
-                .put("parentId", "")
-                .put("twinOf", "")
-                .put("groupName", "")
-                .put("isPublic", false)
-                .put("createdAt", nowIso())
-        )
-        return id
-    }
-
-    private fun ensureAccountId(accounts: JSONArray, requestedId: String, baseCurrency: String): String {
-        if (requestedId.isNotBlank()) {
-            for (i in 0 until accounts.length()) {
-                val row = accounts.optJSONObject(i) ?: continue
-                if (row.optString("id", "") == requestedId) {
-                    return requestedId
-                }
-            }
-        }
-        if (accounts.length() > 0) {
-            return accounts.optJSONObject(0)?.optString("id", "acc-main") ?: "acc-main"
-        }
-        val id = "acc-${System.currentTimeMillis()}"
-        accounts.put(
-            JSONObject()
-                .put("id", id)
-                .put("name", "Konto import")
-                .put("type", "Broker")
-                .put("currency", baseCurrency)
-                .put("createdAt", nowIso())
-        )
-        return id
-    }
-
-    private fun ensureAssetId(assets: JSONArray, ticker: String, currency: String): String {
-        val normalizedTicker = ticker.uppercase()
-        for (i in 0 until assets.length()) {
-            val row = assets.optJSONObject(i) ?: continue
-            if (row.optString("ticker", "").uppercase() == normalizedTicker) {
-                return row.optString("id", "")
-            }
-        }
-        val id = "ast-${System.currentTimeMillis()}-${assets.length()}"
-        assets.put(
-            JSONObject()
-                .put("id", id)
-                .put("ticker", normalizedTicker)
-                .put("name", normalizedTicker)
-                .put("type", "Akcja")
-                .put("currency", currency)
-                .put("currentPrice", 0.0)
-                .put("risk", 5)
-                .put("sector", "")
-                .put("industry", "")
-                .put("tags", JSONArray())
-                .put("benchmark", "")
-                .put("createdAt", nowIso())
-        )
-        return id
-    }
-
-    private fun detectOperationType(typeText: String, ticker: String, quantity: Double): String {
-        val type = normalizeKey(typeText)
-        return when {
-            type.contains("kupno") || type.contains("buy") -> "Kupno waloru"
-            type.contains("sprzed") || type.contains("sell") -> "Sprzedaż waloru"
-            type.contains("dywidend") || type.contains("dividend") -> "Dywidenda"
-            type.contains("odsetk") || type.contains("interest") -> "Odsetki"
-            type.contains("fee") || type.contains("prowiz") || type.contains("commission") -> "Prowizja"
-            type.contains("gotowk") || type.contains("cash") || type.contains("deposit") || type.contains("withdraw") -> "Operacja gotówkowa"
-            ticker.isNotBlank() && quantity > 0.0 -> "Kupno waloru"
-            ticker.isNotBlank() && quantity < 0.0 -> "Sprzedaż waloru"
-            else -> "unknown"
-        }
-    }
-
-    private fun toJsonTags(raw: String): JSONArray {
-        val tags = raw.split(',', ';', '|').map { it.trim() }.filter { it.isNotBlank() }
-        val out = JSONArray()
-        tags.forEach { out.put(it) }
-        return out
-    }
-
-    private fun normalizeDateText(raw: String): String {
-        val date = parseIsoDate(raw)
-        return date?.toString() ?: todayIso()
-    }
+    private fun JSONArray.objects(): List<JSONObject> =
+        (0 until length()).mapNotNull { optJSONObject(it) }
 
     private fun parseIsoDate(raw: String): LocalDate? {
         val text = raw.trim()

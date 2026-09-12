@@ -33,8 +33,9 @@ jobs:
       - name: Run frontend edit-flow tests
         run: node --test frontend_tests/*.test.js
 
-      # :tax is plain JVM Kotlin, so this needs no Android SDK. It checks the phone's copy of the
-      # tax calculations against the same fixture the Python tests use.
-      - name: Run Kotlin tax-spec tests
+      # :tax and :importers are plain JVM Kotlin, so these need no Android SDK. They check the
+      # phone's copy of the tax calculations and of the broker import against the same fixtures the
+      # Python tests above use.
+      - name: Run Kotlin shared-spec tests
         working-directory: android-app
-        run: ./gradlew :tax:test --console=plain
+        run: ./gradlew :tax:test :importers:test --console=plain
