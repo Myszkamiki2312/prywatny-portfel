@@ -333,7 +333,10 @@ class OfflineRepository(private val context: Context) {
                 method == "GET" && path == "/tools/public-portfolios" -> ok(publicPortfolios())
                 method == "POST" && path == "/tools/public-portfolios/clone" -> ok(clonePublicPortfolio(safeJsonObject(bodyText)))
 
-                path.startsWith("/tools/") -> ok(JSONObject())
+                // No blanket 200 for /tools/*. Nothing the web calls lands here today — every
+                // requested path has its own branch above — but an endpoint added later would
+                // otherwise receive an empty object that reads as a valid, empty answer instead of
+                // a missing feature, and the caller's local fallback would never run.
                 else -> notFound("Endpoint not found: $path")
             }
         } catch (error: Exception) {
