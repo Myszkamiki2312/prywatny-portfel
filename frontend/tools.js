@@ -23,7 +23,7 @@ export function scannerFiltersFromForm(deps) {
 }
 
 export async function runScanner(deps, options = {}) {
-  const { backendSync, apiRequest, localScanner, renderScannerRows, dom, updateBackendStatus, toNum, windowRef } = deps;
+  const { backendSync, apiRequest, localScanner, renderScannerRows, dom, updateBackendStatus, noteBackendFailure, toNum, windowRef } = deps;
   const silent = Boolean(options.silent);
   const filters = scannerFiltersFromForm(deps);
   filters.portfolioId = toolsPortfolioId(deps);
@@ -46,8 +46,7 @@ export async function runScanner(deps, options = {}) {
       dom.scannerInfo.textContent = `Skaner ${mode}: ${items.length} wyników`;
     }
   } catch (error) {
-    backendSync.available = false;
-    updateBackendStatus();
+    noteBackendFailure(error);
     const local = localScanner(filters);
     renderScannerRows(local);
     if (dom.scannerInfo) {
@@ -60,7 +59,7 @@ export async function runScanner(deps, options = {}) {
 }
 
 export async function refreshSignals(deps, options = {}) {
-  const { backendSync, apiRequest, localSignals, renderSignalsRows, dom, updateBackendStatus, windowRef } = deps;
+  const { backendSync, apiRequest, localSignals, renderSignalsRows, dom, updateBackendStatus, noteBackendFailure, windowRef } = deps;
   const silent = Boolean(options.silent);
   const portfolioId = toolsPortfolioId(deps);
   try {
@@ -79,8 +78,7 @@ export async function refreshSignals(deps, options = {}) {
       dom.signalsInfo.textContent = `Sygnały ${mode}: ${signals.length} pozycji`;
     }
   } catch (error) {
-    backendSync.available = false;
-    updateBackendStatus();
+    noteBackendFailure(error);
     const signals = localSignals(portfolioId);
     renderSignalsRows(signals);
     if (dom.signalsInfo) {
@@ -93,7 +91,7 @@ export async function refreshSignals(deps, options = {}) {
 }
 
 export async function refreshCalendar(deps, options = {}) {
-  const { backendSync, apiRequest, localCalendar, renderCalendarRows, dom, updateBackendStatus, formToObject, toNum, windowRef } = deps;
+  const { backendSync, apiRequest, localCalendar, renderCalendarRows, dom, updateBackendStatus, noteBackendFailure, formToObject, toNum, windowRef } = deps;
   const silent = Boolean(options.silent);
   const formData = dom.calendarForm ? formToObject(dom.calendarForm) : {};
   const days = Math.max(1, Math.min(365, Math.round(toNum(formData.days) || 60)));
@@ -114,8 +112,7 @@ export async function refreshCalendar(deps, options = {}) {
       dom.calendarInfo.textContent = `Kalendarium ${mode}: ${events.length} wydarzeń w ${days} dni`;
     }
   } catch (error) {
-    backendSync.available = false;
-    updateBackendStatus();
+    noteBackendFailure(error);
     const events = localCalendar(days, portfolioId);
     renderCalendarRows(events);
     if (dom.calendarInfo) {
@@ -128,7 +125,7 @@ export async function refreshCalendar(deps, options = {}) {
 }
 
 export async function refreshRecommendations(deps, options = {}) {
-  const { backendSync, apiRequest, localRecommendations, renderRecommendationsRows, dom, updateBackendStatus, windowRef } = deps;
+  const { backendSync, apiRequest, localRecommendations, renderRecommendationsRows, dom, updateBackendStatus, noteBackendFailure, windowRef } = deps;
   const silent = Boolean(options.silent);
   const portfolioId = toolsPortfolioId(deps);
   try {
@@ -147,8 +144,7 @@ export async function refreshRecommendations(deps, options = {}) {
       dom.recommendationsInfo.textContent = `Rekomendacje ${mode}: ${items.length}`;
     }
   } catch (error) {
-    backendSync.available = false;
-    updateBackendStatus();
+    noteBackendFailure(error);
     const items = localRecommendations(portfolioId);
     renderRecommendationsRows(items);
     if (dom.recommendationsInfo) {
@@ -175,6 +171,7 @@ export async function runAlertWorkflow(deps, options = {}) {
     setState,
     getState,
     saveState,
+    noteBackendFailure,
     windowRef
   } = deps;
   const interactive = Boolean(options.interactive);
@@ -210,8 +207,7 @@ export async function runAlertWorkflow(deps, options = {}) {
       )
     };
   } catch (error) {
-    backendSync.available = false;
-    updateBackendStatus();
+    noteBackendFailure(error);
     const payload = localAlertWorkflow();
     renderAlerts();
     renderAlertWorkflowRows(payload.history || []);
@@ -231,7 +227,7 @@ export async function runAlertWorkflow(deps, options = {}) {
 }
 
 export async function refreshAlertHistory(deps, options = {}) {
-  const { backendSync, apiRequest, localAlertHistory, renderAlertWorkflowRows, updateBackendStatus, windowRef } = deps;
+  const { backendSync, apiRequest, localAlertHistory, renderAlertWorkflowRows, updateBackendStatus, noteBackendFailure, windowRef } = deps;
   const silent = Boolean(options.silent);
   try {
     let history = [];
@@ -243,8 +239,7 @@ export async function refreshAlertHistory(deps, options = {}) {
     }
     renderAlertWorkflowRows(history);
   } catch (error) {
-    backendSync.available = false;
-    updateBackendStatus();
+    noteBackendFailure(error);
     renderAlertWorkflowRows(localAlertHistory());
     if (!silent) {
       windowRef.alert("Nie udało się pobrać historii workflow alertów z backendu.");

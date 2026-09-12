@@ -2573,6 +2573,7 @@ function toolsModuleDeps() {
     renderAlerts,
     renderAlertWorkflowRows,
     updateBackendStatus,
+    noteBackendFailure,
     formatMoney,
     normalizeState,
     saveState,
