@@ -275,5 +275,48 @@ class ResponsiveCssTests(unittest.TestCase):
         self.assertRegex(read("styles.css"), r"\.table-wrap\s*\{[^}]*overflow-x:\s*auto")
 
 
+class DesktopBundleTests(unittest.TestCase):
+    """desktop_launcher.spec names every file PyInstaller bundles, one entry at a time.
+
+    It was the third hand-maintained file list in the repository and the only one nothing checked,
+    so removing a stylesheet left a dangling entry behind and the Windows build failed at package
+    time — after the tests, the APK and Pages had all gone green. The precache list and the Pages
+    copy list are covered above; this closes the last one.
+    """
+
+    def setUp(self):
+        self.spec = read("desktop_launcher.spec")
+
+    def bundled_paths(self):
+        block = self.spec.split("datas = webview_datas + [", 1)[1].split("]", 1)[0]
+        return re.findall(r'\("([^"]+)",\s*"[^"]*"\)', block)
+
+    def test_every_bundled_path_exists(self):
+        paths = self.bundled_paths()
+        self.assertTrue(paths, "Could not read the bundle list out of the spec.")
+        for path in paths:
+            with self.subTest(path=path):
+                self.assertTrue(
+                    (ROOT / path).exists(),
+                    f"desktop_launcher.spec bundles {path}, which is not in the repository.",
+                )
+
+    def test_every_stylesheet_index_html_loads_is_bundled(self):
+        """The reverse direction: a new stylesheet that nobody adds here ships a desktop app
+        without it, which boots and renders unstyled rather than failing."""
+        referenced = re.findall(
+            r'<link[^>]+rel="stylesheet"[^>]+href="(?!https?:)([^"]+)"', read("index.html")
+        )
+        bundled = set(self.bundled_paths())
+        self.assertTrue(referenced, "index.html loads no local stylesheet at all.")
+        for asset in referenced:
+            with self.subTest(asset=asset):
+                self.assertIn(
+                    asset,
+                    bundled,
+                    f"index.html loads {asset}, but the desktop build never bundles it.",
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

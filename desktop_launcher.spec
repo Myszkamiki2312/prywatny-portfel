@@ -12,7 +12,6 @@ webview_datas = collect_data_files("webview")
 datas = webview_datas + [
     ("index.html", "."),
     ("styles.css", "."),
-    ("styles-modern.css", "."),
     ("app.js", "."),
     ("supabase-config.js", "."),
     ("frontend", "frontend"),
