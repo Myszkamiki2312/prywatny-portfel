@@ -318,5 +318,29 @@ class DesktopBundleTests(unittest.TestCase):
                 )
 
 
+class ReleaseVersionTests(unittest.TestCase):
+    """The release number lives in two places: the newest CHANGELOG.md heading and the fallback
+    version the desktop workflow stamps onto an untagged build. Nothing tied them together, so a
+    release could ship an installer labelled with the previous version and nobody would notice
+    until a user read the About box. Same shape as the file lists above — a hand-kept duplicate.
+    """
+
+    def changelog_version(self):
+        match = re.search(r"^## v(\d+\.\d+\.\d+)", read("CHANGELOG.md"), re.M)
+        self.assertIsNotNone(match, "CHANGELOG.md has no version heading at the top.")
+        return match.group(1)
+
+    def test_desktop_fallback_version_matches_the_changelog(self):
+        match = re.search(
+            r'\$versionName\s*=\s*"(\d+\.\d+\.\d+)"', read(".github/workflows/desktop-exe.yml")
+        )
+        self.assertIsNotNone(match, "desktop-exe.yml no longer declares a fallback version.")
+        self.assertEqual(
+            match.group(1),
+            self.changelog_version(),
+            "An untagged desktop build would carry a different version than the changelog claims.",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -48,7 +48,9 @@ jobs:
         shell: pwsh
         run: |
           $refName = "${env:GITHUB_REF_NAME}"
-          $versionName = "0.7.11"
+          # Fallback for an untagged build. Must match the newest heading in CHANGELOG.md;
+          # tests/test_static_config.py fails the build when the two drift apart.
+          $versionName = "0.8.0"
           if ($refName -like "v*") {
             $versionName = $refName.Substring(1)
           }

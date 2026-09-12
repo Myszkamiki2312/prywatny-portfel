@@ -1,5 +1,57 @@
 # Changelog
 
+## v0.8.0 - 2026-09-12
+
+### Security
+- Wymuszona `Content-Security-Policy` na hostowanej wersji (`script-src 'self'`) — sprawdzone wcześniej, że aplikacja nie ma żadnych inline'owych skryptów, handlerów ani `eval`.
+- Limity zapytań na nieuwierzytelnionym API: `/api/quotes/refresh` 10/min, `/api/reports/generate` 30/min, pozostałe `/api/` 120/min.
+- `.env*` trafiło do `.gitignore`, żeby lokalne poświadczenia Vercela nie wchodziły do repozytorium.
+- Kopie ratunkowe `*.backup` przestały być śledzone przez git.
+
+### Fixed
+- Notowania: podpowiedź waluty nie ginie już przy przejściu na Stooq, więc walory z GPW nie są wyceniane w dolarach.
+- Jeden nieudany endpoint nie wyłącza już całego backendu — flaga dostępności reaguje tylko na brak odpowiedzi serwera, nie na błąd pojedynczego żądania (poprawione w 11 miejscach).
+- Telefon wycenia portfel w walucie bazowej. Wcześniej 100 USD i 100 PLN pokazywało „200" zamiast około 510 zł.
+- Telefon wycenia pozycje opcyjne z liczbą kontraktów i mnożnikiem — poprzednio mnożnik 1 zamiast 100 dawał błąd stukrotny.
+- Podatki na telefonie liczą się przez wspólny moduł, a nie przez drugą kopię — zniknęło osiem rozbieżności z serwerem (zaszyta stawka krypto, ignorowany limit traktatowy, brakujące domyślne stawki dające 0%, brak ATM, zaślepka optymalizatora).
+- Nieobsługiwane ścieżki `/tools/*` w trybie offline nie odpowiadają już blankietowym 200 z pustą treścią.
+- Import brokerski przyjmuje eksporty z preambułą przed nagłówkiem (DEGIRO, IBKR) oraz pliki z polskim nagłówkiem `Rodzaj`.
+- Prowizja jest zapisywana jako wartość bezwzględna. Eksport XTB z `-0,80` **dopisywał** 80 groszy do wyniku zamiast odejmować; to samo dotyczyło importu uniwersalnego i mBanku.
+- Przełącznik motywów znów działa. Doklejona skórka nadpisywała `body[data-theme]` bezwarunkowo, więc ekran wyglądu nie zmieniał ani jednego piksela.
+- Nagłówek na telefonie i tablecie nie nachodzi już na treść. Skórka ustawiała `.topbar { height: 64px }`, a media query resetowało tylko `position`, nigdy wysokość.
+- Telefon i web renderują ten sam wygląd. Synchronizacja zasobów Androida kopiowała dwa z trzech arkuszy stylów.
+- Build Windows nie pakuje już arkusza, którego nie ma w repozytorium.
+
+### Added
+- Instalowalna powłoka PWA i przebieg dostępnościowy.
+- Moduł `:tax` — czysty JVM, testowalny bez Android SDK, trzyma obliczenia podatkowe i opcyjne wspólne z backendem.
+- Moduł `:importers` — czysty JVM, port maperów CSV sześciu brokerów pole po polu z `backend/importers.py`.
+- Motyw `xtb` jako domyślny wygląd, zdefiniowany w systemie zmiennych zamiast w osobnym arkuszu.
+- Wspólne fixtures czytane przez testy Pythona, JS i Kotlina: `tax-spec.json`, `fx-spec.json`, `ticker-alias-spec.json`, `importer-spec.json`.
+- Pośredni breakpoint tabletowy.
+- Strażnicy list plików utrzymywanych ręcznie: precache w `sw.js`, lista kopiowania Pages, `datas` w `desktop_launcher.spec` oraz zgodność numeru wersji między changelogiem a buildem desktopowym.
+
+### Changed
+- Trzy arkusze stylów scalone w jeden; `!important` z 115 do 10, a pozostałe to `prefers-reduced-motion` i dwa `display: none`.
+- Sześć nakładających się breakpointów w trzech plikach zredukowane do czterech, uporządkowanych.
+- `app.js` z 11 193 do około 9 300 linii — wydzielone moduły `reports`, `taxes`, `charts`, `metrics`.
+- Offline'owe repozytorium Androida z 2 152 do około 1 840 linii; obliczenia delegowane do wspólnych modułów.
+- `sw.js` podniesione do `v4`, żeby klient z poprzednim cache nie serwował dalej skasowanych arkuszy.
+- Produkcja na Vercelu wdraża się ponownie przy każdym pushu (połączenie git było zerwane, produkcja stała na commicie z 21 czerwca).
+
+### Notes
+- Między `v0.7.11` a tym wpisem jest piętnaście commitów, które nigdy nie zostały opisane (notowania, wdrożenie serwerless na Vercelu, pierwsza wersja ciemnej skórki). Ten wpis ich nie rekonstruuje — nie zgaduję, co dokładnie obiecywały.
+
+### Stability
+- Zweryfikowane lokalnie:
+  - `python3 -m unittest discover -s tests -p 'test_*.py'` (121 testów),
+  - `node --test frontend_tests/*.test.js` (49 testów),
+  - `./gradlew :tax:test :importers:test` (10 testów),
+  - `./gradlew :app:compileDebugKotlin --rerun-tasks`,
+  - zrzuty headless Chrome na 1440, 834 i 390 px przed i po zmianie stylów,
+  - testy mutacyjne: usunięcie `abs()` z prowizji XTB oraz przywrócenie starej normalizacji kluczy czerwienią wspólny spec importu.
+- CI zielone: `Tests`, `Android APK`, `Desktop Windows`, `GitHub Pages`.
+
 ## v0.7.11 - 2026-05-04
 
 ### Fixed
