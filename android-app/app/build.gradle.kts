@@ -5,8 +5,12 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
-val defaultVersionName = "1.2.5"
-val defaultVersionCode = 10205
+// The Android line versions independently of the web/desktop line in CHANGELOG.md: this is 1.3.0
+// while that is 0.8.0. The release workflow derives versionCode from the tag as
+// major*10000 + minor*100 + patch, so a tag must never go backwards — Android refuses to install
+// an APK whose versionCode is lower than the installed one.
+val defaultVersionName = "1.3.0"
+val defaultVersionCode = 10300
 val appVersionName = providers.gradleProperty("appVersionName")
     .orElse(providers.environmentVariable("APP_VERSION_NAME"))
     .orElse(defaultVersionName)
