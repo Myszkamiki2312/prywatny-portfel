@@ -5,9 +5,9 @@
   "cases": [
     {
       "name": "generic-clean-buy",
-      "why": "Baseline: the layout the app itself exports.",
+      "why": "Baseline: the layout the app itself exports. The fee arrives negative, as money leaving the account, and must be stored as a magnitude — everything downstream does 'cash -= amount + fee'.",
       "broker": "generic",
-      "csv": "date;type;ticker;quantity;price;fee;currency\n2026-03-01;Kupno;CDR;10;100;1,50;PLN\n",
+      "csv": "date;type;ticker;quantity;price;fee;currency\n2026-03-01;Kupno;CDR;10;100;-1,50;PLN\n",
       "portfolios": [
         {
           "id": "ptf_1",
@@ -319,7 +319,7 @@
             "targetQuantity": 0.0,
             "price": 150.5,
             "amount": 451.5,
-            "fee": -0.8,
+            "fee": 0.8,
             "currency": "PLN",
             "tags": [
               "xtb"
@@ -331,9 +331,9 @@
     },
     {
       "name": "mbank-polish-columns",
-      "why": "mBank names the kind column 'Rodzaj operacji' and ships no amount, so it is derived from quantity and price.",
+      "why": "mBank names the kind column 'Rodzaj operacji', ships no amount so it is derived from quantity and price, and books the commission as a negative.",
       "broker": "mbank",
-      "csv": "Data;Rodzaj operacji;Instrument;Ilosc;Cena;Prowizja;Waluta\n2026-03-07;Kupno;ALE;20;30,50;1,90;PLN\n",
+      "csv": "Data;Rodzaj operacji;Instrument;Ilosc;Cena;Prowizja;Waluta\n2026-03-07;Kupno;ALE;20;30,50;-1,90;PLN\n",
       "portfolios": [
         {
           "id": "ptf_1",

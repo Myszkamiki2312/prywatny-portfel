@@ -299,7 +299,7 @@ def _map_generic_row(
     target_quantity = to_num(row_value(row, "targetQuantity", "target_quantity", "iloscDocelowa"))
     price = to_num(row_value(row, "price", "cena", "openprice"))
     amount = to_num(row_value(row, "amount", "kwota", "value"))
-    fee = to_num(row_value(row, "fee", "prowizja", "commission"))
+    fee = abs(to_num(row_value(row, "fee", "prowizja", "commission")))
     currency = text_or_fallback(row_value(row, "currency", "waluta"), state["meta"]["baseCurrency"])
     tags = to_tags(row_value(row, "tags", "tagi"))
     note = row_value(row, "note", "notatka", "comment")
@@ -343,7 +343,10 @@ def _map_xtb_row(
     parsed_trade = _parse_xtb_trade_comment(comment)
     quantity = to_num(row_value(row, "volume", "lots", "quantity", "ilosc")) or parsed_trade.get("quantity", 0.0)
     price = to_num(row_value(row, "openprice", "price", "cena")) or parsed_trade.get("price", 0.0)
-    commission = to_num(row_value(row, "commission", "fee", "prowizja"))
+    # Brokers write a commission as money leaving the account, so the column is negative. A fee is
+    # consumed as a magnitude everywhere downstream ("cash -= amount + fee", "totalPL -= fees"), so
+    # a negative one credits the account instead of charging it.
+    commission = abs(to_num(row_value(row, "commission", "fee", "prowizja")))
     profit = to_num(row_value(row, "profit", "amount", "kwota"))
     currency = text_or_fallback(row_value(row, "currency", "waluta"), state["meta"]["baseCurrency"])
 
@@ -421,7 +424,7 @@ def _map_mbank_row(
     quantity = to_num(row_value(row, "ilosc", "quantity"))
     price = to_num(row_value(row, "cena", "price"))
     amount = to_num(row_value(row, "kwota", "amount", "wartosc"))
-    fee = to_num(row_value(row, "prowizja", "fee", "commission"))
+    fee = abs(to_num(row_value(row, "prowizja", "fee", "commission")))
     currency = text_or_fallback(row_value(row, "waluta", "currency"), state["meta"]["baseCurrency"])
 
     if op_type in ("Kupno waloru", "Sprzedaż waloru") and amount == 0 and quantity and price:

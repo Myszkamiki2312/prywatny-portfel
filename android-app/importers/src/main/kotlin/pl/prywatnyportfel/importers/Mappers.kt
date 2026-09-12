@@ -129,7 +129,7 @@ internal fun mapGenericRow(
         targetQuantity = toNum(rowValue(row, "targetQuantity", "target_quantity", "iloscDocelowa")),
         price = price,
         amount = amount,
-        fee = toNum(rowValue(row, "fee", "prowizja", "commission")),
+        fee = abs(toNum(rowValue(row, "fee", "prowizja", "commission"))),
         currency = textOrFallback(rowValue(row, "currency", "waluta"), workspace.baseCurrency),
         tags = toTags(rowValue(row, "tags", "tagi")),
         note = rowValue(row, "note", "notatka", "comment"),
@@ -156,7 +156,10 @@ internal fun mapXtbRow(
         ?: parsedTrade.first
     val price = toNum(rowValue(row, "openprice", "price", "cena")).takeIf { it != 0.0 }
         ?: parsedTrade.second
-    val commission = toNum(rowValue(row, "commission", "fee", "prowizja"))
+    // Brokers write a commission as money leaving the account, so the column is negative. A fee is
+    // consumed as a magnitude everywhere downstream ("cash -= amount + fee", "totalPL -= fees"), so
+    // a negative one credits the account instead of charging it.
+    val commission = abs(toNum(rowValue(row, "commission", "fee", "prowizja")))
     val profit = toNum(rowValue(row, "profit", "amount", "kwota"))
     val currency = textOrFallback(rowValue(row, "currency", "waluta"), workspace.baseCurrency)
 
@@ -250,7 +253,7 @@ internal fun mapMbankRow(
         targetQuantity = 0.0,
         price = price,
         amount = amount,
-        fee = toNum(rowValue(row, "prowizja", "fee", "commission")),
+        fee = abs(toNum(rowValue(row, "prowizja", "fee", "commission"))),
         currency = textOrFallback(rowValue(row, "waluta", "currency"), workspace.baseCurrency),
         tags = listOf("mbank"),
         note = rowValue(row, "notatka", "note", "comment"),
