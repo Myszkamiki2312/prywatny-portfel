@@ -92,16 +92,12 @@ class OfflineRepository(private val context: Context) {
                     ok(JSONObject().put("saved", true).put("state", JSONObject(stateJson)))
                 }
 
-                method == "GET" && path == "/reports/catalog" -> ok(
-                    JSONObject().put("reports", reportCatalogJson())
-                )
-
-                method == "POST" && path == "/reports/generate" -> {
-                    val payload = safeJsonObject(bodyText)
-                    val reportName = payload.optString("reportName", "Statystyki portfela")
-                    val portfolioId = payload.optString("portfolioId", "")
-                    ok(JSONObject().put("report", generateReport(reportName, portfolioId)))
-                }
+                // /reports/catalog and /reports/generate are deliberately not served here. The web
+                // bundle already builds every report locally through frontend/reports.js and falls
+                // back to it when the request fails, so answering them from a second, narrower
+                // implementation only created reports that disagreed with the server's. Falling
+                // through to 404 hands the work to the shared builder — which also gives the phone
+                // the full report list instead of the subset this module used to advertise.
 
                 method == "GET" && path == "/metrics/portfolio" -> {
                     val portfolioId = query["portfolioId"].orEmpty()
@@ -119,23 +115,33 @@ class OfflineRepository(private val context: Context) {
                     )
                 }
 
+                // Only what this module can actually parse faithfully is offered. Listing the
+                // broker-specific formats here let the user pick one offline and get operations
+                // that quietly disagreed with the server's import of the same file.
                 method == "GET" && path == "/import/brokers" -> ok(
                     JSONObject().put(
                         "brokers",
                         JSONArray()
                             .put(JSONObject().put("id", "generic").put("name", "Generic CSV"))
-                            .put(JSONObject().put("id", "xtb").put("name", "XTB"))
-                            .put(JSONObject().put("id", "mbank").put("name", "mBank"))
-                            .put(JSONObject().put("id", "degiro").put("name", "DeGiro"))
-                            .put(JSONObject().put("id", "ibkr").put("name", "Interactive Brokers"))
-                            .put(JSONObject().put("id", "bossa").put("name", "BOSSA"))
                     )
                 )
 
                 method == "POST" && path.startsWith("/import/broker/") -> {
                     val broker = path.removePrefix("/import/broker/")
-                    val payload = safeJsonObject(bodyText)
-                    ok(JSONObject().put("import", importBrokerCsv(broker, payload)))
+                    // Offline import understands the generic layout only. The five broker-specific
+                    // formats need the per-broker mappers in backend/importers.py — 449 lines of
+                    // column knowledge this module does not have. Parsing them here with generic
+                    // guesses produced operations that silently differed from the server's, which
+                    // is worse than refusing: a wrong import corrupts the portfolio quietly.
+                    if (broker.lowercase() != "generic") {
+                        badRequest(
+                            "Import formatu \"$broker\" wymaga połączenia z serwerem. " +
+                                "Offline dostępny jest import uniwersalny (Generic CSV)."
+                        )
+                    } else {
+                        val payload = safeJsonObject(bodyText)
+                        ok(JSONObject().put("import", importBrokerCsv(broker, payload)))
+                    }
                 }
 
                 method == "GET" && path == "/quotes" -> {
@@ -660,82 +666,6 @@ class OfflineRepository(private val context: Context) {
             totalPl = round2(totalPl),
             holdings = holdingsWithShare
         )
-    }
-
-    private suspend fun generateReport(reportName: String, portfolioId: String): JSONObject {
-        val state = loadStateObject()
-        val snapshot = calculateSnapshot(portfolioId)
-        val normalized = normalizeKey(reportName)
-        if (normalized.contains("historiaoperacji")) {
-            val operations = state.optJSONArray("operations") ?: JSONArray()
-            val rows = JSONArray()
-            for (i in 0 until operations.length()) {
-                val op = operations.optJSONObject(i) ?: continue
-                if (portfolioId.isNotBlank() && op.optString("portfolioId", "") != portfolioId) {
-                    continue
-                }
-                rows.put(
-                    JSONArray()
-                        .put(op.optString("date", ""))
-                        .put(op.optString("type", ""))
-                        .put(op.optString("assetId", ""))
-                        .put(round2(num(op.opt("quantity"))))
-                        .put(round2(num(op.opt("price"))))
-                        .put(round2(num(op.opt("amount"))))
-                        .put(round2(num(op.opt("fee"))))
-                )
-            }
-            return JSONObject()
-                .put("reportName", reportName)
-                .put("info", "$reportName | Offline Android")
-                .put("headers", JSONArray().put("Data").put("Typ").put("Asset ID").put("Ilość").put("Cena").put("Kwota").put("Prowizja"))
-                .put("rows", rows)
-                .put("chart", JSONObject().put("labels", JSONArray()).put("values", JSONArray()).put("color", "#0e7a64"))
-        }
-        if (normalized.contains("podsumowanieportfeli")) {
-            val portfolios = state.optJSONArray("portfolios") ?: JSONArray()
-            val rows = JSONArray()
-            for (i in 0 until portfolios.length()) {
-                val portfolio = portfolios.optJSONObject(i) ?: continue
-                val id = portfolio.optString("id", "")
-                val name = portfolio.optString("name", id)
-                val pSnapshot = calculateSnapshot(id)
-                rows.put(
-                    JSONArray()
-                        .put(name)
-                        .put(round2(pSnapshot.marketValue))
-                        .put(round2(pSnapshot.cash))
-                        .put(round2(pSnapshot.netWorth))
-                        .put(round2(pSnapshot.totalPl))
-                )
-            }
-            return JSONObject()
-                .put("reportName", reportName)
-                .put("info", "$reportName | Offline Android")
-                .put("headers", JSONArray().put("Portfel").put("Wartość rynkowa").put("Gotówka").put("Netto").put("P/L"))
-                .put("rows", rows)
-                .put("chart", JSONObject().put("labels", JSONArray()).put("values", JSONArray()).put("color", "#0e7a64"))
-        }
-        return JSONObject()
-            .put("reportName", reportName)
-            .put("info", "$reportName | Offline Android")
-            .put("headers", JSONArray().put("Metryka").put("Wartość"))
-            .put(
-                "rows",
-                JSONArray()
-                    .put(JSONArray().put("Wartość rynkowa").put(round2(snapshot.marketValue)))
-                    .put(JSONArray().put("Gotówka").put(round2(snapshot.cash)))
-                    .put(JSONArray().put("Wartość netto").put(round2(snapshot.netWorth)))
-                    .put(JSONArray().put("Całkowity zysk/strata").put(round2(snapshot.totalPl)))
-                    .put(JSONArray().put("Pozycje").put(snapshot.holdings.size))
-            )
-            .put(
-                "chart",
-                JSONObject()
-                    .put("labels", JSONArray().put(todayIso()))
-                    .put("values", JSONArray().put(round2(snapshot.netWorth)))
-                    .put("color", "#0e7a64")
-            )
     }
 
     private suspend fun runScanner(filters: JSONObject): JSONArray {
@@ -1915,61 +1845,6 @@ class OfflineRepository(private val context: Context) {
         return JSONObject().put("cloned", true).put("portfolio", clone)
     }
 
-    private suspend fun reportCatalogJson(): JSONArray {
-        val items = listOf(
-            "Skład i struktura",
-            "Statystyki portfela",
-            "Struktura kupna walorów",
-            "Zysk per typ inwestycji",
-            "Zysk per konto inwestycyjne",
-            "Struktura portfela w czasie",
-            "Udział walorów per konto",
-            "Wartość jednostki w czasie",
-            "Zmienność stopy zwrotu",
-            "Rolling return w czasie",
-            "Drawdown portfela w czasie",
-            "Zysk w czasie",
-            "Zmiana okresowa w czasie",
-            "Wartość inwestycji w czasie",
-            "Udział wartości portfeli w czasie",
-            "Wartość zobowiązań w czasie",
-            "Wartość majątku w czasie",
-            "Struktura majątku",
-            "Ekspozycja walutowa",
-            "Bilans kontraktów",
-            "Wkład i wartość",
-            "Wkład i zysk",
-            "Analiza fundamentalna",
-            "Analiza ryzyka",
-            "Zarządzanie ryzykiem",
-            "Analiza sektorowa i branżowa",
-            "Analiza indeksowa",
-            "Struktura per tag",
-            "Udział kont inwestycyjnych w portfelu",
-            "Stopa zwrotu w czasie i benchmark",
-            "Udział walorów w czasie",
-            "Udział tagów w czasie",
-            "Udział kont inwestycyjnych w czasie",
-            "Ekspozycja walutowa w czasie",
-            "Stopa zwrotu w okresach",
-            "Ranking walorów portfela",
-            "Porównanie walorów portfela",
-            "Analiza dywidend w czasie",
-            "Prowizje w czasie",
-            "Mapa cieplna portfela",
-            "Zamknięte inwestycje - podsumowanie",
-            "Zamknięte inwestycje - szczegóły",
-            "Zamknięte inwestycje - statystyki",
-            "Podsumowanie portfeli",
-            "Historia operacji",
-            "Podsumowania na e-mail",
-            "Limity IKE/IKZE/PPK"
-        )
-        val arr = JSONArray()
-        items.forEach { name -> arr.put(JSONObject().put("name", name)) }
-        return arr
-    }
-
     private suspend fun notificationHistory(limit: Int): JSONArray {
         val history = jsonConfig(KEY_NOTIFICATION_HISTORY, JSONArray()).optJSONArray("items") ?: JSONArray()
         val output = JSONArray()
@@ -2128,6 +2003,9 @@ class OfflineRepository(private val context: Context) {
 
     private fun notFound(message: String): ApiDispatchResult =
         ApiDispatchResult(status = 404, body = JSONObject().put("error", message).toString())
+
+    private fun badRequest(message: String): ApiDispatchResult =
+        ApiDispatchResult(status = 400, body = JSONObject().put("error", message).toString())
 
     companion object {
         private const val KEY_REALTIME_CONFIG = "realtime_config"
