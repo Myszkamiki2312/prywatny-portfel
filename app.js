@@ -1981,7 +1981,7 @@ async function hydrateFromBackend() {
     await hydrateRealtimeAndNotifications();
     await pullQuotesFromBackend();
   } catch (error) {
-    backendSync.available = false;
+    noteBackendFailure(error);
   } finally {
     backendSync.suspendPush = false;
     updateBackendStatus();
@@ -2116,8 +2116,7 @@ async function onRefreshQuotes() {
       staleCount ? "info" : "success"
     );
   } catch (error) {
-    backendSync.available = false;
-    updateBackendStatus();
+    noteBackendFailure(error);
     showToast("Nie udało się odświeżyć notowań. Sprawdź, czy backend działa.", "error");
   } finally {
     backendSync.pushInFlight = false;
@@ -2408,6 +2407,21 @@ function updateBackendStatus() {
   }
 }
 
+// A failed request is not the same as a missing backend. apiRequest marks the difference: an HTTP
+// error status means the server answered and only that endpoint failed, while an unreachable server
+// carries backendUnreachable. Only the second may flip availability — otherwise one unsupported
+// route switches off quotes, imports, tax tools and backups until the user happens to trigger a
+// health probe, because nothing polls for recovery on its own.
+// Unknown errors keep the old, cautious behaviour and mark the backend offline.
+function noteBackendFailure(error) {
+  if (error && error.serverResponded) {
+    return false;
+  }
+  backendSync.available = false;
+  updateBackendStatus();
+  return true;
+}
+
 async function ensureBackendAvailable(options = {}) {
   if (backendSync.available) {
     return true;
@@ -2492,8 +2506,7 @@ async function refreshMetricsFromBackend(portfolioId) {
       dom.statTotalPl.style.color = metrics.totalPL >= 0 ? "var(--brand-strong)" : "var(--danger)";
     }
   } catch (error) {
-    backendSync.available = false;
-    updateBackendStatus();
+    noteBackendFailure(error);
   }
 }
 
@@ -4872,7 +4885,7 @@ async function pushStateToBackend() {
       timeoutMs: 10000
     });
   } catch (error) {
-    backendSync.available = false;
+    noteBackendFailure(error);
   } finally {
     backendSync.pushInFlight = false;
     if (backendSync.pendingPush) {
@@ -4927,8 +4940,15 @@ async function apiRequest(path, options = {}) {
         signal: controller.signal
       });
     } catch (error) {
+      // Nothing answered: a dropped connection or a timeout. This is what "backend offline"
+      // actually means, and the only case that should flip the availability flag.
       if (error && error.name === "AbortError") {
-        throw new Error(`Przekroczono czas oczekiwania (${Math.round(timeoutMs / 1000)}s) dla ${path}.`);
+        const timeout = new Error(`Przekroczono czas oczekiwania (${Math.round(timeoutMs / 1000)}s) dla ${path}.`);
+        timeout.backendUnreachable = true;
+        throw timeout;
+      }
+      if (error && typeof error === "object") {
+        error.backendUnreachable = true;
       }
       throw error;
     }
@@ -4943,7 +4963,12 @@ async function apiRequest(path, options = {}) {
     }
     if (!response.ok) {
       const message = payload.error || `Błąd API ${response.status}`;
-      throw new Error(message);
+      const failure = new Error(message);
+      // The server answered, so it is running — this endpoint failed, nothing more. Callers use
+      // this to avoid declaring the whole backend offline over one unsupported route.
+      failure.serverResponded = true;
+      failure.status = response.status;
+      throw failure;
     }
     return payload;
   } catch (error) {
@@ -7820,8 +7845,9 @@ async function renderReportCurrent(arg = null) {
       });
       return;
     } catch (error) {
-      backendSync.available = false;
-      updateBackendStatus();
+      // A missing /reports/generate means this endpoint is unavailable, not the backend — the
+      // local report builder below takes over without switching anything else off.
+      noteBackendFailure(error);
     }
   }
   const report = buildReport(reportName, portfolioId);
@@ -9204,6 +9230,11 @@ if (typeof globalThis !== "undefined" && globalThis.__MYFUND_ENABLE_TEST_HOOKS__
       Object.assign(dom, partialDom || {});
     },
     wireUiModules,
+    noteBackendFailure,
+    getBackendAvailable: () => backendSync.available,
+    setBackendAvailable(value) {
+      backendSync.available = Boolean(value);
+    },
     buildReport,
     onTaxSubmit,
     REPORT_FEATURES,
