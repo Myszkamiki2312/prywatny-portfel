@@ -52,6 +52,9 @@ REQUIRED_HEADER_ALIASES: Dict[str, List[str]] = {
     "quantity": ["quantity", "qty", "shares", "ilosc", "ilość", "wolumen"],
     "data": ["data", "date", "time", "datetime"],
     "rodzaj": ["rodzaj", "rodzajOperacji", "type", "typ", "operacja"],
+    # Without this entry the lookup fell back to the literal "type", so a Polish header named
+    # "Rodzaj" failed the generic import even though mbank and bossa accept exactly that word.
+    "type": ["type", "typ", "rodzaj", "rodzajOperacji", "operacja", "operation", "action"],
     "instrument": ["instrument", "walor", "ticker", "symbol", "nazwa"],
     "product": ["product", "instrument", "security", "nazwa"],
 }
@@ -138,13 +141,7 @@ def parse_csv_rows(text: str) -> List[Dict[str, str]]:
     lines = [line for line in payload.splitlines() if line.strip()]
     if not lines:
         return []
-    sample = "\n".join(lines[:80])
-    try:
-        dialect = csv.Sniffer().sniff(sample, delimiters=";,|\t,")
-        delimiter = dialect.delimiter
-    except csv.Error:
-        delimiter = _pick_delimiter("\n".join(lines))
-    header_index = _find_header_line(lines, delimiter)
+    delimiter, header_index = _pick_layout(lines)
     stream = io.StringIO("\n".join(lines[header_index:]))
     reader = csv.DictReader(stream, delimiter=delimiter)
     output = []
@@ -162,9 +159,11 @@ def parse_csv_rows(text: str) -> List[Dict[str, str]]:
     return output
 
 
-def _find_header_line(lines: List[str], delimiter: str) -> int:
+def _best_header(lines: List[str], delimiter: str) -> tuple[int, int, int]:
+    """Best header candidate for one delimiter: (line index, score, column count)."""
     best_index = 0
     best_score = -1
+    best_columns = 0
     for index, line in enumerate(lines[:80]):
         try:
             cells = next(csv.reader([line], delimiter=delimiter))
@@ -180,7 +179,36 @@ def _find_header_line(lines: List[str], delimiter: str) -> int:
         if score > best_score:
             best_index = index
             best_score = score
-    return best_index
+            best_columns = len(cells)
+    return best_index, best_score, best_columns
+
+
+def _find_header_line(lines: List[str], delimiter: str) -> int:
+    return _best_header(lines, delimiter)[0]
+
+
+def _pick_layout(lines: List[str]) -> tuple[str, int]:
+    """Chooses the delimiter and the header line together, because they decide each other.
+
+    csv.Sniffer gives up on exports that open with a preamble ("Could not determine delimiter"),
+    and the old fallback inspected only the first line — which in such a file carries no delimiter
+    at all, so it returned "," and the header search then settled on line 0. The whole file parsed
+    as a single column named after the preamble and the import was rejected. Scoring each candidate
+    by the header it actually finds keeps the two decisions consistent, and a real header beats a
+    preamble line on alias hits.
+    """
+    best_delimiter = ","
+    best_index = 0
+    best_score = -1
+    for candidate in (";", ",", "|", "\t"):
+        index, score, columns = _best_header(lines, candidate)
+        if columns < 2:
+            continue  # a delimiter that never splits anything is not the file's delimiter
+        if score > best_score:
+            best_delimiter = candidate
+            best_index = index
+            best_score = score
+    return best_delimiter, best_index
 
 
 def _is_summary_row(row: Dict[str, str]) -> bool:
@@ -866,19 +894,6 @@ def _parse_xtb_trade_comment(comment: str) -> Dict[str, float]:
     if not match:
         return {"quantity": 0.0, "price": 0.0}
     return {"quantity": to_num(match.group(1)), "price": to_num(match.group(2))}
-
-
-def _pick_delimiter(text: str) -> str:
-    first = text.splitlines()[0] if text.splitlines() else ""
-    options = [",", ";", "|", "\t"]
-    best = ","
-    best_count = 0
-    for option in options:
-        count = first.count(option)
-        if count > best_count:
-            best = option
-            best_count = count
-    return best
 
 
 def _normalize_key(value: str) -> str:
