@@ -10,7 +10,9 @@ from .utils import normalize_fx_rates, now_iso, parse_date, to_num
 
 
 PLAN_ORDER = ["Brak", "Basic", "Standard", "Pro", "Expert"]
-THEME_KEYS = {"forest", "midnight", "gold", "ice"}
+THEME_KEYS = {"xtb", "forest", "midnight", "gold", "ice"}
+# Themes that are dark, so the light-theme memory never restores one of them.
+DARK_THEME_KEYS = {"xtb", "midnight"}
 ICON_SET_KEYS = {"minimal", "classic", "market"}
 FONT_SCALE_KEYS = {"compact", "comfortable", "large"}
 
@@ -58,7 +60,7 @@ def default_state() -> Dict[str, Any]:
             "baseCurrency": "PLN",
             "createdAt": created_at,
             "fxRates": {},
-            "theme": "forest",
+            "theme": "xtb",
             "lastLightTheme": "forest",
             "iconSet": "classic",
             "fontScale": "comfortable",
@@ -145,7 +147,7 @@ def _normalize_theme(value: Any, fallback: str) -> str:
 
 def _normalize_light_theme(value: Any, fallback: str) -> str:
     text = str(value or "").strip()
-    return text if text in THEME_KEYS and text != "midnight" else fallback
+    return text if text in THEME_KEYS and text not in DARK_THEME_KEYS else fallback
 
 
 def _normalize_icon_set(value: Any, fallback: str) -> str:

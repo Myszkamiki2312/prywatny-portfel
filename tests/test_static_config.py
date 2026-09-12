@@ -192,8 +192,8 @@ class ServiceWorkerShellTests(unittest.TestCase):
 
 class GitHubPagesPublishTests(unittest.TestCase):
     """The Pages workflow copies an explicit file list, so anything new has to be added by hand.
-    styles-xtb.css never made it, which meant the theme that loads last — and the phone fix in it —
-    was silently absent from that deployment for months. Same failure shape as the precache list."""
+    A stylesheet once missed that list and was silently absent from the deployment for months, which
+    is the same failure shape as the precache list: the app boots, just wrong."""
 
     def setUp(self):
         self.workflow = read(".github/workflows/pages.yml")

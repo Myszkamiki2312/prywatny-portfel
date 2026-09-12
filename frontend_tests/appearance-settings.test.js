@@ -156,7 +156,9 @@ test("normalizeState keeps valid appearance settings and defaults invalid ones",
       fontScale: "huge"
     }
   });
-  assert.equal(fallback.meta.theme, "forest");
+  // An unreadable theme falls back to the shipped default, which is the dark "xtb" appearance.
+  assert.equal(fallback.meta.theme, "xtb");
+  // "midnight" is dark, so it cannot serve as the remembered light theme and forest stands in.
   assert.equal(fallback.meta.lastLightTheme, "forest");
   assert.equal(fallback.meta.iconSet, "classic");
   assert.equal(fallback.meta.fontScale, "comfortable");

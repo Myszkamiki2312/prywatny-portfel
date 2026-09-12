@@ -205,13 +205,22 @@ const LINE_CHART_RANGES = [
 ];
 
 const APPEARANCE_DEFAULTS = {
-  theme: "forest",
+  theme: "xtb",
   lastLightTheme: "forest",
   iconSet: "classic",
   fontScale: "comfortable"
 };
 
+// Dark themes are skipped when restoring the last light one, so the toggle always has somewhere
+// to go back to.
+const DARK_THEMES = new Set(["xtb", "midnight"]);
+
 const APPEARANCE_THEMES = {
+  xtb: {
+    label: "Parkiet",
+    description: "Ciemny, gęsty układ pod dłuższe sesje — domyślny wygląd aplikacji.",
+    swatches: ["#ff2d55", "#1fc77c", "#0a0e15"]
+  },
   forest: {
     label: "Leśny klasyk",
     description: "Spokojny zielony motyw do codziennej pracy nad portfelem.",
@@ -5138,7 +5147,7 @@ function normalizeTheme(value) {
 }
 
 function isDarkTheme(value) {
-  return normalizeTheme(value) === "midnight";
+  return DARK_THEMES.has(normalizeTheme(value));
 }
 
 function resolveLastLightTheme(value) {

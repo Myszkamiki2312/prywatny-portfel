@@ -7,7 +7,9 @@
 // Never touches /api/* or Supabase — quotes, state and auth must not be served from a cache.
 // Bump CACHE_VERSION whenever the shell file list changes.
 
-const CACHE_VERSION = "v3";
+// v4 drops styles-modern.css and styles-xtb.css, which were folded into styles.css. A client
+// holding the v3 shell would otherwise keep serving them from cache and keep the old skin.
+const CACHE_VERSION = "v4";
 const CACHE_NAME = `prywatny-portfel-shell-${CACHE_VERSION}`;
 
 const SHELL_ASSETS = [
@@ -16,8 +18,6 @@ const SHELL_ASSETS = [
   "./app.js",
   "./supabase-config.js",
   "./styles.css",
-  "./styles-modern.css",
-  "./styles-xtb.css",
   "./js/charts-pro.js",
   "./frontend/dashboard.js",
   "./frontend/operations.js",

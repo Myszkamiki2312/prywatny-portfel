@@ -92,7 +92,6 @@ val syncWebAssets by tasks.registering(Copy::class) {
     from(webSourceRoot) {
         include("index.html")
         include("styles.css")
-        include("styles-modern.css")
         include("app.js")
         include("supabase-config.js")
         include("frontend/**")

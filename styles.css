@@ -1,4 +1,79 @@
 :root {
+  /* Shell geometry. The app is a fixed sidebar plus a top bar; the container offsets by both. */
+  --sidebar-w: 232px;
+  --topbar-h: 64px;
+
+  --bg: #0a0e15;
+  --bg-2: #0d121b;
+  --panel: #111722;
+  --panel-strong: #161d2a;
+  --panel-border: #232d3e;
+  --surface-soft: #161d2a;
+  --surface-strong: #1b2330;
+  --glass: rgba(13, 18, 27, 0.86);
+  --input-bg: #0c1119;
+  --line: #232d3e;
+  --line-strong: #2e3a4f;
+  --text: #e8eef7;
+  --muted: #8b97a9;
+  --faint: #5f6b7d;
+  --brand: #ff2d55;
+  --brand-strong: #1fc77c;
+  --accent: #ff2d55;
+  --accent-2: #ff5277;
+  --danger: #ff4d61;
+  --positive: #1fc77c;
+  --radius: 12px;
+  --badge-off-bg: rgba(255, 77, 97, 0.16);
+  --badge-off-text: #ff4d61;
+
+  /* Chrome: the sidebar, the top bar and the surfaces that sit on them. */
+  --chrome-bg: linear-gradient(180deg, #0c111a 0%, #0a0e15 100%);
+  --chrome-bar: rgba(13, 18, 27, 0.86);
+  --chrome-border: #232d3e;
+  --chrome-text: #e8eef7;
+  --chrome-muted: #8b97a9;
+  --chrome-surface: #161d2a;
+  --tab-active-bg: #161d2a;
+  --tab-active-text: #ffffff;
+  --btn-bg: #ff2d55;
+  --btn-text: #ffffff;
+  --btn-shadow: 0 6px 18px rgba(255, 45, 85, 0.28);
+  --hero-bg:
+    radial-gradient(120% 140% at 0% 0%, rgba(255, 45, 85, 0.14), transparent 55%),
+    linear-gradient(180deg, #161d2a 0%, #10151f 100%);
+  --hero-border: #2a3650;
+
+  --chart-primary: #1fc77c;
+  --chart-secondary: #ff2d55;
+  --chart-up: #1fc77c;
+  --chart-down: #ff4d61;
+  --chart-grid: rgba(255, 255, 255, 0.06);
+  --chart-axis: rgba(139, 151, 169, 0.85);
+  --chart-axis-strong: #aab4c4;
+  --chart-empty: #5f6b7d;
+  --chart-guide: rgba(255, 45, 85, 0.32);
+  --chart-selection-fill: rgba(255, 45, 85, 0.12);
+  --chart-selection-stroke: rgba(255, 45, 85, 0.42);
+  --chart-candle-guide: rgba(255, 45, 85, 0.30);
+  --chart-bg-top: rgba(31, 199, 124, 0.14);
+  --chart-bg-bottom: rgba(31, 199, 124, 0.00);
+  --chart-candle-bg-top: rgba(255, 45, 85, 0.06);
+  --chart-candle-bg-bottom: rgba(255, 45, 85, 0.00);
+
+  --tooltip-border: rgba(255, 45, 85, 0.22);
+  --tooltip-bg: rgba(7, 11, 18, 0.96);
+  --tooltip-text: #f6fbff;
+  --tooltip-muted: rgba(246, 251, 255, 0.76);
+  --backdrop-spot-a: transparent;
+  --backdrop-spot-b: transparent;
+  --backdrop-base-start: #0a0e15;
+  --backdrop-base-end: #0a0e15;
+  --shadow: 0 1px 0 rgba(255, 255, 255, 0.02), 0 8px 28px rgba(0, 0, 0, 0.35);
+}
+
+/* The original green appearance, now reachable from the theme picker like any other. */
+body[data-theme="forest"] {
   --bg: #f3f6f1;
   --panel: rgba(255, 255, 255, 0.88);
   --panel-strong: rgba(255, 255, 255, 0.96);
@@ -11,10 +86,13 @@
   --line-strong: #a8b9a3;
   --text: #1a2a23;
   --muted: #4b6056;
+  --faint: #6b7f74;
   --brand: #0e7a64;
   --brand-strong: #005747;
   --accent: #ff7f32;
+  --accent-2: #ff9152;
   --danger: #aa2a2a;
+  --positive: #0e7a64;
   --badge-off-bg: rgba(172, 95, 38, 0.16);
   --badge-off-text: #8a4613;
   --chart-primary: #0e7a64;
@@ -42,6 +120,13 @@
   --backdrop-base-start: #f8fbf6;
   --backdrop-base-end: #edf3ee;
   --shadow: 0 14px 38px rgba(13, 61, 51, 0.12);
+  --btn-bg: linear-gradient(135deg, #83dccd 0%, #36a893 100%);
+  --btn-shadow: 0 14px 34px rgba(54, 168, 147, 0.24);
+  --tab-active-bg: linear-gradient(135deg, #83dccd 0%, #36a893 100%);
+  --hero-bg:
+    radial-gradient(520px 260px at 100% 0%, rgba(122, 216, 199, 0.2), transparent 70%),
+    linear-gradient(135deg, rgba(18, 28, 39, 0.96), rgba(7, 12, 18, 0.92));
+  --hero-border: rgba(122, 216, 199, 0.2);
 }
 
 *,
@@ -201,32 +286,7 @@ body[data-theme="ice"] {
   --backdrop-base-end: #e4eef7;
 }
 
-.backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  background:
-    radial-gradient(900px 600px at 82% -12%, var(--backdrop-spot-a), transparent 72%),
-    radial-gradient(820px 520px at -4% 28%, var(--backdrop-spot-b), transparent 68%),
-    linear-gradient(180deg, var(--backdrop-base-start) 0%, var(--backdrop-base-end) 100%);
-}
 
-.topbar {
-  position: sticky;
-  top: 0;
-  z-index: 50;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 1.2rem;
-  padding: 0.9rem 1.35rem;
-  border-bottom: 1px solid rgba(122, 216, 199, 0.12);
-  background:
-    radial-gradient(820px 220px at 82% -80%, rgba(122, 216, 199, 0.15), transparent 70%),
-    linear-gradient(180deg, rgba(11, 17, 24, 0.94), rgba(10, 15, 20, 0.88));
-  backdrop-filter: blur(18px);
-  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.18);
-}
 
 .brand {
   display: grid;
@@ -406,40 +466,7 @@ body[data-theme="ice"] {
   content: none;
 }
 
-.tabs {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.78rem 1.35rem;
-  border-bottom: 1px solid rgba(122, 216, 199, 0.1);
-  background:
-    linear-gradient(180deg, rgba(19, 28, 36, 0.72), rgba(15, 22, 29, 0.62)),
-    var(--glass);
-  backdrop-filter: blur(14px);
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  scroll-snap-type: x proximity;
-}
 
-.tab {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.52rem;
-  border: 1px solid rgba(122, 216, 199, 0.12);
-  background: rgba(18, 27, 38, 0.72);
-  color: rgba(238, 247, 245, 0.78);
-  border-radius: 999px;
-  padding: 0.52rem 0.98rem;
-  min-height: 44px;
-  font-size: 0.9rem;
-  font-weight: 800;
-  cursor: pointer;
-  white-space: nowrap;
-  scroll-snap-align: start;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
-  transition: transform 0.18s ease, border-color 0.18s ease, background-color 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
-}
 
 .tab-icon {
   display: inline-flex;
@@ -465,11 +492,6 @@ body[data-theme="ice"] {
   box-shadow: 0 16px 42px rgba(54, 168, 147, 0.28);
 }
 
-.container {
-  max-width: 1480px;
-  margin: 0 auto;
-  padding: 1.1rem 1.3rem 4.6rem;
-}
 
 .view {
   display: none;
@@ -603,17 +625,8 @@ body[data-theme="ice"] {
   border-radius: 999px;
 }
 
-.chart-range-btn.active {
-  background: linear-gradient(120deg, var(--brand-strong), var(--brand));
-  border-color: transparent;
-  color: #ffffff;
-}
-
-.chart-mode-btn.active {
-  background: linear-gradient(120deg, var(--brand-strong), var(--brand));
-  border-color: transparent;
-  color: #ffffff;
-}
+/* The selected state of these two lives with the other .btn variants further down: it has the same
+   specificity as .btn.secondary, which they also carry, so only source order can decide it. */
 
 .form-grid {
   display: grid;
@@ -851,24 +864,22 @@ summary:focus-visible,
 
 .btn {
   border: 1px solid transparent;
-  border-radius: 999px;
-  background:
-    radial-gradient(circle at 18% 12%, rgba(255, 255, 255, 0.22), transparent 34%),
-    linear-gradient(135deg, #83dccd 0%, #36a893 100%);
-  color: #ffffff;
-  font-weight: 900;
-  letter-spacing: -0.015em;
+  border-radius: 9px;
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.2px;
   padding: 0.62rem 0.98rem;
   min-height: 44px;
   cursor: pointer;
-  box-shadow: 0 14px 34px rgba(54, 168, 147, 0.24);
+  box-shadow: var(--btn-shadow);
   transition: transform 0.18s ease, filter 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
 }
 
 .btn:hover {
   transform: translateY(-1px);
-  filter: brightness(1.02);
-  box-shadow: 0 18px 42px rgba(54, 168, 147, 0.3);
+  filter: brightness(1.08);
 }
 
 .btn:active {
@@ -888,9 +899,20 @@ summary:focus-visible,
 }
 
 .btn.secondary.is-active {
-  background: linear-gradient(120deg, var(--brand-strong), var(--brand));
+  background: var(--btn-bg);
   border-color: transparent;
-  color: #ffffff;
+  color: var(--btn-text);
+}
+
+/* The segmented chart controls are .btn.secondary too, so their selected state has to come after
+   it. The old skin reached for !important here; being later in the file is enough.
+   The gradient this replaces ran from --brand-strong to --brand — the gain colour to the accent,
+   which on the dark theme is a green-to-red smear rather than a selection. */
+.chart-range-btn.active,
+.chart-mode-btn.active {
+  background: var(--btn-bg);
+  border-color: transparent;
+  color: var(--btn-text);
 }
 
 .btn.danger {
@@ -984,9 +1006,9 @@ summary:focus-visible,
 
 .stat-card-hero > strong {
   margin-top: 0.42rem;
-  font-size: clamp(2.15rem, 5vw, 4.2rem);
-  line-height: 0.96;
-  letter-spacing: -0.07em;
+  font-size: clamp(1.9rem, 3vw, 2.35rem);
+  line-height: 1.05;
+  letter-spacing: -0.5px;
 }
 
 .stat-card-hero p {
@@ -1230,8 +1252,8 @@ summary:focus-visible,
   height: 1.6rem;
   margin-bottom: 0.42rem;
   border-radius: 999px;
-  background: linear-gradient(135deg, #83dccd 0%, #36a893 100%);
-  color: #ffffff;
+  background: var(--btn-bg);
+  color: var(--btn-text);
 }
 
 .onboarding-step span {
@@ -1241,10 +1263,10 @@ summary:focus-visible,
 
 .empty-kicker {
   display: inline-flex;
-  border: 1px solid rgba(122, 216, 199, 0.2);
+  border: 1px solid var(--chrome-border);
   border-radius: 999px;
   padding: 0.2rem 0.48rem;
-  color: rgba(122, 216, 199, 0.95);
+  color: var(--accent-2);
   font-size: 0.68rem;
   font-weight: 900;
   text-transform: uppercase;
@@ -2156,6 +2178,283 @@ hr {
   margin: 0.95rem 0;
 }
 
+/* =========================================================================
+   App shell: fixed sidebar + top bar. Folded in from the former styles-xtb.css skin, which
+   expressed the same layout as a pile of overrides because it loaded after this file. Here it is
+   simply the layout, so nothing needs !important and the theme picker can still recolour it.
+   ========================================================================= */
+
+body {
+  letter-spacing: 0.1px;
+}
+
+/* Figures line up in columns only with tabular figures. */
+.stat-card strong,
+table td,
+table th,
+.hero-stat-meta strong,
+.metric,
+.value,
+input,
+select {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.tabs {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  z-index: 50;
+  width: var(--sidebar-w);
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  margin: 0;
+  padding: 14px 12px;
+  background: var(--chrome-bg);
+  border-right: 1px solid var(--chrome-border);
+  border-bottom: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.tabs::before {
+  content: "● Prywatny Portfel";
+  display: block;
+  padding: 8px 12px 18px;
+  margin-bottom: 6px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  color: var(--brand);
+  border-bottom: 1px solid var(--chrome-border);
+}
+
+.tab {
+  width: 100%;
+  border: 0;
+  border-radius: 9px;
+  padding: 11px 13px;
+  background: transparent;
+  color: var(--chrome-muted);
+  font-size: 13.5px;
+  font-weight: 500;
+  text-align: left;
+  box-shadow: none;
+  position: relative;
+}
+
+.tab:hover {
+  transform: none;
+  background: var(--chrome-surface);
+  color: var(--chrome-text);
+  border-color: transparent;
+}
+
+.tab.active {
+  background: var(--tab-active-bg);
+  color: var(--tab-active-text);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.tab.active::before {
+  content: "";
+  position: absolute;
+  left: -12px;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--brand);
+  box-shadow: 0 0 12px var(--brand);
+}
+
+.tab.active .tab-icon {
+  opacity: 1;
+  color: var(--accent-2);
+}
+
+.tab .tab-icon {
+  width: 18px;
+  font-size: 14px;
+  opacity: 0.75;
+  text-align: center;
+}
+
+.topbar {
+  position: fixed;
+  top: 0;
+  left: var(--sidebar-w);
+  right: 0;
+  z-index: 40;
+  height: var(--topbar-h);
+  margin: 0;
+  padding: 0 22px;
+  justify-content: flex-start;
+  gap: 16px;
+  border-radius: 0;
+  border-bottom: 1px solid var(--chrome-border);
+  background: var(--chrome-bar);
+  backdrop-filter: blur(10px);
+  box-shadow: none;
+}
+
+.topbar h1,
+.brand {
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--chrome-muted);
+  letter-spacing: 0.4px;
+}
+
+.container,
+main.container {
+  max-width: none;
+  margin: 0 0 0 var(--sidebar-w);
+  padding: calc(var(--topbar-h) + 22px) 26px 40px;
+  background: var(--bg);
+}
+
+/* The decorative blur sat behind a now-opaque shell and only cost a repaint. */
+.backdrop {
+  display: none;
+}
+
+/* The status bar duplicated what the account chip already says. app.js un-hides it after login,
+   so it is hidden here rather than in the markup. */
+.footer {
+  display: none;
+}
+
+/* ---------- Dense data surfaces ---------- */
+
+.panel {
+  border-radius: var(--radius);
+  backdrop-filter: none;
+}
+
+.stat-card {
+  background: var(--panel-strong);
+  border-color: var(--chrome-border);
+  border-radius: var(--radius);
+}
+
+.stat-card p {
+  color: var(--muted);
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.7px;
+}
+
+.stat-card-hero {
+  background: var(--hero-bg);
+  border-color: var(--hero-border);
+}
+
+.stat-card-hero::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--brand), transparent 70%);
+}
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--radius);
+}
+
+table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
+  border-bottom: 1px solid var(--chrome-border);
+}
+
+table tbody td {
+  border-bottom: 1px solid var(--chrome-border);
+  color: var(--text);
+}
+
+table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+/* Numbers belong on the right. The first two columns are labels in every table here. */
+table td[data-label]:not(:first-child):not(:nth-child(2)) {
+  text-align: right;
+}
+
+.chart-wrap {
+  background: var(--bg-2, var(--panel));
+  border-color: var(--chrome-border);
+  border-radius: var(--radius);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---------- Sign-in overlay ----------
+   styles-modern.css pinned this with a dozen !important and defined it twice. It only ever needed
+   to be a centred fixed layer above everything. */
+
+.cloud-auth-overlay {
+  z-index: 9999;
+}
+
+body.auth-open {
+  overflow: hidden;
+}
+
+.cloud-auth-card {
+  width: min(420px, 100%);
+  border-color: var(--chrome-border);
+  border-radius: 16px;
+  animation: modal-in 0.3s ease-out;
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.pro-chart-container {
+  overflow: hidden;
+  margin-top: 10px;
+  border: 1px solid var(--chrome-border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.tv-lightweight-charts {
+  cursor: crosshair;
+}
+
 @media (max-width: 1120px) {
   .grid-two {
     grid-template-columns: 1fr;
@@ -2177,44 +2476,75 @@ hr {
   .dashboard-movers-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* Tablets and below: the sidebar cannot hold a column of labels and the content at once, so the
+   shell unpins into a normal document flow. Every fixed offset has to be undone together — the
+   height of the top bar most of all, because the header stacks into a column here. */
+@media (max-width: 900px) {
+  .tabs {
+    position: static;
+    width: auto;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.5rem 0.6rem;
+    border-right: 0;
+    border-bottom: 1px solid var(--chrome-border);
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .tabs::before,
+  .tab.active::before {
+    display: none;
+  }
+
+  .tab {
+    flex: 0 0 auto;
+    width: auto;
+    min-height: 44px;
+    border-radius: 999px;
+    padding: 0.55rem 0.85rem;
+    white-space: nowrap;
+  }
 
   .topbar {
     position: static;
-    flex-direction: column;
+    left: 0;
+    height: auto;
+    min-height: var(--topbar-h);
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    padding: 0.7rem 1rem;
   }
 
-  .footer {
-    position: static;
-    margin-top: 1rem;
-  }
-}
-
-/* Intermediate step between the 1120px and 760px breakpoints. In that range these three grids
-   still rendered at their full desktop column count — five for the report cards and the quick-add
-   row, four for the mini stats — which leaves roughly 150px per column on a tablet. Placed before
-   the 760px block on purpose: both match on a phone, and the narrower one has to win on source
-   order. */
-@media (max-width: 1000px) {
-  .report-card-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .container,
+  main.container {
+    margin-left: 0;
+    padding: 1rem;
   }
 
-  .quick-asset-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
+  .report-card-grid,
+  .quick-asset-grid,
   .dashboard-mini-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 760px) {
-  .container {
+  .container,
+  main.container {
     padding: 0.75rem;
   }
 
   .form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .topbar {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .topbar-actions {
@@ -2232,6 +2562,7 @@ hr {
     width: 100%;
   }
 
+  /* Anchored to the bottom of the screen, where a thumb reaches. */
   .account-menu {
     position: fixed;
     top: auto;
@@ -2241,19 +2572,7 @@ hr {
     width: auto;
   }
 
-  .tabs {
-    gap: 0.35rem;
-    padding: 0.55rem 0.6rem;
-  }
-
-  .tab {
-    min-height: 44px;
-    padding: 0.55rem 0.82rem;
-    font-size: 0.81rem;
-  }
-
   .panel {
-    border-radius: 18px;
     padding: 0.8rem;
   }
 
@@ -2275,14 +2594,12 @@ hr {
     gap: 0.5rem;
   }
 
-  .actions-inline .control.inline {
-    flex-basis: 100%;
-  }
-
+  .actions-inline .control.inline,
   .dashboard-controls .control.inline {
     flex: 1 1 100%;
   }
 
+  /* 44px is the smallest comfortable touch target; 16px keeps iOS from zooming on focus. */
   .btn {
     min-height: 46px;
     padding: 0.7rem 0.95rem;
@@ -2384,37 +2701,25 @@ hr {
     font-size: 1.02rem;
   }
 
-  .chart-range-group {
-    width: 100%;
-  }
-
+  .chart-range-group,
   .chart-mode-group {
     width: 100%;
   }
 
-  .operation-choice-group {
-    grid-template-columns: 1fr;
+  .chart-range-btn,
+  .chart-mode-btn {
+    flex: 1 1 auto;
   }
 
+  .operation-choice-group,
   .dashboard-quick-actions,
-  .dashboard-mini-stats {
+  .dashboard-mini-stats,
+  .appearance-preview-stats {
     grid-template-columns: 1fr;
   }
 
   .stat-card-hero {
     min-height: 160px;
-  }
-
-  .chart-range-btn {
-    flex: 1 1 auto;
-  }
-
-  .chart-mode-btn {
-    flex: 1 1 auto;
-  }
-
-  .appearance-preview-stats {
-    grid-template-columns: 1fr;
   }
 
   th,
